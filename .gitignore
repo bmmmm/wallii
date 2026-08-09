@@ -1,0 +1,9 @@
+# binary
+/wallii
+
+# wall data must never end up in the repo — the feed is private by design
+*.ndjson
+*.ndjson.gz
+
+.env
+tmp/
