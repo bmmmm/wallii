@@ -40,12 +40,6 @@ func cmdPost(args []string) error {
 	if *actor == "" {
 		*actor = "manual"
 	}
-	for _, r := range refs {
-		if strings.ContainsAny(r, " \r\n") {
-			return fmt.Errorf("ref %q looks malformed — one URL per --ref", r)
-		}
-	}
-
 	dir, err := wall.Dir()
 	if err != nil {
 		return err

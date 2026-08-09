@@ -2,13 +2,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"hash/fnv"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,12 +50,10 @@ func parseSince(s string, now time.Time) (time.Time, error) {
 		return t, nil
 	}
 	if strings.HasSuffix(s, "d") {
-		var days float64
-		if _, err := fmt.Sscanf(strings.TrimSuffix(s, "d"), "%f", &days); err == nil {
+		if days, err := strconv.ParseFloat(strings.TrimSuffix(s, "d"), 64); err == nil && days >= 0 {
 			return now.Add(-time.Duration(days * 24 * float64(time.Hour))), nil
 		}
-	}
-	if d, err := time.ParseDuration(s); err == nil {
+	} else if d, err := time.ParseDuration(s); err == nil && d >= 0 {
 		return now.Add(-d), nil
 	}
 	return time.Time{}, fmt.Errorf("cannot parse --since %q — use 2006-01-02, 36h or 3d", s)
@@ -83,13 +81,11 @@ func cmdTail(args []string) error {
 	if err != nil {
 		return err
 	}
-	events, bad, err := wall.ReadLast(dir, *n, flt.match)
+	events, stats, err := wall.ReadLast(dir, *n, flt.match)
 	if err != nil {
 		return err
 	}
-	if bad > 0 {
-		fmt.Fprintf(os.Stderr, "wallii: skipped %d malformed line(s)\n", bad)
-	}
+	reportStats(stats)
 	r := newRenderer()
 	for _, e := range events {
 		r.print(os.Stdout, e, *asJSON)
@@ -101,6 +97,16 @@ func cmdTail(args []string) error {
 		return nil
 	}
 	return followLoop(dir, flt, r, *asJSON)
+}
+
+func reportStats(stats wall.ReadStats) {
+	if stats.BadLines > 0 {
+		fmt.Fprintf(os.Stderr, "wallii: skipped %d malformed line(s)\n", stats.BadLines)
+	}
+	if len(stats.SkippedFiles) > 0 {
+		fmt.Fprintf(os.Stderr, "wallii: skipped unreadable file(s): %s — inspect or move them out of the wall dir\n",
+			strings.Join(stats.SkippedFiles, ", "))
+	}
 }
 
 func followLoop(dir string, flt filter, r *renderer, asJSON bool) error {
@@ -116,12 +122,12 @@ func followLoop(dir string, flt filter, r *renderer, asJSON bool) error {
 	for {
 		time.Sleep(500 * time.Millisecond)
 		if np := wall.CurrentFile(dir, time.Now()); np != path {
-			evs, _ := drainEvents(path, off)
+			evs, _ := wall.Drain(path, off)
 			emit(evs)
 			path, off = np, 0
 		}
 		var evs []wall.Event
-		evs, off = drainEvents(path, off)
+		evs, off = wall.Drain(path, off)
 		emit(evs)
 	}
 }
@@ -132,43 +138,6 @@ func fileSize(path string) int64 {
 		return 0
 	}
 	return fi.Size()
-}
-
-// drainEvents parses complete new lines past off and returns the new offset;
-// a partially-written trailing line stays unconsumed until its newline lands.
-func drainEvents(path string, off int64) ([]wall.Event, int64) {
-	if fileSize(path) <= off {
-		return nil, off
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, off
-	}
-	defer f.Close()
-	if _, err := f.Seek(off, io.SeekStart); err != nil {
-		return nil, off
-	}
-	buf, err := io.ReadAll(f)
-	if err != nil {
-		return nil, off
-	}
-	last := bytes.LastIndexByte(buf, '\n')
-	if last < 0 {
-		return nil, off
-	}
-	var out []wall.Event
-	for _, line := range bytes.Split(buf[:last], []byte{'\n'}) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		var e wall.Event
-		if err := json.Unmarshal(line, &e); err != nil {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out, off + int64(last) + 1
 }
 
 type renderer struct {
@@ -188,7 +157,8 @@ var repoPalette = []int{33, 39, 42, 45, 75, 99, 118, 141, 161, 172, 203, 208, 21
 func repoColor(name string) int {
 	h := fnv.New32a()
 	h.Write([]byte(name))
-	return repoPalette[int(h.Sum32())%len(repoPalette)]
+	// stay in uint32: int(Sum32()) is negative on 32-bit and panics via modulo
+	return repoPalette[h.Sum32()%uint32(len(repoPalette))]
 }
 
 func (r *renderer) print(w io.Writer, e wall.Event, asJSON bool) {

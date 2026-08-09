@@ -60,3 +60,55 @@ func TestValidateMsgLengthBoundary(t *testing.T) {
 		t.Fatalf("%d-rune message accepted", MaxMsgRunes+1)
 	}
 }
+
+// ANSI/OSC escapes in any field could hijack the terminal rendering the
+// wall (review finding #4).
+func TestValidateRejectsControlCharacters(t *testing.T) {
+	cases := map[string]func(e *Event){
+		"msg escape": func(e *Event) { e.Msg = "clear:\x1b[2Jgotcha" },
+		"repo osc":   func(e *Event) { e.Repo = "\x1b]0;pwned\ar" },
+		"topic bell": func(e *Event) { e.Topic = "ci\a" },
+		"actor tab":  func(e *Event) { e.Actor = "a\tb" },
+		"ref osc8":   func(e *Event) { e.Refs = []string{"https://x\x1b\\evil"} },
+	}
+	for name, mut := range cases {
+		e := validEvent()
+		mut(&e)
+		if err := e.Validate(); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// Refs are part of the stored line: uncapped they let one post grow a line
+// past any reader bound (review finding #3).
+func TestValidateRefLimits(t *testing.T) {
+	e := validEvent()
+	e.Refs = make([]string, MaxRefs+1)
+	for i := range e.Refs {
+		e.Refs[i] = "https://git.example.com/x"
+	}
+	if err := e.Validate(); err == nil {
+		t.Error("too many refs accepted")
+	}
+
+	e = validEvent()
+	e.Refs = []string{"https://git.example.com/" + strings.Repeat("a", MaxRefRunes)}
+	if err := e.Validate(); err == nil {
+		t.Error("oversize ref accepted")
+	}
+
+	e = validEvent()
+	e.Refs = []string{"not-a-url"}
+	if err := e.Validate(); err == nil {
+		t.Error("non-URL ref accepted")
+	}
+}
+
+func TestValidateFieldLengths(t *testing.T) {
+	e := validEvent()
+	e.Repo = strings.Repeat("r", MaxFieldRunes+1)
+	if err := e.Validate(); err == nil {
+		t.Error("oversize repo accepted")
+	}
+}

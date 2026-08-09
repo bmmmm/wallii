@@ -6,6 +6,8 @@ Agents drop one-line posts (repo · topic · message · refs) onto a local
 append-only feed. `wallii tail -f` and `wallii tui` let you follow, filter
 and explore what your fleet is doing.
 
+![wallii tui demo](docs/demo.gif)
+
 ```
 ── 2026-08-09 ──
 14:12  example-repo     ci         fixed flaky bats test, pushed to main  ↗1
@@ -21,10 +23,12 @@ and explore what your fleet is doing.
 - **Local only.** Data lives in `~/.local/share/wallii` (override with
   `WALLII_DIR`). Nothing leaves the machine, and the feed is never part of
   any repository.
-- **Infinite without bloat.** The current month is plain NDJSON — `O_APPEND`
-  writes are atomic, so any number of agents can post concurrently without
-  locking. Finished months are gzipped automatically (NDJSON compresses to
-  roughly a tenth) and stay fully readable through every command.
+- **Infinite without bloat.** The current month is plain NDJSON — one post is
+  one `O_APPEND` write, which lets any number of agents post concurrently
+  without locking (single-syscall appends on a local filesystem; network
+  mounts don't carry that guarantee). Finished months are gzipped
+  automatically (NDJSON compresses to roughly a tenth) and stay fully
+  readable through every command.
 
 ## Install
 

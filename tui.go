@@ -2,6 +2,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -28,17 +29,24 @@ var (
 )
 
 func cmdTUI(args []string) error {
+	fs := flag.NewFlagSet("tui", flag.ExitOnError)
+	fs.Parse(args)
+	if fs.NArg() > 0 {
+		return fmt.Errorf("tui takes no arguments (got %q) — filter interactively with / r t", fs.Arg(0))
+	}
 	dir, err := wall.Dir()
 	if err != nil {
 		return err
 	}
-	events, bad, err := wall.ReadLast(dir, 0, nil)
+	// TODO: cap the initial load (e.g. -n 5000) before the wall grows into
+	// years of history — this reads everything into RAM.
+	events, stats, err := wall.ReadLast(dir, 0, nil)
 	if err != nil {
 		return err
 	}
 	m := newTUI(dir, events)
-	if bad > 0 {
-		m.note = fmt.Sprintf("skipped %d malformed line(s)", bad)
+	if stats.BadLines > 0 || len(stats.SkippedFiles) > 0 {
+		m.note = fmt.Sprintf("skipped: %d bad line(s), %d unreadable file(s)", stats.BadLines, len(stats.SkippedFiles))
 	}
 	_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
@@ -98,20 +106,37 @@ func (m *tuiModel) refilter() {
 	}
 }
 
+// ingest pulls new posts into the model. The cursor sticks to the top when
+// it was there; otherwise it keeps pointing at the same event even though
+// newly arrived posts shift every view position.
 func (m *tuiModel) ingest() {
+	var fresh []wall.Event
 	if np := wall.CurrentFile(m.dir, time.Now()); np != m.tailPath {
-		evs, _ := drainEvents(m.tailPath, m.tailOff)
-		m.events = append(m.events, evs...)
+		evs, _ := wall.Drain(m.tailPath, m.tailOff)
+		fresh = append(fresh, evs...)
 		m.tailPath, m.tailOff = np, 0
 	}
-	evs, off := drainEvents(m.tailPath, m.tailOff)
+	evs, off := wall.Drain(m.tailPath, m.tailOff)
 	m.tailOff = off
-	if len(evs) > 0 {
-		stick := m.cursor == 0
-		m.events = append(m.events, evs...)
-		m.refilter()
-		if stick {
-			m.cursor, m.scroll = 0, 0
+	fresh = append(fresh, evs...)
+	if len(fresh) == 0 {
+		return
+	}
+	stick := m.cursor == 0
+	selIdx := -1
+	if !stick && m.cursor < len(m.view) {
+		selIdx = m.view[m.cursor]
+	}
+	m.events = append(m.events, fresh...)
+	m.refilter()
+	if stick {
+		m.cursor, m.scroll = 0, 0
+		return
+	}
+	for vi, ei := range m.view {
+		if ei == selIdx {
+			m.cursor = vi
+			break
 		}
 	}
 }
@@ -233,11 +258,13 @@ func (m *tuiModel) openRef() {
 	if runtime.GOOS != "darwin" {
 		opener = "xdg-open"
 	}
-	if err := exec.Command(opener, e.Refs[0]).Start(); err != nil {
+	cmd := exec.Command(opener, e.Refs[0])
+	if err := cmd.Start(); err != nil {
 		m.note = "open failed: " + err.Error()
-	} else {
-		m.note = "opened " + e.Refs[0]
+		return
 	}
+	go cmd.Wait() // reap — otherwise every 'o' leaves a zombie until quit
+	m.note = "opened " + e.Refs[0]
 }
 
 func (m *tuiModel) View() string {
@@ -270,17 +297,20 @@ func (m *tuiModel) View() string {
 	return b.String()
 }
 
+// header counts what the list actually shows (the filtered view), not the
+// full store — "12 posts" over 3 filtered rows reads like a bug.
 func (m *tuiModel) header() string {
 	today := 0
 	repos := map[string]struct{}{}
 	now := time.Now()
-	for _, e := range m.events {
+	for _, ei := range m.view {
+		e := m.events[ei]
 		repos[e.Repo] = struct{}{}
 		if sameDay(e.TS.Local(), now) {
 			today++
 		}
 	}
-	s := styleHeader.Render(fmt.Sprintf(" wallii · %d posts · %d today · %d repos", len(m.events), today, len(repos)))
+	s := styleHeader.Render(fmt.Sprintf(" wallii · %d posts · %d today · %d repos", len(m.view), today, len(repos)))
 	var fl []string
 	if m.repoF != "" {
 		fl = append(fl, "repo="+m.repoF)
