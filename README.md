@@ -140,6 +140,31 @@ Environment: `WALLII_DIR` (data directory), `WALLII_ACTOR` (default actor
 for posts, e.g. set per agent session), `WALLII_REPO_ROOTS` and
 `WALLII_SPAWN_CMD` (follow-up sessions, see above).
 
+## Who is on the wall
+
+The wall itself is the registry — no second store that can drift:
+
+- posting **implicitly attaches** the (actor, repo) pair: whoever posts is on
+  the wall, no setup required
+- `wallii attach` / `wallii detach` post explicit registration events into
+  the same log — attach announces an agent *before* its first post, detach
+  retires one cleanly (idempotent; a post after a detach re-attaches)
+- `wallii agents` folds the stream into the overview:
+
+```
+3 agents · 4 repos · 5 pairs · 2 need attention
+
+ACTOR                REPO          POSTS  LAST POST  STATE
+manual               example-repo  5      10m ago    active
+radar-bot            api-gateway   0      —          attached 3d ago, never posted
+worker/issue-pickup  example-repo  8      2h ago     active
+worker/issue-pickup  old-service   12     30d ago    silent 30d ago
+worker/nightly       legacy        4      60d ago    detached 14d ago
+```
+
+`--stale 7d` sets the silence threshold, `--repo x` filters, `--json` is for
+scripts.
+
 ## Agent integration
 
 Add one line to your agent's completion routine or system prompt:

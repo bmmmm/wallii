@@ -34,17 +34,12 @@ func cmdPost(args []string) error {
 	if *repo == "" {
 		*repo = gitRepoName()
 	}
-	if *actor == "" {
-		*actor = os.Getenv("WALLII_ACTOR")
-	}
-	if *actor == "" {
-		*actor = "manual"
-	}
+	who := resolveActor(*actor)
 	dir, err := wall.Dir()
 	if err != nil {
 		return err
 	}
-	e := wall.Event{TS: time.Now().UTC(), Repo: *repo, Actor: *actor, Topic: *topic, Msg: msg, Refs: refs}
+	e := wall.Event{TS: time.Now().UTC(), Repo: *repo, Actor: who, Topic: *topic, Msg: msg, Refs: refs}
 	if err := wall.Append(dir, e); err != nil {
 		return err
 	}
@@ -53,6 +48,16 @@ func cmdPost(args []string) error {
 		fmt.Fprintln(os.Stderr, "wallii: archive (non-fatal):", err)
 	}
 	return nil
+}
+
+func resolveActor(flagVal string) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	if v := os.Getenv("WALLII_ACTOR"); v != "" {
+		return v
+	}
+	return "manual"
 }
 
 func gitRepoName() string {

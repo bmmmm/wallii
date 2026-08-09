@@ -8,7 +8,6 @@ import (
 	"hash/fnv"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -49,11 +48,7 @@ func parseSince(s string, now time.Time) (time.Time, error) {
 	if t, err := time.ParseInLocation("2006-01-02", s, time.Local); err == nil {
 		return t, nil
 	}
-	if strings.HasSuffix(s, "d") {
-		if days, err := strconv.ParseFloat(strings.TrimSuffix(s, "d"), 64); err == nil && days >= 0 {
-			return now.Add(-time.Duration(days * 24 * float64(time.Hour))), nil
-		}
-	} else if d, err := time.ParseDuration(s); err == nil && d >= 0 {
+	if d, err := parseDur(s); err == nil {
 		return now.Add(-d), nil
 	}
 	return time.Time{}, fmt.Errorf("cannot parse --since %q — use 2006-01-02, 36h or 3d", s)

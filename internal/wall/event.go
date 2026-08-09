@@ -19,11 +19,19 @@ const (
 	MaxRefRunes   = 512
 )
 
+// Registration kinds: an empty Kind is a regular post; attach/detach events
+// drive the registry view (Attachments) but live in the same append-only log.
+const (
+	KindAttach = "attach"
+	KindDetach = "detach"
+)
+
 type Event struct {
 	TS    time.Time `json:"ts"`
 	Repo  string    `json:"repo"`
 	Actor string    `json:"actor,omitempty"`
 	Topic string    `json:"topic,omitempty"`
+	Kind  string    `json:"kind,omitempty"`
 	Msg   string    `json:"msg"`
 	Refs  []string  `json:"refs,omitempty"`
 }
@@ -39,6 +47,11 @@ func (e Event) Validate() error {
 		if n := utf8.RuneCountInString(v); n > MaxFieldRunes {
 			return fmt.Errorf("%s is %d runes, max %d", name, n, MaxFieldRunes)
 		}
+	}
+	switch e.Kind {
+	case "", KindAttach, KindDetach:
+	default:
+		return fmt.Errorf("unknown kind %q — one of attach, detach, or empty", e.Kind)
 	}
 	if strings.TrimSpace(e.Msg) == "" {
 		return errors.New("message is empty")
