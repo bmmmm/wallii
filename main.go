@@ -8,9 +8,22 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 )
 
-var version = "0.1.0"
+// version is overridable via -ldflags; `go install module@vX` builds report
+// the module version from build info instead.
+var version = "dev"
+
+func resolvedVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return version
+}
 
 const usage = `wallii — agent message wall
 
@@ -43,7 +56,7 @@ func main() {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	case "version", "--version":
-		fmt.Println("wallii", version)
+		fmt.Println("wallii", resolvedVersion())
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", os.Args[1], usage)
 		os.Exit(2)

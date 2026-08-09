@@ -35,6 +35,12 @@ and explore what your fleet is doing.
 Requires Go ≥ 1.26.
 
 ```sh
+go install github.com/bmmmm/wallii@latest
+```
+
+Or from a checkout:
+
+```sh
 go build -o wallii .
 ln -s "$PWD/wallii" ~/.local/bin/wallii
 ```
@@ -71,23 +77,44 @@ long posts are never cut off while the rest of the list stays one-line.
 ### Follow-up sessions
 
 `c` on a post starts an AI session in that post's repo, seeded with the post
-as context ("walk me through what happened here"). Two knobs:
+as context ("walk me through what happened here"). The spawner is resolved
+in this order — the first hit wins:
+
+1. **`WALLII_SPAWN_CMD`** — a shell template for explicit configuration. It
+   receives `WALLII_SPAWN_DIR` and `WALLII_SPAWN_PROMPT` in the environment
+   (values are never spliced into the command line, so quotes in messages
+   cannot break out):
+
+   ```sh
+   export WALLII_SPAWN_CMD='my-terminal --cwd "$WALLII_SPAWN_DIR" -- claude "$WALLII_SPAWN_PROMPT"'
+   ```
+
+2. **`wallii-spawn` on PATH** — the installable plugin hook (git-style).
+   Drop an executable named `wallii-spawn` into `~/.local/bin`; it is called
+   with the repo dir as `$1` and the prompt as `$2` (plus the env vars
+   above). Example for WezTerm:
+
+   ```sh
+   #!/bin/sh
+   exec wezterm start --cwd "$1" -- "${WALLII_AI_CMD:-claude}" "$2"
+   ```
+
+3. **tmux** — inside a tmux session, a new window opens in the repo. Works
+   with zero configuration.
+
+4. **Terminal.app** (macOS) — opened via osascript. The first use asks for
+   automation consent.
+
+If none of these apply, the command lands in the clipboard instead; `y`
+always does just that.
+
+Related knobs:
 
 - `WALLII_REPO_ROOTS` — colon-separated directories whose direct children
   are your checkouts (default probes `~/code`, `~/src`, `~/projects`,
   `~/dev`, `~/repos`, `~/work`). The wall stores repo names, not paths.
-- `WALLII_SPAWN_CMD` — a shell template that opens the terminal of your
-  choice. It receives `WALLII_SPAWN_DIR` and `WALLII_SPAWN_PROMPT` in the
-  environment (values are never spliced into the command line, so quotes in
-  messages cannot break out). Example:
-
-  ```sh
-  export WALLII_SPAWN_CMD='my-terminal --cwd "$WALLII_SPAWN_DIR" -- claude "$WALLII_SPAWN_PROMPT"'
-  ```
-
-Without `WALLII_SPAWN_CMD`, `c` copies a paste-ready
-`cd <repo> && claude '<prompt>'` to the clipboard instead; `y` always does
-just that.
+- `WALLII_AI_CMD` — the session CLI (default `claude`); point it at any
+  agent CLI, including one backed by a local model.
 
 Maintenance:
 

@@ -57,4 +57,61 @@ func TestSessionCmdQuoting(t *testing.T) {
 	if got := sessionCmd("", "hi"); got != "claude 'hi'" {
 		t.Fatalf("dirless command wrong: %s", got)
 	}
+	t.Setenv("WALLII_AI_CMD", "my-agent")
+	if got := sessionCmd("", "hi"); got != "my-agent 'hi'" {
+		t.Fatalf("WALLII_AI_CMD ignored: %s", got)
+	}
+}
+
+// pollFile waits for a detached spawner to write its marker file.
+func pollFile(t *testing.T, path string) string {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+			return string(b)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("spawner never wrote %s", path)
+	return ""
+}
+
+func TestSpawnSessionPrefersTemplate(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	t.Setenv("WALLII_SPAWN_CMD", `printf '%s|%s' "$WALLII_SPAWN_DIR" "$WALLII_SPAWN_PROMPT" > '`+marker+`'`)
+	how, err := spawnSession(dir, `it's a "test"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(how, "WALLII_SPAWN_CMD") {
+		t.Fatalf("wrong spawn path: %s", how)
+	}
+	if got, want := pollFile(t, marker), dir+`|it's a "test"`; got != want {
+		t.Fatalf("env passing broken: want %q, got %q", want, got)
+	}
+}
+
+func TestSpawnSessionUsesPathPlugin(t *testing.T) {
+	bin := t.TempDir()
+	marker := filepath.Join(bin, "marker")
+	script := "#!/bin/sh\nprintf '%s|%s' \"$1\" \"$2\" > '" + marker + "'\n"
+	if err := os.WriteFile(filepath.Join(bin, "wallii-spawn"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WALLII_SPAWN_CMD", "")
+	t.Setenv("TMUX", "")
+	t.Setenv("PATH", bin)
+	repo := t.TempDir()
+	how, err := spawnSession(repo, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(how, "wallii-spawn") {
+		t.Fatalf("wrong spawn path: %s", how)
+	}
+	if got, want := pollFile(t, marker), repo+"|hello"; got != want {
+		t.Fatalf("args passing broken: want %q, got %q", want, got)
+	}
 }

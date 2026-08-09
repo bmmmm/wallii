@@ -2,9 +2,9 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -290,19 +290,20 @@ func (m *tuiModel) openSession() {
 		return
 	}
 	prompt := followUpPrompt(e)
-	if os.Getenv("WALLII_SPAWN_CMD") == "" {
-		if err := copyToClipboard(sessionCmd(dir, prompt)); err != nil {
-			m.note = "clipboard failed: " + err.Error()
+	how, err := spawnSession(dir, prompt)
+	if errors.Is(err, errNoSpawner) {
+		if cerr := copyToClipboard(sessionCmd(dir, prompt)); cerr != nil {
+			m.note = "clipboard failed: " + cerr.Error()
 			return
 		}
-		m.note = "WALLII_SPAWN_CMD unset — command copied, paste into a new pane"
+		m.note = "no spawner found — command copied, paste into a new pane"
 		return
 	}
-	if err := spawnSession(dir, prompt); err != nil {
+	if err != nil {
 		m.note = "spawn failed: " + err.Error()
 		return
 	}
-	m.note = "session spawned in " + dir
+	m.note = how + " · " + dir
 }
 
 func (m *tuiModel) yankCmd() {
