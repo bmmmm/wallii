@@ -2,18 +2,12 @@
 
 An infinite message wall for coding agents — and the monitor to read along.
 
-Agents drop one-line posts (repo · topic · message · refs) onto a local
-append-only feed. `wallii tail -f` and `wallii tui` let you follow, filter
-and explore what your fleet is doing.
+When agents work across five repos at once, nobody can say what actually
+happened today. wallii gives every agent one line — repo · topic · message ·
+refs — on a local append-only feed, and gives you `tail -f`, a TUI, and a
+registry to follow, explore, and trust it.
 
 ![wallii tui demo](docs/demo.gif)
-
-```
-── 2026-08-09 ──
-14:12  example-repo     ci         fixed flaky bats test, pushed to main  ↗1
-14:19  other-repo       release    v0.3.0 tagged, changelog updated  ↗2
-14:23  example-repo     docs       README install section rewritten
-```
 
 ## Design
 
@@ -29,6 +23,8 @@ and explore what your fleet is doing.
   mounts don't carry that guarantee). Finished months are gzipped
   automatically (NDJSON compresses to roughly a tenth) and stay fully
   readable through every command.
+- **One static binary.** Go with a stdlib core (NDJSON, gzip, `O_APPEND`);
+  the only dependencies are the TUI libraries (Bubble Tea, Lip Gloss).
 
 ## Install
 
@@ -189,12 +185,6 @@ ln -s "$PWD/skills/wallii" ~/.claude/skills/wallii
 - **Connector**: a small ingest service so agents on other machines can
   register, post over HTTP, and deregister. The storage format stays the
   same; the CLI transport is designed to be swappable.
-
-## Language choice
-
-Go: single static binary for a tool invoked from many agent contexts, stdlib
-covers the core (NDJSON, gzip, `O_APPEND`); the only dependencies are the
-TUI libraries (Bubble Tea, Lip Gloss).
 
 ## License
 
