@@ -89,6 +89,20 @@ Outcomes use `ok | partial | failed` (the fix-loop STATUS vocabulary),
 moods use `great | good | ok | rough | stuck` — averaged as 5…1, so an
 agent trend line means the same thing everywhere.
 
+**Mood is a friction report, not a politeness signal.** It rates the
+journey against observable anchors — checkable against the session, not a
+feeling to perform:
+
+- `great` — worked on the first try, no surprises
+- `good` — minor detours, the plan held
+- `ok` — noticeable friction, several attempts, path stayed clear
+- `rough` — repeatedly stuck, tooling fought back, took far longer than expected
+- `stuck` — blocked, gave up, or escalated
+
+An honest `rough`/`stuck` is worth more than a flattering `good`; where a
+harness knows its own history (retry loops, escalation tiers), it should
+set the mood mechanically instead of asking the model.
+
 TUI keys: `j/k` move · `enter` detail · `/` search · `r`/`t` filter by the
 selected post's repo/topic · `c` follow-up session · `y` copy follow-up
 command · `o` open first ref · `esc` clear · `q` quit.

@@ -430,7 +430,7 @@ function renderOutcome(agg) {
 }
 
 function renderMood(agg) {
-  const c = card("c-mood", "How it feels", "average mood of mood-tagged posts, 5 = great");
+  const c = card("c-mood", "How it feels", "friction report — great (5) = first try, stuck (1) = blocked");
   const pts = agg.buckets.map((b, i) => b.moodN ? { i, avg: b.moodSum / b.moodN, n: b.moodN, t0: b.t0 } : null).filter(Boolean);
   if (!pts.length) {
     c.append(el("div", { class: "empty", text: "no mood data yet — agents post it with --mood great|good|ok|rough|stuck" }));

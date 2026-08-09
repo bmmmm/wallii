@@ -32,7 +32,7 @@ func cmdPost(args []string) error {
 	actor := fs.String("a", "", `who posts (default: $WALLII_ACTOR or "manual")`)
 	outcome := fs.String("outcome", "", "did it land: ok, partial, failed")
 	took := fs.String("took", "", "how long the work took, e.g. 25m, 1h30m")
-	mood := fs.String("mood", "", "how it felt: great, good, ok, rough, stuck")
+	mood := fs.String("mood", "", "friction report, not politeness: great (first try) … stuck (blocked/escalated)")
 	var refs multiFlag
 	fs.Var(&refs, "ref", "commit/issue/PR URL (repeatable)")
 	fs.Parse(args)
