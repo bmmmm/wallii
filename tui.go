@@ -4,6 +4,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -186,6 +187,10 @@ func (m *tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeList
 		case "o":
 			m.openRef()
+		case "c":
+			m.openSession()
+		case "y":
+			m.yankCmd()
 		case "ctrl+c":
 			return m, tea.Quit
 		}
@@ -237,6 +242,10 @@ func (m *tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "o":
 		m.openRef()
+	case "c":
+		m.openSession()
+	case "y":
+		m.yankCmd()
 	}
 	return m, nil
 }
@@ -267,6 +276,48 @@ func (m *tuiModel) openRef() {
 	m.note = "opened " + e.Refs[0]
 }
 
+// openSession starts a follow-up AI session in the post's repo via the
+// user-configured WALLII_SPAWN_CMD; without one it hands over a paste-ready
+// command instead of guessing at terminal automation.
+func (m *tuiModel) openSession() {
+	e, ok := m.selected()
+	if !ok {
+		return
+	}
+	dir, found := resolveRepoDir(e.Repo)
+	if !found {
+		m.note = fmt.Sprintf("no local checkout for %q — set WALLII_REPO_ROOTS", e.Repo)
+		return
+	}
+	prompt := followUpPrompt(e)
+	if os.Getenv("WALLII_SPAWN_CMD") == "" {
+		if err := copyToClipboard(sessionCmd(dir, prompt)); err != nil {
+			m.note = "clipboard failed: " + err.Error()
+			return
+		}
+		m.note = "WALLII_SPAWN_CMD unset — command copied, paste into a new pane"
+		return
+	}
+	if err := spawnSession(dir, prompt); err != nil {
+		m.note = "spawn failed: " + err.Error()
+		return
+	}
+	m.note = "session spawned in " + dir
+}
+
+func (m *tuiModel) yankCmd() {
+	e, ok := m.selected()
+	if !ok {
+		return
+	}
+	dir, _ := resolveRepoDir(e.Repo)
+	if err := copyToClipboard(sessionCmd(dir, followUpPrompt(e))); err != nil {
+		m.note = "clipboard failed: " + err.Error()
+		return
+	}
+	m.note = "command copied to clipboard"
+}
+
 func (m *tuiModel) View() string {
 	if m.width == 0 {
 		return "loading…"
@@ -280,21 +331,54 @@ func (m *tuiModel) View() string {
 	if rows < 1 {
 		rows = 1
 	}
+	// the selected row may span several lines — budget in screen lines, not
+	// entries, and keep scroll such that the whole expanded row fits
+	selLine, selH := "", 0
+	if m.cursor >= 0 && m.cursor < len(m.view) {
+		selLine = m.line(m.events[m.view[m.cursor]], true)
+		if selH = lipgloss.Height(selLine); selH > rows {
+			selLine = truncLines(selLine, rows)
+			selH = rows
+		}
+	}
 	if m.cursor < m.scroll {
 		m.scroll = m.cursor
 	}
-	if m.cursor >= m.scroll+rows {
-		m.scroll = m.cursor - rows + 1
+	if m.cursor > m.scroll+rows-selH {
+		m.scroll = m.cursor - (rows - selH)
 	}
-	end := min(m.scroll+rows, len(m.view))
-	for i := m.scroll; i < end; i++ {
-		b.WriteString(m.line(m.events[m.view[i]], i == m.cursor) + "\n")
+	if m.scroll < 0 {
+		m.scroll = 0
 	}
-	for i := end - m.scroll; i < rows; i++ {
+	used := 0
+	for i := m.scroll; i < len(m.view) && used < rows; i++ {
+		l, h := m.line(m.events[m.view[i]], false), 1
+		if i == m.cursor {
+			l, h = selLine, selH
+		}
+		if used+h > rows {
+			break
+		}
+		b.WriteString(l + "\n")
+		used += h
+	}
+	if len(m.view) == 0 {
+		b.WriteString(styleDim.Render(" no matching posts — esc clears filters") + "\n")
+		used++
+	}
+	for ; used < rows; used++ {
 		b.WriteString("\n")
 	}
 	b.WriteString(m.footer())
 	return b.String()
+}
+
+func truncLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return strings.Join(lines[:n], "\n")
 }
 
 // header counts what the list actually shows (the filtered view), not the
@@ -345,8 +429,21 @@ func (m *tuiModel) line(e wall.Event, sel bool) string {
 		refs = fmt.Sprintf(" ↗%d", n)
 	}
 	if sel {
-		plain := fmt.Sprintf("▶%s  %s %s %s%s", tstr, pad(e.Repo, 16), pad(e.Topic, 10), e.Msg, refs)
-		return styleSel.MaxWidth(m.width).Render(plain)
+		// the selected row expands: full message wrapped, actor and ref URLs
+		// on their own lines — nothing on the wall is unreadable in place
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "▶%s  %s %s %s", tstr, pad(e.Repo, 16), pad(e.Topic, 10), e.Msg)
+		if e.Actor != "" {
+			fmt.Fprintf(&sb, "  — %s", e.Actor)
+		}
+		for i, u := range e.Refs {
+			if i == 3 {
+				fmt.Fprintf(&sb, "\n   … +%d more refs", len(e.Refs)-3)
+				break
+			}
+			fmt.Fprintf(&sb, "\n   ↗ %s", u)
+		}
+		return styleSel.Width(m.width).Render(sb.String())
 	}
 	repoSt := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(repoColor(e.Repo))))
 	line := fmt.Sprintf(" %s  %s %s %s%s",
@@ -360,7 +457,7 @@ func (m *tuiModel) line(e wall.Event, sel bool) string {
 }
 
 func (m *tuiModel) footer() string {
-	hint := " j/k move · enter detail · / search · r/t filter repo/topic · o open ref · esc clear · q quit"
+	hint := " j/k · enter detail · / search · r/t filter · c session · y copy cmd · o ref · esc clear · q quit"
 	if m.note != "" {
 		hint = " " + m.note + " ·" + hint
 	}

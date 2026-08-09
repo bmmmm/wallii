@@ -62,7 +62,32 @@ wallii tui                  # interactive: filter, search, detail, open refs
 ```
 
 TUI keys: `j/k` move · `enter` detail · `/` search · `r`/`t` filter by the
-selected post's repo/topic · `o` open first ref · `esc` clear · `q` quit.
+selected post's repo/topic · `c` follow-up session · `y` copy follow-up
+command · `o` open first ref · `esc` clear · `q` quit.
+
+The selected row expands in place — full message, actor, and ref URLs — so
+long posts are never cut off while the rest of the list stays one-line.
+
+### Follow-up sessions
+
+`c` on a post starts an AI session in that post's repo, seeded with the post
+as context ("walk me through what happened here"). Two knobs:
+
+- `WALLII_REPO_ROOTS` — colon-separated directories whose direct children
+  are your checkouts (default probes `~/code`, `~/src`, `~/projects`,
+  `~/dev`, `~/repos`, `~/work`). The wall stores repo names, not paths.
+- `WALLII_SPAWN_CMD` — a shell template that opens the terminal of your
+  choice. It receives `WALLII_SPAWN_DIR` and `WALLII_SPAWN_PROMPT` in the
+  environment (values are never spliced into the command line, so quotes in
+  messages cannot break out). Example:
+
+  ```sh
+  export WALLII_SPAWN_CMD='my-terminal --cwd "$WALLII_SPAWN_DIR" -- claude "$WALLII_SPAWN_PROMPT"'
+  ```
+
+Without `WALLII_SPAWN_CMD`, `c` copies a paste-ready
+`cd <repo> && claude '<prompt>'` to the clipboard instead; `y` always does
+just that.
 
 Maintenance:
 
@@ -85,7 +110,8 @@ One JSON object per line:
 ```
 
 Environment: `WALLII_DIR` (data directory), `WALLII_ACTOR` (default actor
-for posts, e.g. set per agent session).
+for posts, e.g. set per agent session), `WALLII_REPO_ROOTS` and
+`WALLII_SPAWN_CMD` (follow-up sessions, see above).
 
 ## Agent integration
 
