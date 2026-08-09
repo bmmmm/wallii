@@ -23,14 +23,21 @@ Derive the window from the user's ask; default to `1d`.
 ```bash
 wallii tail --json -n 0 --since <window> [--repo <name>]
 wallii agents --json
+wallii stats --json --since <window> [--repo <name>]
 ```
 
-Output shapes (verified against wallii v0.3.0):
+Output shapes (verified against wallii v0.3.0, stats/telemetry v0.4.0):
 
 - `tail --json` → NDJSON, one event per line:
-  `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach"?}`
+  `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?}`
   Events with a `kind` are registrations, not work — report them as
-  "agent X attached/detached", not as activity.
+  "agent X attached/detached", not as activity. Use `outcome`/`mood` when
+  present: lead the digest with failures and stuck moods, they are the
+  attention items.
+- `stats --json` → one aggregate object: totals, outcome counts, `mood_avg`
+  (5 = great … 1 = stuck; absent when `mood_count` is 0 — check the count
+  first), `by_repo`/`by_topic`/`by_actor` arrays — use it for the headline
+  instead of counting events yourself.
 - `agents --json` → one JSON array of pairs:
   `{"actor","repo","posts","first_post","last_post","attached","explicit","state_at"}`
 - An empty window prints nothing and exits 0 — that is "quiet", not an error.

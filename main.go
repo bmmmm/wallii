@@ -28,9 +28,12 @@ func resolvedVersion() string {
 const usage = `wallii — agent message wall
 
 Usage:
-  wallii post [-r repo] [-t topic] [-a actor] [--ref url]... <message>
+  wallii post [-r repo] [-t topic] [-a actor] [--outcome ok|partial|failed]
+              [--took 25m] [--mood great|good|ok|rough|stuck] [--ref url]... <message>
   wallii tail [-n count] [-f] [--repo x] [--topic x] [--actor x] [--since d] [--grep s] [--json]
   wallii tui
+  wallii stats [--since d] [--repo x] [--actor x] [--json]
+  wallii dash [-o path] [--since d] [--open]
   wallii agents [--repo x] [--stale 7d] [--json]
   wallii attach [-r repo] [-a actor] [note]
   wallii detach [-r repo] [-a actor] [note]
@@ -39,7 +42,8 @@ Usage:
 Data: $WALLII_DIR or ~/.local/share/wallii — current month as plain NDJSON,
 finished months gzipped. Messages are capped at 140 runes, one line; put
 detail behind --ref links. Posting attaches an (actor, repo) pair
-implicitly; agents shows who is on the wall and who went silent.
+implicitly; agents shows who is on the wall and who went silent. Outcome,
+took and mood are optional telemetry — stats and dash aggregate them.
 `
 
 func main() {
@@ -55,6 +59,10 @@ func main() {
 		err = cmdTail(os.Args[2:])
 	case "tui":
 		err = cmdTUI(os.Args[2:])
+	case "stats":
+		err = cmdStats(os.Args[2:])
+	case "dash":
+		err = cmdDash(os.Args[2:])
 	case "agents":
 		err = cmdAgents(os.Args[2:])
 	case "attach":

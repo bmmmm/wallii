@@ -26,14 +26,38 @@ const (
 	KindDetach = "detach"
 )
 
+// Outcome values: did the reported work land? Matching the fix-loop STATUS
+// vocabulary keeps agent reports and wall telemetry one language.
+const (
+	OutcomeOK      = "ok"
+	OutcomePartial = "partial"
+	OutcomeFailed  = "failed"
+)
+
+// Mood values, best → worst. MoodScore maps them onto 5..1 so trends can be
+// averaged; unknown or absent moods score 0 (excluded from averages).
+var Moods = []string{"great", "good", "ok", "rough", "stuck"}
+
+func MoodScore(mood string) int {
+	for i, m := range Moods {
+		if m == mood {
+			return len(Moods) - i
+		}
+	}
+	return 0
+}
+
 type Event struct {
-	TS    time.Time `json:"ts"`
-	Repo  string    `json:"repo"`
-	Actor string    `json:"actor,omitempty"`
-	Topic string    `json:"topic,omitempty"`
-	Kind  string    `json:"kind,omitempty"`
-	Msg   string    `json:"msg"`
-	Refs  []string  `json:"refs,omitempty"`
+	TS      time.Time `json:"ts"`
+	Repo    string    `json:"repo"`
+	Actor   string    `json:"actor,omitempty"`
+	Topic   string    `json:"topic,omitempty"`
+	Kind    string    `json:"kind,omitempty"`
+	Msg     string    `json:"msg"`
+	Refs    []string  `json:"refs,omitempty"`
+	Outcome string    `json:"outcome,omitempty"` // ok | partial | failed
+	TookS   int64     `json:"took_s,omitempty"`  // wall-clock duration of the work, seconds
+	Mood    string    `json:"mood,omitempty"`    // great | good | ok | rough | stuck
 }
 
 func (e Event) Validate() error {
@@ -52,6 +76,20 @@ func (e Event) Validate() error {
 	case "", KindAttach, KindDetach:
 	default:
 		return fmt.Errorf("unknown kind %q — one of attach, detach, or empty", e.Kind)
+	}
+	switch e.Outcome {
+	case "", OutcomeOK, OutcomePartial, OutcomeFailed:
+	default:
+		return fmt.Errorf("unknown outcome %q — one of ok, partial, failed", e.Outcome)
+	}
+	if e.Mood != "" && MoodScore(e.Mood) == 0 {
+		return fmt.Errorf("unknown mood %q — one of %s", e.Mood, strings.Join(Moods, ", "))
+	}
+	if e.TookS < 0 {
+		return fmt.Errorf("took is negative (%ds) — durations only", e.TookS)
+	}
+	if e.TookS > 366*24*3600 {
+		return fmt.Errorf("took is %ds, over a year — that is a typo, not a work item", e.TookS)
 	}
 	if strings.TrimSpace(e.Msg) == "" {
 		return errors.New("message is empty")

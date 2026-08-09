@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package main
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"text/tabwriter"
+	"time"
+
+	"github.com/bmmmm/wallii/internal/wall"
+)
+
+func cmdStats(args []string) error {
+	fs := flag.NewFlagSet("stats", flag.ExitOnError)
+	sinceS := fs.String("since", "", "window: 2006-01-02, 36h or 3d (default: everything)")
+	repoF := fs.String("repo", "", "filter: repo name")
+	actorF := fs.String("actor", "", "filter: actor")
+	asJSON := fs.Bool("json", false, "JSON output")
+	fs.Parse(args)
+
+	since, err := parseSince(*sinceS, time.Now())
+	if err != nil {
+		return err
+	}
+	flt := filter{repo: *repoF, actor: *actorF, since: since}
+
+	dir, err := wall.Dir()
+	if err != nil {
+		return err
+	}
+	evs, rstats, err := wall.ReadLast(dir, 0, flt.match)
+	if err != nil {
+		return err
+	}
+	reportStats(rstats)
+	s := wall.Compute(evs)
+
+	if *asJSON {
+		return json.NewEncoder(os.Stdout).Encode(s)
+	}
+	if s.Posts == 0 {
+		fmt.Println("no matching posts — wall dir:", dir)
+		return nil
+	}
+
+	window := "all time"
+	if *sinceS != "" {
+		if _, err := time.ParseInLocation("2006-01-02", *sinceS, time.Local); err == nil {
+			window = "since " + *sinceS
+		} else {
+			window = "last " + *sinceS
+		}
+	}
+	fmt.Printf("%d posts · %d repos · %d actors · %s\n", s.Posts, s.Repos, s.Actors, window)
+
+	reported := s.OK + s.Partial + s.Failed
+	line := fmt.Sprintf("outcome  ok %d · partial %d · failed %d · unreported %d", s.OK, s.Partial, s.Failed, s.Unreported)
+	if reported > 0 {
+		line += fmt.Sprintf(" — %d%% of reported landed", pct(s.OK, reported))
+	}
+	fmt.Println(line)
+	if s.MoodCount > 0 {
+		fmt.Printf("mood     %s (%.1f) from %d posts\n", moodWord(s.MoodAvg), s.MoodAvg, s.MoodCount)
+	}
+	if s.TookCount > 0 {
+		fmt.Printf("took     %s logged across %d posts\n", fmtTook(s.TookTotalS), s.TookCount)
+	}
+	fmt.Printf("refs     %d/%d posts carry a ref (%d%%)\n\n", s.WithRefs, s.Posts, pct(s.WithRefs, s.Posts))
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "ACTOR\tPOSTS\tREPOS\tLANDED\tMOOD\tREFS")
+	for _, a := range s.ByActor {
+		landed, mood := "—", "—"
+		if rep := a.OK + a.Partial + a.Failed; rep > 0 {
+			landed = fmt.Sprintf("%d%%", pct(a.OK, rep))
+		}
+		if a.MoodCount > 0 {
+			mood = fmt.Sprintf("%.1f", a.MoodAvg)
+		}
+		fmt.Fprintf(w, "%s\t%d\t%d\t%s\t%s\t%d%%\n", orDash(a.Actor), a.Posts, a.Repos, landed, mood, pct(a.WithRefs, a.Posts))
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	for i, r := range s.ByRepo {
+		if i == 8 {
+			fmt.Printf("… +%d more repos\n", len(s.ByRepo)-8)
+			break
+		}
+		fmt.Printf("%-24s %s %d\n", r.Name, bar(r.Count, s.ByRepo[0].Count, 20), r.Count)
+	}
+	return nil
+}
+
+func pct(part, whole int) int {
+	if whole == 0 {
+		return 0
+	}
+	return int(float64(part)/float64(whole)*100 + 0.5)
+}
+
+// moodWord names the average: ≥4.5 great, ≥3.5 good, ≥2.5 ok, ≥1.5 rough,
+// else stuck — the same 5..1 scale MoodScore assigns.
+func moodWord(avg float64) string {
+	idx := len(wall.Moods) - int(avg+0.5)
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(wall.Moods) {
+		idx = len(wall.Moods) - 1
+	}
+	return wall.Moods[idx]
+}
+
+// fmtTook rounds to whole minutes first, then splits — the same math as the
+// dashboard's fmtTook, so terminal and browser never disagree on a duration.
+func fmtTook(sec int64) string {
+	m := (sec + 30) / 60
+	if m < 60 {
+		return fmt.Sprintf("%dm", m)
+	}
+	return fmt.Sprintf("%dh%02dm", m/60, m%60)
+}
+
+func bar(v, max, width int) string {
+	if max <= 0 {
+		return ""
+	}
+	n := v * width / max
+	if n == 0 && v > 0 {
+		n = 1
+	}
+	out := make([]rune, n)
+	for i := range out {
+		out[i] = '█'
+	}
+	return string(out)
+}

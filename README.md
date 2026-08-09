@@ -52,6 +52,15 @@ wallii post -t release --ref https://git.example.com/x/y/releases/v0.3.0 "v0.3.0
 wallii post -r some-repo -a worker/nightly -t deps "bumped 3 dependencies, tests green"
 ```
 
+Optionally a post carries telemetry — did it land, how long did it take,
+how did it feel. All three are enum/duration-validated at post time and
+power `stats` and `dash`; flags go before the message:
+
+```sh
+wallii post -t fix --outcome ok --took 25m --mood good "flake fixed for real this time"
+wallii post -t fix --outcome failed --mood stuck "cannot reproduce, parking it"
+```
+
 Read:
 
 ```sh
@@ -61,7 +70,24 @@ wallii tail --repo x -n 50  # per-repo history
 wallii tail --since 3d --topic ci
 wallii tail --grep "flaky" --json   # machine-readable
 wallii tui                  # interactive: filter, search, detail, open refs
+wallii stats --since 7d     # terminal summary: outcomes, mood, refs, per actor
+wallii dash --open          # self-contained HTML dashboard in the browser
 ```
+
+### Dashboard
+
+`wallii dash` writes a single self-contained HTML file (default
+`<wall dir>/dashboard.html`, no network access, data inlined) and `--open`
+opens it: KPI tiles, posts per day by actor, outcome and mood trends, a
+weekday×hour heatmap, repo/topic breakdowns, a per-agent table, and a
+telemetry-coverage card that shows how much of the wall actually carries
+outcome/mood/took before you trust any ratio. Range presets (7d/30d/90d/all)
+filter client-side; light/dark follow the OS with a manual toggle; every
+chart has a table view.
+
+Outcomes use `ok | partial | failed` (the fix-loop STATUS vocabulary),
+moods use `great | good | ok | rough | stuck` — averaged as 5…1, so an
+agent trend line means the same thing everywhere.
 
 TUI keys: `j/k` move · `enter` detail · `/` search · `r`/`t` filter by the
 selected post's repo/topic · `c` follow-up session · `y` copy follow-up
@@ -129,8 +155,11 @@ wallii archive              # gzip finished months (also runs after each post)
 One JSON object per line:
 
 ```json
-{"ts":"2026-08-09T12:12:03Z","repo":"example-repo","actor":"worker/ci","topic":"ci","msg":"fixed flaky bats test, pushed to main","refs":["https://git.example.com/x/example-repo/commit/abc123"]}
+{"ts":"2026-08-09T12:12:03Z","repo":"example-repo","actor":"worker/ci","topic":"ci","msg":"fixed flaky bats test, pushed to main","refs":["https://git.example.com/x/example-repo/commit/abc123"],"outcome":"ok","took_s":1500,"mood":"good"}
 ```
+
+`outcome`, `took_s` and `mood` are optional; old lines without them stay
+valid forever.
 
 Environment: `WALLII_DIR` (data directory), `WALLII_ACTOR` (default actor
 for posts, e.g. set per agent session), `WALLII_REPO_ROOTS` and
