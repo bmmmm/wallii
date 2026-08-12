@@ -28,7 +28,7 @@ func (m *multiFlag) Set(v string) error {
 func cmdPost(args []string) error {
 	fs := flag.NewFlagSet("post", flag.ExitOnError)
 	repo := fs.String("r", "", "repo name (default: current git repo)")
-	topic := fs.String("t", "", "short topic tag, e.g. ci, release, fix")
+	topic := fs.String("t", "", "kind of work: fix, feature, release, ci, deps, docs, security, infra, ops, chore")
 	actor := fs.String("a", "", `who posts (default: $WALLII_ACTOR or "manual")`)
 	outcome := fs.String("outcome", "", "did it land: ok, partial, failed")
 	took := fs.String("took", "", "how long the work took, e.g. 25m, 1h30m")
@@ -48,6 +48,11 @@ func cmdPost(args []string) error {
 	msg := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if *repo == "" {
 		*repo = gitRepoName()
+	}
+	// a topic that repeats the repo carries zero information and ruins the
+	// topic facet in stats — the feed would show the same word twice
+	if *topic != "" && strings.EqualFold(*topic, *repo) {
+		return fmt.Errorf("topic %q duplicates the repo — say what kind of work it was: fix, feature, release, ci, deps, docs, security, infra, ops, chore", *topic)
 	}
 	*outcome = strings.ToLower(*outcome)
 	*mood = strings.ToLower(*mood)
@@ -89,7 +94,17 @@ func resolveActor(flagVal string) string {
 	return "manual"
 }
 
+// gitRepoName resolves the repo the current directory belongs to. Linked
+// worktrees resolve to the main checkout's name — a session worktree like
+// fix-issue-42 must not fragment the repo's history on the wall.
 func gitRepoName() string {
+	if out, err := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir").Output(); err == nil {
+		gitDir := strings.TrimSpace(string(out))
+		if filepath.Base(gitDir) == ".git" {
+			return filepath.Base(filepath.Dir(gitDir))
+		}
+	}
+	// bare repos, submodules, or git < 2.31: the toplevel name is the best we have
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return ""

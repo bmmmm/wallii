@@ -156,6 +156,22 @@ func repoColor(name string) int {
 	return repoPalette[h.Sum32()%uint32(len(repoPalette))]
 }
 
+// outcomeGlyph maps an outcome onto its feed marker and base ANSI color
+// (1 red, 2 green, 3 yellow) — a failed post must be as loud in the feed
+// as it is in stats. Unreported posts keep the column blank so messages
+// stay aligned.
+func outcomeGlyph(outcome string) (string, int) {
+	switch outcome {
+	case wall.OutcomeOK:
+		return "✓", 2
+	case wall.OutcomePartial:
+		return "◐", 3
+	case wall.OutcomeFailed:
+		return "✗", 1
+	}
+	return " ", 0
+}
+
 func (r *renderer) print(w io.Writer, e wall.Event, asJSON bool) {
 	if asJSON {
 		b, _ := json.Marshal(e)
@@ -173,13 +189,28 @@ func (r *renderer) print(w io.Writer, e wall.Event, asJSON bool) {
 	}
 	repo := pad(e.Repo, 16)
 	topic := pad(e.Topic, 10)
+	glyph, gc := outcomeGlyph(e.Outcome)
+	took := ""
+	if e.TookS > 0 {
+		took = " (" + fmtTook(e.TookS) + ")"
+	}
 	if !r.color {
-		line := fmt.Sprintf("%s  %s %s %s", ts.Format("15:04"), repo, topic, e.Msg)
+		line := fmt.Sprintf("%s  %s %s %s %s%s", ts.Format("15:04"), repo, topic, glyph, e.Msg, took)
 		if len(e.Refs) > 0 {
 			line += "  " + strings.Join(e.Refs, " ")
 		}
+		if e.Actor != "" {
+			line += "  ·" + e.Actor
+		}
 		fmt.Fprintln(w, line)
 		return
+	}
+	mark := glyph
+	if gc != 0 {
+		mark = fmt.Sprintf("\x1b[3%dm%s\x1b[0m", gc, glyph)
+	}
+	if took != "" {
+		took = fmt.Sprintf("\x1b[2m%s\x1b[0m", took)
 	}
 	refs := ""
 	for i, u := range e.Refs {
@@ -189,8 +220,12 @@ func (r *renderer) print(w io.Writer, e wall.Event, asJSON bool) {
 		}
 		refs += fmt.Sprintf("  \x1b]8;;%s\x1b\\\x1b[4;34m↗%d\x1b[0m\x1b]8;;\x1b\\", u, i+1)
 	}
-	fmt.Fprintf(w, "\x1b[2m%s\x1b[0m  \x1b[38;5;%dm%s\x1b[0m \x1b[2m%s\x1b[0m %s%s\n",
-		ts.Format("15:04"), repoColor(e.Repo), repo, topic, e.Msg, refs)
+	actor := ""
+	if e.Actor != "" {
+		actor = fmt.Sprintf("  \x1b[2m·%s\x1b[0m", e.Actor)
+	}
+	fmt.Fprintf(w, "\x1b[2m%s\x1b[0m  \x1b[38;5;%dm%s\x1b[0m \x1b[2m%s\x1b[0m %s %s%s%s%s\n",
+		ts.Format("15:04"), repoColor(e.Repo), repo, topic, mark, e.Msg, took, refs, actor)
 }
 
 func pad(s string, w int) string {

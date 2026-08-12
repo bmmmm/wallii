@@ -3,9 +3,11 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bmmmm/wallii/internal/wall"
 )
@@ -69,6 +71,76 @@ func TestPostNormalizesOutcomeCase(t *testing.T) {
 	}
 	if evs[0].Outcome != "ok" || evs[0].Mood != "good" {
 		t.Fatalf("stored outcome/mood = %q/%q, want ok/good", evs[0].Outcome, evs[0].Mood)
+	}
+}
+
+func TestPostRejectsTopicEqualRepo(t *testing.T) {
+	t.Setenv("WALLII_DIR", t.TempDir())
+	if err := cmdPost([]string{"-r", "myrepo", "-t", "MyRepo", "work done"}); err == nil {
+		t.Fatal("topic == repo accepted — it duplicates the repo column and ruins the topic facet")
+	}
+	if err := cmdPost([]string{"-r", "myrepo", "-t", "fix", "work done"}); err != nil {
+		t.Fatalf("distinct topic rejected: %v", err)
+	}
+}
+
+func TestGitRepoNameResolvesWorktreeToMainCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	root := t.TempDir()
+	main := filepath.Join(root, "mainrepo")
+	if err := os.Mkdir(main, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.email=t@t", "-c", "user.name=t"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git(main, "init", "-q")
+	git(main, "commit", "-q", "--allow-empty", "-m", "init")
+	wt := filepath.Join(root, "session-worktree-42")
+	git(main, "worktree", "add", "-q", wt)
+
+	t.Chdir(wt)
+	if got := gitRepoName(); got != "mainrepo" {
+		t.Errorf("in worktree: gitRepoName() = %q, want %q — session worktrees must not fragment repo history", got, "mainrepo")
+	}
+	t.Chdir(main)
+	if got := gitRepoName(); got != "mainrepo" {
+		t.Errorf("in main checkout: gitRepoName() = %q, want %q", got, "mainrepo")
+	}
+}
+
+func TestTailRendersTelemetry(t *testing.T) {
+	r := &renderer{color: false}
+	var b strings.Builder
+	r.print(&b, wall.Event{
+		TS: time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), Repo: "x", Actor: "worker/ci",
+		Topic: "fix", Msg: "broke", Outcome: wall.OutcomeFailed, Mood: "stuck", TookS: 1500,
+	}, false)
+	out := b.String()
+	for _, want := range []string{"✗", "(25m)", "·worker/ci"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("tail line missing %q:\n%s", want, out)
+		}
+	}
+	b.Reset()
+	r.print(&b, wall.Event{TS: time.Date(2026, 8, 12, 11, 0, 0, 0, time.UTC), Repo: "x", Msg: "no telemetry"}, false)
+	if strings.Contains(b.String(), "✓") || strings.Contains(b.String(), "(") {
+		t.Errorf("unreported post must not fake telemetry:\n%s", b.String())
+	}
+	b.Reset()
+	rc := &renderer{color: true, lastDay: "2026-08-12"}
+	rc.print(&b, wall.Event{
+		TS: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC), Repo: "x", Topic: "fix",
+		Msg: "broke", Outcome: wall.OutcomeFailed,
+	}, false)
+	if !strings.Contains(b.String(), "\x1b[31m✗\x1b[0m") {
+		t.Errorf("failed outcome must render red in color mode:\n%q", b.String())
 	}
 }
 

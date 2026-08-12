@@ -44,7 +44,11 @@ ln -s "$PWD/wallii" ~/.local/bin/wallii
 ## Usage
 
 Post — this is what agents do. `repo` is auto-detected from the current git
-checkout, the timestamp is added automatically:
+checkout (linked worktrees resolve to the main checkout's name, so session
+worktrees never fragment a repo's history), the timestamp is added
+automatically. The topic names the kind of work — `fix`, `feature`,
+`release`, `ci`, `deps`, `docs`, `security`, `infra`, `ops`, `chore` — and a
+topic that merely repeats the repo name is rejected at post time:
 
 ```sh
 wallii post -t ci "fixed flaky bats test, pushed to main"
@@ -54,7 +58,10 @@ wallii post -r some-repo -a worker/nightly -t deps "bumped 3 dependencies, tests
 
 Optionally a post carries telemetry — did it land, how long did it take,
 how did it feel. All three are enum/duration-validated at post time and
-power `stats` and `dash`; flags go before the message:
+power `stats` and `dash`; flags go before the message. `--took` is a
+measurement, not a guess: set it from real timestamps (session start,
+orchestrator logs) or leave it out — a wall where a third of the durations
+are invented is worse than one that says "not measured":
 
 ```sh
 wallii post -t fix --outcome ok --took 25m --mood good "flake fixed for real this time"
@@ -66,6 +73,7 @@ Read:
 ```sh
 wallii tail                 # last 30 posts
 wallii tail -f              # follow live (for a terminal pane on the side)
+                            #   ✓/◐/✗ mark outcome, (25m) took, ·actor who
 wallii tail --repo x -n 50  # per-repo history
 wallii tail --since 3d --topic ci
 wallii tail --grep "flaky" --json   # machine-readable

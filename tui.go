@@ -437,6 +437,15 @@ func (m *tuiModel) line(e wall.Event, sel bool) string {
 		if e.Actor != "" {
 			fmt.Fprintf(&sb, "  — %s", e.Actor)
 		}
+		if e.Outcome != "" {
+			fmt.Fprintf(&sb, " · %s", e.Outcome)
+		}
+		if e.Mood != "" {
+			fmt.Fprintf(&sb, " · mood %s", e.Mood)
+		}
+		if e.TookS > 0 {
+			fmt.Fprintf(&sb, " · %s", fmtTook(e.TookS))
+		}
 		for i, u := range e.Refs {
 			if i == 3 {
 				fmt.Fprintf(&sb, "\n   … +%d more refs", len(e.Refs)-3)
@@ -447,11 +456,22 @@ func (m *tuiModel) line(e wall.Event, sel bool) string {
 		return styleSel.Width(m.width).Render(sb.String())
 	}
 	repoSt := lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(repoColor(e.Repo))))
-	line := fmt.Sprintf(" %s  %s %s %s%s",
+	glyph, gc := outcomeGlyph(e.Outcome)
+	mark := glyph
+	if gc != 0 {
+		mark = lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(gc))).Render(glyph)
+	}
+	took := ""
+	if e.TookS > 0 {
+		took = styleDim.Render(" (" + fmtTook(e.TookS) + ")")
+	}
+	line := fmt.Sprintf(" %s  %s %s %s %s%s%s",
 		styleDim.Render(tstr),
 		repoSt.Render(pad(e.Repo, 16)),
 		styleDim.Render(pad(e.Topic, 10)),
+		mark,
 		e.Msg,
+		took,
 		styleDim.Render(refs),
 	)
 	return lipgloss.NewStyle().MaxWidth(m.width).Render(line)
@@ -481,6 +501,11 @@ func (m *tuiModel) viewDetail() string {
 	field("repo", e.Repo)
 	field("topic", e.Topic)
 	field("actor", e.Actor)
+	field("outcome", e.Outcome)
+	field("mood", e.Mood)
+	if e.TookS > 0 {
+		field("took", fmtTook(e.TookS))
+	}
 	b.WriteString("\n  " + lipgloss.NewStyle().Width(max(20, m.width-4)).Render(e.Msg) + "\n")
 	if len(e.Refs) > 0 {
 		b.WriteString("\n")
