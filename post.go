@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +32,7 @@ func cmdPost(args []string) error {
 	topic := fs.String("t", "", "kind of work: fix, feature, release, ci, deps, docs, security, infra, ops, chore")
 	actor := fs.String("a", "", `who posts (default: $WALLII_ACTOR or "manual")`)
 	outcome := fs.String("outcome", "", "did it land: ok, partial, failed")
-	took := fs.String("took", "", "how long the work took, e.g. 25m, 1h30m")
+	took := fs.String("took", "", "how long the work took, e.g. 25m, 1h30m; default derives it, none disables")
 	mood := fs.String("mood", "", "friction report, not politeness: great (first try) … stuck (blocked/escalated)")
 	var refs multiFlag
 	fs.Var(&refs, "ref", "commit/issue/PR URL (repeatable)")
@@ -49,15 +50,13 @@ func cmdPost(args []string) error {
 	if *repo == "" {
 		*repo = gitRepoName()
 	}
-	// a topic that repeats the repo carries zero information and ruins the
-	// topic facet in stats — the feed would show the same word twice
-	if *topic != "" && strings.EqualFold(*topic, *repo) {
-		return fmt.Errorf("topic %q duplicates the repo — say what kind of work it was: fix, feature, release, ci, deps, docs, security, infra, ops, chore", *topic)
+	if err := wall.CheckTopic(*topic, *repo); err != nil {
+		return err
 	}
 	*outcome = strings.ToLower(*outcome)
 	*mood = strings.ToLower(*mood)
 	var tookS int64
-	if *took != "" {
+	if *took != "" && *took != "none" {
 		d, err := parseDur(*took)
 		if err != nil {
 			return err
@@ -72,16 +71,91 @@ func cmdPost(args []string) error {
 	if err != nil {
 		return err
 	}
-	e := wall.Event{TS: time.Now().UTC(), Repo: *repo, Actor: who, Topic: *topic, Msg: msg, Refs: refs,
-		Outcome: *outcome, TookS: tookS, Mood: *mood}
+	now := time.Now()
+
+	// one read serves both post-time lints: the actor's own history is the
+	// clock for --took and the evidence for the calibration warning. A
+	// failure here must not cost the post — telemetry is the garnish, the
+	// message is the point.
+	prior, rerr := wall.RecentByActor(dir, who, 0, now)
+	if rerr != nil {
+		fmt.Fprintln(os.Stderr, "wallii: reading own history (non-fatal):", rerr)
+	}
+	tookSrc := ""
+	if *took == "" {
+		if d, ok := autoTook(prior, now); ok {
+			tookS, tookSrc = int64(d/time.Second), wall.TookAuto
+		}
+	}
+
+	e := wall.Event{TS: now.UTC(), Repo: *repo, Actor: who, Topic: *topic, Msg: msg, Refs: refs,
+		Outcome: *outcome, TookS: tookS, TookSrc: tookSrc, Mood: *mood}
 	if err := wall.Append(dir, e); err != nil {
 		return err
+	}
+	// Notes, never gates: the post is already on the wall, exactly as
+	// written. They are worth printing anyway — the next grade is the one
+	// they can still change.
+	for _, note := range wall.Contradictions(e) {
+		fmt.Fprintln(os.Stderr, "wallii:", note)
+	}
+	if warn := wall.Calibration(prior, e); warn != "" {
+		fmt.Fprintln(os.Stderr, "wallii:", warn)
 	}
 	// opportunistic housekeeping: gzip finished months without a cron job
 	if _, err := wall.Archive(dir, time.Now()); err != nil {
 		fmt.Fprintln(os.Stderr, "wallii: archive (non-fatal):", err)
 	}
 	return nil
+}
+
+// Bounds for a derived duration. Below the floor the poster is emptying a
+// backlog at session end — the wall saw six posts in one minute — and those
+// seconds measure typing, not work. Above the ceiling a night sits in the
+// gap. Neither is a work duration, so neither gets recorded: an absent took
+// is honest, an invented one is not.
+const (
+	minAutoTook = time.Minute
+	maxAutoTook = 8 * time.Hour
+)
+
+// autoTook derives how long this work took from the actor's own timeline:
+// the wall is its own clock. The basis is whichever is later — the actor's
+// previous post or the session start — because both mark a point where the
+// current piece of work demonstrably had not started yet.
+func autoTook(prior []wall.Event, now time.Time) (time.Duration, bool) {
+	var basis time.Time
+	if n := len(prior); n > 0 {
+		basis = prior[n-1].TS
+	}
+	if s, ok := sessionStart(); ok && s.After(basis) {
+		basis = s
+	}
+	if basis.IsZero() {
+		return 0, false
+	}
+	d := now.Sub(basis)
+	if d < minAutoTook || d > maxAutoTook {
+		return 0, false
+	}
+	return d, true
+}
+
+// sessionStart reads $WALLII_SESSION_START, set by a session-start hook, as
+// RFC3339 or unix seconds — a shell hook reaches for `date +%s` first.
+func sessionStart() (time.Time, bool) {
+	v := strings.TrimSpace(os.Getenv("WALLII_SESSION_START"))
+	if v == "" {
+		return time.Time{}, false
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, true
+	}
+	if sec, err := strconv.ParseInt(v, 10, 64); err == nil && sec > 0 {
+		return time.Unix(sec, 0), true
+	}
+	fmt.Fprintf(os.Stderr, "wallii: WALLII_SESSION_START=%q is neither RFC3339 nor unix seconds — ignored\n", v)
+	return time.Time{}, false
 }
 
 func resolveActor(flagVal string) string {

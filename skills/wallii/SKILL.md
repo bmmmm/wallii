@@ -36,8 +36,16 @@ Output shapes (verified against wallii v0.3.0, stats/telemetry v0.4.0):
   attention items.
 - `stats --json` → one aggregate object: totals, outcome counts, `mood_avg`
   (5 = great … 1 = stuck; absent when `mood_count` is 0 — check the count
-  first), `by_repo`/`by_topic`/`by_actor` arrays — use it for the headline
-  instead of counting events yourself.
+  first), `by_repo`/`by_topic`/`by_mood`/`by_actor` arrays — use it for the
+  headline instead of counting events yourself. Two fields qualify the rest:
+  `took_auto` counts durations wallii derived rather than the poster
+  measured, and `by_mood` shows which part of the scale the window actually
+  used, while `contradicting` counts posts whose message tells a rougher
+  story than their grade. If `failed` is 0 and `by_mood` holds no
+  `rough`/`stuck`, say so before quoting a landed-% — a window that reports
+  no bad news is a calibration finding, not a green fleet. Where
+  `contradicting` is non-zero, read those posts: nothing rejects them, and
+  their wording is the more reliable half.
 - `agents --json` → one JSON array of pairs:
   `{"actor","repo","posts","first_post","last_post","attached","explicit","state_at"}`
 - An empty window prints nothing and exits 0 — that is "quiet", not an error.
@@ -77,6 +85,10 @@ Rules:
 - "Needs attention" comes from `agents --json`: attached pairs whose
   `last_post` is older than 7 days, pairs with `posts == 0`, and recent
   detaches. Skip the section entirely when there is nothing.
+- A window where every reported outcome is `ok` and no mood reaches
+  `rough`/`stuck` belongs in "Needs attention" too — not as an agent
+  problem, but as "the telemetry stopped discriminating, take the ratios
+  with a grain of salt".
 
 ## Step 4: Offer follow-ups
 

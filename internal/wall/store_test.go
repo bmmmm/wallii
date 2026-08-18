@@ -295,6 +295,53 @@ func TestFilesPrefersPlainOverGzAndValidatesNames(t *testing.T) {
 
 // A truncated or replaced file must reset the follow offset instead of
 // hanging mid-file forever (review finding #5).
+// Post-time lints call this on every write, so it must stay cheap and
+// current-month-only: an actor posting for the first time would otherwise
+// decompress every archived month just to learn it has no history.
+func TestRecentByActorReadsCurrentMonthOnly(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	last := time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)
+	mustAppend(t, dir, Event{TS: last, Repo: "x", Actor: "a", Msg: "previous month"})
+	for i := 0; i < 5; i++ {
+		mustAppend(t, dir, Event{TS: now.Add(time.Duration(i) * time.Minute), Repo: "x", Actor: "a", Msg: "mine"})
+	}
+	mustAppend(t, dir, Event{TS: now, Repo: "x", Actor: "b", Msg: "someone else"})
+	mustAppend(t, dir, Event{TS: now, Repo: "x", Actor: "a", Msg: "attached", Kind: KindAttach})
+
+	got, err := RecentByActor(dir, "a", 0, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("expected 5 own posts from the current month, got %d", len(got))
+	}
+	for _, e := range got {
+		if e.Actor != "a" || e.Kind != "" || e.Msg == "previous month" {
+			t.Errorf("unexpected event in result: %+v", e)
+		}
+	}
+	if got[len(got)-1].TS.Before(got[0].TS) {
+		t.Error("result must be oldest-first — the last element is the clock for --took")
+	}
+	if limited, err := RecentByActor(dir, "a", 2, now); err != nil || len(limited) != 2 {
+		t.Errorf("limit ignored: got %d events, err %v", len(limited), err)
+	} else if !limited[1].TS.Equal(got[4].TS) {
+		t.Error("limit must keep the newest events, not the oldest")
+	}
+	// a wall that has never been written to is empty, not broken
+	if evs, err := RecentByActor(t.TempDir(), "a", 0, now); err != nil || len(evs) != 0 {
+		t.Errorf("missing month file: got %d events, err %v", len(evs), err)
+	}
+}
+
+func mustAppend(t *testing.T, dir string, e Event) {
+	t.Helper()
+	if err := Append(dir, e); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDrainResetsOnShrink(t *testing.T) {
 	dir := t.TempDir()
 	post(t, dir, ts(9, 10), "example-repo", "ci", "one")

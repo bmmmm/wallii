@@ -34,6 +34,14 @@ const (
 	OutcomeFailed  = "failed"
 )
 
+// TookAuto marks a duration wallii derived itself (time since the actor's
+// previous post or session start) instead of one the poster measured. Every
+// took value on the wall before this existed was rounded to five minutes —
+// guesses, all of them. Keeping the source on the event lets stats and dash
+// separate derived from measured rather than averaging both into one number
+// nobody can check.
+const TookAuto = "auto"
+
 // Mood values, best → worst. MoodScore maps them onto 5..1 so trends can be
 // averaged; unknown or absent moods score 0 (excluded from averages).
 var Moods = []string{"great", "good", "ok", "rough", "stuck"}
@@ -57,7 +65,8 @@ type Event struct {
 	Refs    []string  `json:"refs,omitempty"`
 	Outcome string    `json:"outcome,omitempty"` // ok | partial | failed
 	TookS   int64     `json:"took_s,omitempty"`  // wall-clock duration of the work, seconds
-	Mood    string    `json:"mood,omitempty"`    // great | good | ok | rough | stuck
+	TookSrc string    `json:"took_src,omitempty"`
+	Mood    string    `json:"mood,omitempty"` // great | good | ok | rough | stuck
 }
 
 func (e Event) Validate() error {
@@ -90,6 +99,12 @@ func (e Event) Validate() error {
 	}
 	if e.TookS > 366*24*3600 {
 		return fmt.Errorf("took is %ds, over a year — that is a typo, not a work item", e.TookS)
+	}
+	if e.TookSrc != "" && e.TookSrc != TookAuto {
+		return fmt.Errorf("unknown took_src %q — %q or empty (measured)", e.TookSrc, TookAuto)
+	}
+	if e.TookSrc != "" && e.TookS == 0 {
+		return errors.New("took_src is set without a duration — a source without a value says nothing")
 	}
 	if strings.TrimSpace(e.Msg) == "" {
 		return errors.New("message is empty")

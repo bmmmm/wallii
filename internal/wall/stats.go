@@ -7,7 +7,9 @@ import "sort"
 // not work) into the numbers the stats command and the digest skill read.
 // Coverage counters exist because every telemetry field is optional: a
 // consumer must know how much of the wall actually carries outcome/mood data
-// before trusting a ratio computed from it.
+// before trusting a ratio computed from it. ByMood and TookAuto answer the
+// next question down: full coverage of a single value is not a measurement
+// either, and a derived duration is not one the poster stood behind.
 type Stats struct {
 	Posts      int `json:"posts"`
 	Repos      int `json:"repos"`
@@ -22,11 +24,17 @@ type Stats struct {
 
 	TookCount  int   `json:"took_count"`
 	TookTotalS int64 `json:"took_total_s"`
+	TookAuto   int   `json:"took_auto"` // of TookCount, derived rather than measured
 
 	WithRefs int `json:"with_refs"`
+	// Contradicting counts posts whose grade disagrees with their own
+	// message. Nothing stops those from being posted — this is where they
+	// surface instead.
+	Contradicting int `json:"contradicting"`
 
 	ByRepo  []NameCount  `json:"by_repo"`
 	ByTopic []NameCount  `json:"by_topic"`
+	ByMood  []NameCount  `json:"by_mood"`
 	ByActor []ActorStats `json:"by_actor"`
 }
 
@@ -53,7 +61,7 @@ type ActorStats struct {
 // skipped; order does not matter.
 func Compute(evs []Event) Stats {
 	var s Stats
-	repos, topics := map[string]int{}, map[string]int{}
+	repos, topics, moods := map[string]int{}, map[string]int{}, map[string]int{}
 	actors := map[string]*ActorStats{}
 	actorRepos := map[string]map[string]struct{}{}
 	moodSum := 0
@@ -92,16 +100,23 @@ func Compute(evs []Event) Stats {
 		if sc := MoodScore(e.Mood); sc > 0 {
 			s.MoodCount++
 			moodSum += sc
+			moods[e.Mood]++
 			a.MoodCount++
 			actorMoodSum[e.Actor] += sc
 		}
 		if e.TookS > 0 {
 			s.TookCount++
 			s.TookTotalS += e.TookS
+			if e.TookSrc == TookAuto {
+				s.TookAuto++
+			}
 		}
 		if len(e.Refs) > 0 {
 			s.WithRefs++
 			a.WithRefs++
+		}
+		if len(Contradictions(e)) > 0 {
+			s.Contradicting++
 		}
 	}
 
@@ -112,6 +127,13 @@ func Compute(evs []Event) Stats {
 	}
 	s.ByRepo = sortedCounts(repos)
 	s.ByTopic = sortedCounts(topics)
+	// mood keeps its scale order (great → stuck) rather than count order: the
+	// point of the breakdown is which part of the range never gets used
+	for _, m := range Moods {
+		if n := moods[m]; n > 0 {
+			s.ByMood = append(s.ByMood, NameCount{m, n})
+		}
+	}
 	for name, a := range actors {
 		a.Repos = len(actorRepos[name])
 		if a.MoodCount > 0 {

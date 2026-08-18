@@ -29,6 +29,8 @@ type dashEvent struct {
 	Out   string   `json:"out,omitempty"`
 	Mood  string   `json:"mood,omitempty"`
 	Took  int64    `json:"took,omitempty"`
+	Src   string   `json:"src,omitempty"` // "auto" when wallii derived the duration
+	Vs    int      `json:"vs,omitempty"`  // 1 when the grade disagrees with the message
 	Refs  []string `json:"refs,omitempty"`
 	Msg   string   `json:"msg"`
 }
@@ -58,9 +60,13 @@ func cmdDash(args []string) error {
 
 	out := make([]dashEvent, 0, len(evs))
 	for _, e := range evs {
+		vs := 0
+		if len(wall.Contradictions(e)) > 0 {
+			vs = 1
+		}
 		out = append(out, dashEvent{
 			T: e.TS.UnixMilli(), Repo: e.Repo, Actor: e.Actor, Topic: e.Topic,
-			Out: e.Outcome, Mood: e.Mood, Took: e.TookS, Refs: e.Refs, Msg: e.Msg,
+			Out: e.Outcome, Mood: e.Mood, Took: e.TookS, Src: e.TookSrc, Vs: vs, Refs: e.Refs, Msg: e.Msg,
 		})
 	}
 	// json.Marshal HTML-escapes < > & — safe to inline in a <script> block

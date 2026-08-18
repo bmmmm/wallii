@@ -241,6 +241,31 @@ func ReadLast(dir string, limit int, match func(Event) bool) ([]Event, ReadStats
 	return out, stats, nil
 }
 
+// RecentByActor returns up to n of actor's most recent posts, oldest first,
+// reading only the current month. Post-time lints call this on every write,
+// so it must never open the gzipped archives: an actor posting for the first
+// time would otherwise decompress every month on the wall to learn there is
+// no history. A missing current month is not an error — it is an empty wall.
+func RecentByActor(dir, actor string, n int, now time.Time) ([]Event, error) {
+	evs, _, err := ParseFile(CurrentFile(dir, now))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]Event, 0, n)
+	for _, e := range evs {
+		if e.Kind == "" && e.Actor == actor {
+			out = append(out, e)
+		}
+	}
+	if n > 0 && len(out) > n {
+		out = out[len(out)-n:]
+	}
+	return out, nil
+}
+
 // Drain parses complete new lines past off and returns them with the new
 // offset; a partially-written trailing line stays unconsumed until its
 // newline lands. If the file shrank below off (replaced or truncated),

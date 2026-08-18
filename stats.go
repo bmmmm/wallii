@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -62,10 +63,17 @@ func cmdStats(args []string) error {
 	}
 	fmt.Println(line)
 	if s.MoodCount > 0 {
-		fmt.Printf("mood     %s (%.1f) from %d posts\n", moodWord(s.MoodAvg), s.MoodAvg, s.MoodCount)
+		fmt.Printf("mood     %s (%.1f) from %d posts — %s\n", moodWord(s.MoodAvg), s.MoodAvg, s.MoodCount, moodSpread(s.ByMood))
+	}
+	if calib := calibLine(s); calib != "" {
+		fmt.Println(calib)
 	}
 	if s.TookCount > 0 {
-		fmt.Printf("took     %s logged across %d posts\n", fmtTook(s.TookTotalS), s.TookCount)
+		took := fmt.Sprintf("took     %s logged across %d posts", fmtTook(s.TookTotalS), s.TookCount)
+		if s.TookAuto > 0 {
+			took += fmt.Sprintf(" (%d derived, %d measured)", s.TookAuto, s.TookCount-s.TookAuto)
+		}
+		fmt.Println(took)
 	}
 	fmt.Printf("refs     %d/%d posts carry a ref (%d%%)\n\n", s.WithRefs, s.Posts, pct(s.WithRefs, s.Posts))
 
@@ -94,6 +102,60 @@ func cmdStats(args []string) error {
 		fmt.Printf("%-24s %s %d\n", r.Name, bar(r.Count, s.ByRepo[0].Count, 20), r.Count)
 	}
 	return nil
+}
+
+// moodSpread lists the mood distribution in scale order. The average alone
+// hides the shape: 4.2 reads the same whether the wall used every value or
+// only ever said good.
+func moodSpread(by []wall.NameCount) string {
+	parts := make([]string, 0, len(by))
+	for _, m := range by {
+		parts = append(parts, fmt.Sprintf("%s %d", m.Name, m.Count))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// calibLine asks the question the landed-% above it cannot: does this wall
+// have a way to carry bad news? Counting distinct values is not enough —
+// both scales have a direction, and one that never points down is a habit
+// rather than a measurement. Silent once both ends actually occur.
+func calibLine(s wall.Stats) string {
+	outUsed := 0
+	for _, n := range []int{s.OK, s.Partial, s.Failed} {
+		if n > 0 {
+			outUsed++
+		}
+	}
+	if outUsed == 0 && len(s.ByMood) == 0 {
+		return ""
+	}
+	var gaps []string
+	if outUsed > 0 && s.Failed == 0 {
+		gaps = append(gaps, "nothing ever failed")
+	}
+	lowMood := false
+	for _, m := range s.ByMood {
+		if wall.MoodScore(m.Name) <= 2 { // rough, stuck
+			lowMood = true
+		}
+	}
+	if len(s.ByMood) > 0 && !lowMood {
+		gaps = append(gaps, "mood never went below ok")
+	}
+	line := fmt.Sprintf("calib    outcome %d of 3 values · mood %d of %d", outUsed, len(s.ByMood), len(wall.Moods))
+	if len(gaps) > 0 {
+		line += " — " + strings.Join(gaps, ", ") +
+			"\n         a scale that never points down measures nothing; check the posts, not the ratio"
+	} else {
+		line += " — both scales reach their low end"
+	}
+	// Where the messages already say it and only the grade disagrees, the
+	// wall is more honest than its own numbers — worth naming, since nothing
+	// stops such a post from being written.
+	if s.Contradicting > 0 {
+		line += fmt.Sprintf("\n         %d post(s) tell a rougher story than their grade — read them, they are the honest ones", s.Contradicting)
+	}
+	return line
 }
 
 func pct(part, whole int) int {

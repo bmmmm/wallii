@@ -289,7 +289,8 @@ function aggregate(rangeDays) {
     heat: Array.from({ length: 7 }, () => new Array(24).fill(0)),
     actors: {},
     out: { ok: 0, partial: 0, failed: 0, none: 0 },
-    moodSum: 0, moodN: 0, tookSum: 0, tookN: 0, refsN: 0, outN: 0,
+    moodSum: 0, moodN: 0, tookSum: 0, tookN: 0, tookAuto: 0, refsN: 0, outN: 0,
+    moodCounts: {}, contra: 0,
   };
   for (const e of evs) {
     const b = buckets[dayIdx[dayKey(new Date(e.t))]];
@@ -304,8 +305,9 @@ function aggregate(rangeDays) {
     agg.out[o]++;
     if (o !== "none") agg.outN++;
     const ms = MOODS[e.mood] || 0;
-    if (ms) { b.moodSum += ms; b.moodN++; agg.moodSum += ms; agg.moodN++; }
-    if (e.took) { agg.tookSum += e.took; agg.tookN++; }
+    if (ms) { b.moodSum += ms; b.moodN++; agg.moodSum += ms; agg.moodN++; agg.moodCounts[e.mood] = (agg.moodCounts[e.mood] || 0) + 1; }
+    if (e.took) { agg.tookSum += e.took; agg.tookN++; if (e.src === "auto") agg.tookAuto++; }
+    if (e.vs) agg.contra++;
     if (e.refs && e.refs.length) agg.refsN++;
     agg.repoCounts[e.repo] = (agg.repoCounts[e.repo] || 0) + 1;
     agg.topicCounts[e.topic || "(untagged)"] = (agg.topicCounts[e.topic || "(untagged)"] || 0) + 1;
@@ -517,18 +519,37 @@ function renderCoverage(agg) {
   const c = card("c-coverage", "What the wall doesn't know yet", "share of posts carrying each optional field");
   const n = agg.evs.length;
   if (!n) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
+  const derived = agg.tookAuto ? ` · ${agg.tookAuto} derived, ${agg.tookN - agg.tookAuto} measured` : "";
   const rows = [
-    ["outcome (--outcome)", agg.outN],
-    ["mood (--mood)", agg.moodN],
-    ["duration (--took)", agg.tookN],
-    ["evidence link (--ref)", agg.refsN],
+    ["outcome (--outcome)", agg.outN, ""],
+    ["mood (--mood)", agg.moodN, ""],
+    ["duration (--took)", agg.tookN, derived],
+    ["evidence link (--ref)", agg.refsN, ""],
   ];
-  for (const [label, v] of rows) {
+  for (const [label, v, note] of rows) {
     c.append(el("div", { class: "meter" },
-      el("div", { class: "row" }, el("span", { text: label }), el("span", { text: `${v}/${n} · ${pct(v, n)}%` })),
+      el("div", { class: "row" }, el("span", { text: label }), el("span", { text: `${v}/${n} · ${pct(v, n)}%${note}` })),
       el("div", { class: "track" }, el("div", { class: "fill", style: `width:${pct(v, n)}%` }))));
   }
   c.append(el("div", { class: "sub", style: "margin-top:10px", text: "ratios above (landed %, mood) are computed over reporting posts only — low coverage means a small sample, not a healthy fleet" }));
+
+  // Full coverage of a single value is not a measurement either. Unused
+  // values stay listed at zero on purpose: the gap is the finding.
+  const outUsed = ["ok", "partial", "failed"].filter(k => agg.out[k] > 0).length;
+  const moodUsed = Object.keys(agg.moodCounts).length;
+  if (agg.outN || agg.moodN) {
+    const spread = el("div", { class: "sub", style: "margin-top:14px;padding-top:12px;border-top:1px solid var(--border)" });
+    spread.append(el("div", { style: "color:var(--ink-2);font-weight:600", text: `calibration — outcome ${outUsed} of 3 values · mood ${moodUsed} of 5` }));
+    spread.append(el("div", { style: "margin-top:5px", text: ["ok", "partial", "failed"].map(k => `${k} ${agg.out[k]}`).join(" · ") }));
+    spread.append(el("div", { text: ["great", "good", "ok", "rough", "stuck"].map(k => `${k} ${agg.moodCounts[k] || 0}`).join(" · ") }));
+    const gaps = [];
+    if (agg.outN && !agg.out.failed) gaps.push("nothing ever failed");
+    if (agg.moodN && !agg.moodCounts.rough && !agg.moodCounts.stuck) gaps.push("mood never went below ok");
+    spread.append(el("div", { style: "margin-top:5px", text: gaps.length ? `${gaps.join(", ")} — a scale that never points down measures nothing` : "both scales reach their low end — the ratios above describe a spread" }));
+    // nothing stops a contradicting post from being written — this is where it surfaces
+    if (agg.contra) spread.append(el("div", { style: "margin-top:5px", text: `${agg.contra} post${agg.contra === 1 ? "" : "s"} tell a rougher story than their grade — those are the honest ones, read them` }));
+    c.append(spread);
+  }
 }
 
 function renderAgents(agg) {

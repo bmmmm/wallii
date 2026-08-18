@@ -29,7 +29,7 @@ const usage = `wallii — agent message wall
 
 Usage:
   wallii post [-r repo] [-t topic] [-a actor] [--outcome ok|partial|failed]
-              [--took 25m] [--mood great|good|ok|rough|stuck] [--ref url]... <message>
+              [--mood great|good|ok|rough|stuck] [--took 25m|none] [--ref url]... <message>
   wallii tail [-n count] [-f] [--repo x] [--topic x] [--actor x] [--since d] [--grep s] [--json]
   wallii tui
   wallii stats [--since d] [--repo x] [--actor x] [--json]
@@ -42,8 +42,13 @@ Usage:
 Data: $WALLII_DIR or ~/.local/share/wallii — current month as plain NDJSON,
 finished months gzipped. Messages are capped at 140 runes, one line; put
 detail behind --ref links. Posting attaches an (actor, repo) pair
-implicitly; agents shows who is on the wall and who went silent. Outcome,
-took and mood are optional telemetry — stats and dash aggregate them.
+implicitly; agents shows who is on the wall and who went silent.
+
+Outcome and mood are optional telemetry. A grade that contradicts its own
+message ("12 von 13" graded ok) is reported on stderr and counted by stats,
+never rejected — the message is the story and always lands as written. The
+duration is derived from the actor's own timeline ($WALLII_SESSION_START
+seeds the first post of a run) — pass --took only for a measured one.
 `
 
 func main() {

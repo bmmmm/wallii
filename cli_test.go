@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,33 @@ func TestMoodWord(t *testing.T) {
 		if got := moodWord(avg); got != want {
 			t.Errorf("moodWord(%.1f) = %q, want %q", avg, got, want)
 		}
+	}
+}
+
+// The wall this shipped for reported 78 ok / 5 partial / 0 failed and
+// 27 great / 49 good / 7 ok — every value "in use" by a naive count, yet
+// incapable of carrying a single piece of bad news. Counting distinct
+// values would have called that healthy.
+func TestCalibLineNamesTheMissingLowEnd(t *testing.T) {
+	degenerate := wall.Stats{
+		OK: 78, Partial: 5, Failed: 0,
+		ByMood: []wall.NameCount{{Name: "great", Count: 27}, {Name: "good", Count: 49}, {Name: "ok", Count: 7}},
+	}
+	got := calibLine(degenerate)
+	for _, want := range []string{"nothing ever failed", "mood never went below ok"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	healthy := wall.Stats{
+		OK: 40, Partial: 6, Failed: 3,
+		ByMood: []wall.NameCount{{Name: "good", Count: 20}, {Name: "ok", Count: 9}, {Name: "rough", Count: 4}},
+	}
+	if got := calibLine(healthy); !strings.Contains(got, "reach their low end") {
+		t.Errorf("a wall that reports failures must read as calibrated, got:\n%s", got)
+	}
+	if got := calibLine(wall.Stats{Posts: 12}); got != "" {
+		t.Errorf("no telemetry at all is a coverage question, not a calibration one: %q", got)
 	}
 }
 
@@ -148,6 +176,131 @@ func TestPostRejectsZeroTook(t *testing.T) {
 	t.Setenv("WALLII_DIR", t.TempDir())
 	if err := cmdPost([]string{"-r", "x", "--took", "0s", "zero duration"}); err == nil {
 		t.Fatal("--took 0s accepted — it would be silently dropped by omitempty")
+	}
+}
+
+// The wall is its own clock: every duration on it before this existed was
+// rounded to five minutes, so the derived value has to be defensible at the
+// edges or it repeats that mistake with a machine's authority.
+func TestAutoTookBounds(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	prior := func(ago time.Duration) []wall.Event {
+		return []wall.Event{{TS: now.Add(-2 * time.Hour)}, {TS: now.Add(-ago)}}
+	}
+	cases := []struct {
+		name  string
+		prior []wall.Event
+		want  time.Duration
+		ok    bool
+	}{
+		{"no history at all", nil, 0, false},
+		{"batch backfill, seconds apart", prior(3 * time.Second), 0, false},
+		{"just under the floor", prior(59 * time.Second), 0, false},
+		{"at the floor", prior(time.Minute), time.Minute, true},
+		{"a normal work slice", prior(25 * time.Minute), 25 * time.Minute, true},
+		{"at the ceiling", prior(8 * time.Hour), 8 * time.Hour, true},
+		{"a night in the gap", prior(37 * time.Hour), 0, false},
+	}
+	for _, c := range cases {
+		got, ok := autoTook(c.prior, now)
+		if ok != c.ok || got != c.want {
+			t.Errorf("%s: autoTook = (%v, %v), want (%v, %v)", c.name, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// The later of the two bounds wins: both mark a point where this piece of
+// work demonstrably had not started yet, so the tighter one is the truthful
+// one.
+func TestAutoTookPrefersLaterOfSessionStartAndLastPost(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	t.Setenv("WALLII_SESSION_START", now.Add(-20*time.Minute).Format(time.RFC3339))
+	if got, ok := autoTook([]wall.Event{{TS: now.Add(-3 * time.Hour)}}, now); !ok || got != 20*time.Minute {
+		t.Errorf("session start after the last post: got (%v, %v), want 20m", got, ok)
+	}
+	if got, ok := autoTook([]wall.Event{{TS: now.Add(-5 * time.Minute)}}, now); !ok || got != 5*time.Minute {
+		t.Errorf("last post after session start: got (%v, %v), want 5m", got, ok)
+	}
+	// unix seconds, because a shell hook reaches for `date +%s` first
+	t.Setenv("WALLII_SESSION_START", strconv.FormatInt(now.Add(-45*time.Minute).Unix(), 10))
+	if got, ok := autoTook(nil, now); !ok || got != 45*time.Minute {
+		t.Errorf("unix-seconds session start: got (%v, %v), want 45m", got, ok)
+	}
+	// garbage must not fabricate a duration
+	t.Setenv("WALLII_SESSION_START", "yesterday-ish")
+	if _, ok := autoTook(nil, now); ok {
+		t.Error("unparseable session start produced a duration")
+	}
+}
+
+func TestPostDerivesTookFromOwnHistory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_ACTOR", "tester")
+	t.Setenv("WALLII_SESSION_START", strconv.FormatInt(time.Now().Add(-30*time.Minute).Unix(), 10))
+
+	if err := cmdPost([]string{"-r", "x", "-t", "fix", "first post of the session"}); err != nil {
+		t.Fatal(err)
+	}
+	// second post follows within seconds — a backfill, not half an hour of work
+	if err := cmdPost([]string{"-r", "x", "-t", "fix", "second post, same minute"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdPost([]string{"-r", "x", "-t", "fix", "--took", "none", "explicitly none"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdPost([]string{"-r", "x", "-t", "fix", "--took", "25m", "measured"}); err != nil {
+		t.Fatal(err)
+	}
+	evs, _, err := wall.ReadLast(dir, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 4 {
+		t.Fatalf("expected 4 posts, got %d", len(evs))
+	}
+	if evs[0].TookSrc != wall.TookAuto || evs[0].TookS < 1700 || evs[0].TookS > 1900 {
+		t.Errorf("first post should carry ~30m derived from session start, got %ds src=%q", evs[0].TookS, evs[0].TookSrc)
+	}
+	if evs[1].TookS != 0 || evs[1].TookSrc != "" {
+		t.Errorf("a post seconds after the previous one must carry no took, got %ds src=%q", evs[1].TookS, evs[1].TookSrc)
+	}
+	if evs[2].TookS != 0 {
+		t.Errorf("--took none must disable derivation, got %ds", evs[2].TookS)
+	}
+	if evs[3].TookS != 1500 || evs[3].TookSrc != "" {
+		t.Errorf("explicit --took must stay measured, got %ds src=%q", evs[3].TookS, evs[3].TookSrc)
+	}
+}
+
+// A message that reports its own friction must never be more expensive to
+// post than a bland one — otherwise the wall keeps its ratios and loses the
+// story. The grade mismatch is noted on stderr and counted in stats; the
+// post itself lands unchanged, word for word.
+func TestPostKeepsContradictingMessagesVerbatim(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	contradicting := [][]string{
+		{"-r", "x", "-t", "ci", "--outcome", "ok", "12 von 13 replicas green"},
+		{"-r", "x", "-t", "fix", "--mood", "good", "der native Pfad war Sackgasse, der Shim tut es"},
+	}
+	for _, args := range contradicting {
+		if err := cmdPost(args); err != nil {
+			t.Errorf("args %v rejected — a post must never cost more for being honest: %v", args, err)
+		}
+	}
+	evs, _, err := wall.ReadLast(dir, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("expected both posts on the wall, got %d", len(evs))
+	}
+	if evs[0].Msg != "12 von 13 replicas green" || evs[1].Msg != "der native Pfad war Sackgasse, der Shim tut es" {
+		t.Errorf("messages must land verbatim, got %q / %q", evs[0].Msg, evs[1].Msg)
+	}
+	if got := wall.Compute(evs).Contradicting; got != 2 {
+		t.Errorf("stats should surface both contradictions, got %d", got)
 	}
 }
 
