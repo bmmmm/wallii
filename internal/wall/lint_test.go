@@ -30,8 +30,8 @@ func TestContradictionsSpotsLeftovers(t *testing.T) {
 	noted := []string{
 		"12 von 13 Alerts wieder scharf, der Exporter kippt weiter weg",
 		"8 of 10 flaky specs fixed, pushed to main",
-		"staging DNS war still tot nach dem Rollout, jetzt umgebogen",
 		"deps bumped, two suites still failing",
+		"retry budget raised, der Consumer haengt noch immer offen",
 		"import path migration done, the legacy shim is parked for now",
 		"cache layer landed, invalidation not yet wired",
 		"queue drained except for the poison messages",
@@ -43,6 +43,14 @@ func TestContradictionsSpotsLeftovers(t *testing.T) {
 		}
 	}
 	quiet := []string{
+		// German "still" means *silently*, not *not yet* — and this very
+		// fixture says so: the DNS was silently dead and is "jetzt umgebogen".
+		// It sat in the noted list until 2026-08-20, which made the marker
+		// fire on the everyday vocabulary of a German-written wall
+		// ("stirbt still", "still gruen", "still falsch"). The English form
+		// below still fires; only the German reading is exonerated.
+		"staging DNS war still tot nach dem Rollout, jetzt umgebogen",
+		"der Job stirbt still, Exit 127 nach der letzten Log-Zeile — Preamble drin",
 		"rest timer in the checkout poller reset to 30s, no more double charge",
 		"rest endpoint returns 204 on an empty cart instead of 500",
 		"3 von 3 Replicas gruen, Alerting zieht",

@@ -38,7 +38,15 @@ var leftoverMarkers = []*regexp.Regexp{
 	wordRe("teilweise", "partially", "partly"),
 	wordRe("bis auf", "except for", "apart from"),
 	wordRe("noch nicht", "not yet", "todo", "to do"),
-	wordRe("still (?:broken|failing|open|offen|tot|dead|red|missing|fehlt)"),
+	// English "still" only. German "still" means *silently*, not *not yet* —
+	// "war still tot", "stirbt still", "still grün" all describe a condition
+	// that was found and fixed, the opposite of a leftover. Pairing English
+	// "still" with German state words fired on exactly the vocabulary this
+	// wall is written in (2026-08-17, servers: "Split-DNS B-Seite war still
+	// tot (bind-interfaces-Race). Repariert" — graded ok, and correctly so).
+	wordRe("still (?:broken|failing|open|dead|red|missing)"),
+	// The German equivalent is "noch immer"/"immer noch", never bare "still".
+	wordRe("(?:noch immer|immer noch) (?:offen|tot|kaputt|rot|fehlt|defekt)"),
 	wordRe("nur (?:der|die|das|den) erste", "only the first"),
 }
 
