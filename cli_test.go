@@ -46,7 +46,7 @@ func TestCalibLineNamesTheMissingLowEnd(t *testing.T) {
 		OK: 78, Partial: 5, Failed: 0,
 		ByMood: []wall.NameCount{{Name: "great", Count: 27}, {Name: "good", Count: 49}, {Name: "ok", Count: 7}},
 	}
-	got := calibLine(degenerate)
+	got := calibLine(degenerate, "")
 	for _, want := range []string{"nothing ever failed", "mood never went below ok"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -56,10 +56,19 @@ func TestCalibLineNamesTheMissingLowEnd(t *testing.T) {
 		OK: 40, Partial: 6, Failed: 3,
 		ByMood: []wall.NameCount{{Name: "good", Count: 20}, {Name: "ok", Count: 9}, {Name: "rough", Count: 4}},
 	}
-	if got := calibLine(healthy); !strings.Contains(got, "reach their low end") {
+	if got := calibLine(healthy, ""); !strings.Contains(got, "reach their low end") {
 		t.Errorf("a wall that reports failures must read as calibrated, got:\n%s", got)
 	}
-	if got := calibLine(wall.Stats{Posts: 12}); got != "" {
+	// The follow-up command must carry the same window the numbers came from.
+	windowed := wall.Stats{OK: 9, Contradicting: 2,
+		ByMood: []wall.NameCount{{Name: "good", Count: 9}}}
+	if got := calibLine(windowed, "14d"); !strings.Contains(got, "tail --contradicting --since 14d") {
+		t.Errorf("the hint must name a runnable command scoped to the same window, got:\n%s", got)
+	}
+	if got := calibLine(windowed, ""); strings.Contains(got, "--since") {
+		t.Errorf("without a window the hint must not invent one, got:\n%s", got)
+	}
+	if got := calibLine(wall.Stats{Posts: 12}, ""); got != "" {
 		t.Errorf("no telemetry at all is a coverage question, not a calibration one: %q", got)
 	}
 }
@@ -301,6 +310,63 @@ func TestPostKeepsContradictingMessagesVerbatim(t *testing.T) {
 	}
 	if got := wall.Compute(evs).Contradicting; got != 2 {
 		t.Errorf("stats should surface both contradictions, got %d", got)
+	}
+}
+
+// stats counts the contradicting posts and calls them the honest ones — and
+// used to offer no way to reach them. The filter is that way, so it has to
+// select exactly those and still compose with the other filters: a listing
+// that quietly widens the window is worse than no listing.
+func TestTailContradictingFilterSelectsOnlyTheHonestOnes(t *testing.T) {
+	honest := wall.Event{Repo: "x", Actor: "a", Outcome: wall.OutcomeOK, Msg: "12 von 13 replicas green"}
+	bland := wall.Event{Repo: "x", Actor: "a", Outcome: wall.OutcomeOK, Msg: "replicas green"}
+	otherRepo := wall.Event{Repo: "y", Actor: "a", Outcome: wall.OutcomeOK, Msg: "12 von 13 replicas green"}
+
+	// Guard the premise: without it this test would pass on an empty selector.
+	if len(wall.Contradictions(honest)) == 0 {
+		t.Fatal("fixture is not contradicting — the test would prove nothing")
+	}
+	if len(wall.Contradictions(bland)) != 0 {
+		t.Fatal("bland fixture contradicts — pick a different message")
+	}
+
+	f := filter{contradicting: true}
+	if !f.match(honest) {
+		t.Error("a contradicting post must survive the filter")
+	}
+	if f.match(bland) {
+		t.Error("a post whose grade matches its message must be filtered out")
+	}
+
+	scoped := filter{contradicting: true, repo: "x"}
+	if scoped.match(otherRepo) {
+		t.Error("--contradicting must compose with --repo, not override it")
+	}
+
+	// Off by default: every other listing keeps its current contents.
+	if !(filter{}).match(bland) {
+		t.Error("without the flag the filter must not drop anything")
+	}
+}
+
+// Selecting the posts is only half of it — the reason has to be readable,
+// and only where it was asked for.
+func TestRendererPrintsContradictionReasonOnlyWhenAsked(t *testing.T) {
+	e := wall.Event{Repo: "x", Topic: "ci", Actor: "a", TS: time.Now(),
+		Outcome: wall.OutcomeOK, Msg: "12 von 13 replicas green"}
+
+	var quiet, loud strings.Builder
+	(&renderer{}).print(&quiet, e, false)
+	(&renderer{showContradictions: true}).print(&loud, e, false)
+
+	if strings.Contains(quiet.String(), "↳") {
+		t.Errorf("default tail must not print reasons, got:\n%s", quiet.String())
+	}
+	if !strings.Contains(loud.String(), "↳") {
+		t.Errorf("--contradicting must name the reason, got:\n%s", loud.String())
+	}
+	if !strings.Contains(loud.String(), e.Msg) {
+		t.Errorf("the post itself must still be printed, got:\n%s", loud.String())
 	}
 }
 

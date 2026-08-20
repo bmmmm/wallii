@@ -65,7 +65,7 @@ func cmdStats(args []string) error {
 	if s.MoodCount > 0 {
 		fmt.Printf("mood     %s (%.1f) from %d posts — %s\n", moodWord(s.MoodAvg), s.MoodAvg, s.MoodCount, moodSpread(s.ByMood))
 	}
-	if calib := calibLine(s); calib != "" {
+	if calib := calibLine(s, *sinceS); calib != "" {
 		fmt.Println(calib)
 	}
 	if s.TookCount > 0 {
@@ -119,7 +119,10 @@ func moodSpread(by []wall.NameCount) string {
 // have a way to carry bad news? Counting distinct values is not enough —
 // both scales have a direction, and one that never points down is a habit
 // rather than a measurement. Silent once both ends actually occur.
-func calibLine(s wall.Stats) string {
+// sinceS is echoed into the follow-up command so the listing covers exactly
+// the window the numbers came from — a hint that silently widens the range is
+// worse than none.
+func calibLine(s wall.Stats, sinceS string) string {
 	outUsed := 0
 	for _, n := range []int{s.OK, s.Partial, s.Failed} {
 		if n > 0 {
@@ -152,8 +155,15 @@ func calibLine(s wall.Stats) string {
 	// Where the messages already say it and only the grade disagrees, the
 	// wall is more honest than its own numbers — worth naming, since nothing
 	// stops such a post from being written.
+	// Naming a count and then offering no way to reach it is an instruction
+	// nobody can follow — the flag is half the message.
 	if s.Contradicting > 0 {
-		line += fmt.Sprintf("\n         %d post(s) tell a rougher story than their grade — read them, they are the honest ones", s.Contradicting)
+		sinceHint := ""
+		if sinceS != "" {
+			sinceHint = " --since " + sinceS
+		}
+		line += fmt.Sprintf("\n         %d post(s) tell a rougher story than their grade — they are the honest ones:"+
+			"\n         wallii tail --contradicting%s -n 0", s.Contradicting, sinceHint)
 	}
 	return line
 }

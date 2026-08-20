@@ -17,9 +17,16 @@ import (
 type filter struct {
 	repo, topic, actor, grep string
 	since                    time.Time
+	// contradicting keeps only posts whose grade disagrees with their own
+	// message. stats counts them and calls them the honest ones; without
+	// this there was no way to actually read them.
+	contradicting bool
 }
 
 func (f filter) match(e wall.Event) bool {
+	if f.contradicting && len(wall.Contradictions(e)) == 0 {
+		return false
+	}
 	if f.repo != "" && !strings.EqualFold(e.Repo, f.repo) {
 		return false
 	}
@@ -63,6 +70,7 @@ func cmdTail(args []string) error {
 	actor := fs.String("actor", "", "filter: actor")
 	sinceS := fs.String("since", "", "filter: 2006-01-02, 36h or 3d")
 	grep := fs.String("grep", "", "filter: substring across all fields")
+	contra := fs.Bool("contradicting", false, "filter: only posts whose grade disagrees with their message")
 	asJSON := fs.Bool("json", false, "raw NDJSON output")
 	fs.Parse(args)
 
@@ -70,7 +78,7 @@ func cmdTail(args []string) error {
 	if err != nil {
 		return err
 	}
-	flt := filter{repo: *repo, topic: *topic, actor: *actor, grep: *grep, since: since}
+	flt := filter{repo: *repo, topic: *topic, actor: *actor, grep: *grep, since: since, contradicting: *contra}
 
 	dir, err := wall.Dir()
 	if err != nil {
@@ -82,6 +90,9 @@ func cmdTail(args []string) error {
 	}
 	reportStats(stats)
 	r := newRenderer()
+	// Only under the flag: naming the reason is the point when you asked for
+	// these posts, and noise in every other listing.
+	r.showContradictions = *contra
 	for _, e := range events {
 		r.print(os.Stdout, e, *asJSON)
 	}
@@ -138,6 +149,10 @@ func fileSize(path string) int64 {
 type renderer struct {
 	color   bool
 	lastDay string
+	// showContradictions prints, under each post, why its grade disagrees
+	// with its own message. Off by default: on a normal tail it would be
+	// noise, and the stats line already carries the count.
+	showContradictions bool
 }
 
 func newRenderer() *renderer {
@@ -173,11 +188,35 @@ func outcomeGlyph(outcome string) (string, int) {
 }
 
 func (r *renderer) print(w io.Writer, e wall.Event, asJSON bool) {
+	var notes []string
+	if r.showContradictions {
+		notes = wall.Contradictions(e)
+	}
 	if asJSON {
 		b, _ := json.Marshal(e)
+		// Carry the reasons without changing the NDJSON schema for every
+		// other caller: the extra key exists only when it has content.
+		if len(notes) > 0 {
+			var m map[string]any
+			if json.Unmarshal(b, &m) == nil {
+				m["contradictions"] = notes
+				if b2, err := json.Marshal(m); err == nil {
+					b = b2
+				}
+			}
+		}
 		fmt.Fprintln(w, string(b))
 		return
 	}
+	defer func() {
+		for _, n := range notes {
+			if r.color {
+				fmt.Fprintf(w, "                    \x1b[2m↳ %s\x1b[0m\n", n)
+			} else {
+				fmt.Fprintf(w, "                    ↳ %s\n", n)
+			}
+		}
+	}()
 	ts := e.TS.Local()
 	if day := ts.Format("2006-01-02"); day != r.lastDay {
 		r.lastDay = day
