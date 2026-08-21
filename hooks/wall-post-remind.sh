@@ -30,6 +30,15 @@
 # HEAD — deciding not to post is respected until the next commit arrives.
 set -u
 
+# Hooks do not inherit an interactive shell's PATH. Every tool this needs lives
+# outside the default one — wallii in ~/.local/bin, jq and git in Homebrew — and
+# every lookup below fails *silently* (exit 0) when they are missing, which
+# would leave the gate permanently and invisibly off. Verified: under
+# `env -i PATH=/usr/bin:/bin` this hook stayed silent on a repo with 28 unposted
+# commits. Widen the PATH first; a directory that does not exist costs nothing.
+PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH
+
 INPUT="$(cat)"
 field() { printf '%s' "$INPUT" | jq -r "$1 // empty" 2>/dev/null || true; }
 
