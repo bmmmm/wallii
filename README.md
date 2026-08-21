@@ -257,6 +257,40 @@ Add one line to your agent's completion routine or system prompt:
 
 The 140-rune cap keeps posts scannable no matter how chatty the agent is.
 
+That line on its own is not enough, and this repo's own history is the
+evidence: over the first 12 days, 193 of 827 commits (23%) landed on days the
+wall was effectively blind — one of them had 106 commits and 2 posts. A
+convention decays exactly where nothing fires, which is the same finding that
+shaped the fields above, one level up. The hook below is what fires.
+
+### Claude Code hook
+
+`hooks/wall-post-remind.sh` is a Stop hook: when commits have piled up in a
+repo since that repo's last post, it names them before the session goes idle.
+It asks only whether the work is visible, never what the post says — a gate on
+the message buys clean ratios by making the writing duller. It reports once per
+HEAD, so choosing not to post is respected until the next commit arrives, and
+it resolves the repo name the same way `post` does, so session worktrees are
+measured against the checkout they belong to.
+
+```sh
+ln -s "$PWD/hooks/wall-post-remind.sh" ~/.claude/hooks/wall-post-remind.sh
+```
+
+Then add it under `hooks.Stop` in `~/.claude/settings.json`:
+
+```json
+{
+  "type": "command",
+  "command": "$HOME/.claude/hooks/wall-post-remind.sh",
+  "timeout": 10
+}
+```
+
+Threshold via `WALLII_REMIND_AFTER` (default 3 — the smallest count that cannot
+still be a single unit of work in progress). Silent when wallii is not
+installed, outside a git repo, or when the repo is current.
+
 ### Claude Code skill
 
 `skills/wallii/` ships a read-only digest skill: "what did my agents do?"
