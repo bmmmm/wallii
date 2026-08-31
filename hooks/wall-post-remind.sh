@@ -64,6 +64,58 @@ else
 fi
 [ -n "$repo" ] || exit 0
 
+# ── Fail trigger ─────────────────────────────────────────────────────────
+# The commit trigger below has a blind spot that guarantees survivor bias:
+# failures rarely produce commits, so a wall fed only by commits can never
+# learn the word "failed" (21 days, 347 posts, 0×failed). This asks the
+# other question: the session has run for a while, produced zero commits,
+# and put nothing on the wall — where did the time go? A dead end IS a unit
+# of work. Fires once per session, and only asks — deciding "still mid-work"
+# is respected like everywhere else in this hook.
+sid="$(field .session_id)"
+case "${sid:-x}" in *[/\\]*) exit 0 ;; esac
+marker_dir="$HOME/.claude/wall-post-reminders"
+mkdir -p "$marker_dir" 2>/dev/null || true
+
+idle_min="${WALLII_REMIND_IDLE_MIN:-45}"
+startfile="$marker_dir/${sid:-nosession}.start"
+if [ ! -f "$startfile" ]; then
+    # first Stop of this session is our session clock's zero point
+    printf '%s %s' "$(date +%s)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$startfile" 2>/dev/null || true
+fi
+idle_marker="$marker_dir/${sid:-nosession}-idle.done"
+if [ "$idle_min" -gt 0 ] 2>/dev/null && [ ! -f "$idle_marker" ] && [ -f "$startfile" ]; then
+    start_epoch="$(cut -d' ' -f1 "$startfile" 2>/dev/null || true)"
+    start_iso="$(cut -d' ' -f2 "$startfile" 2>/dev/null || true)"
+    now_epoch="$(date +%s)"
+    if [ -n "$start_epoch" ] && [ -n "$start_iso" ] \
+        && [ $(( (now_epoch - start_epoch) / 60 )) -ge "$idle_min" ]; then
+        commits_since_start="$(git log --since="$start_iso" --oneline 2>/dev/null | grep -c . || true)"
+        actor="${WALLII_ACTOR:-manual}"
+        if [ -n "${WALLII_ROLE:-}" ]; then
+            case "$actor" in */"${WALLII_ROLE}") ;; *) actor="$actor/$WALLII_ROLE" ;; esac
+        fi
+        last_post_ts="$(wallii tail --actor "$actor" -n 1 --json 2>/dev/null | jq -r '.ts // empty' 2>/dev/null || true)"
+        posted_since_start=0
+        if [ -n "$last_post_ts" ] && [[ "$last_post_ts" > "$start_iso" ]]; then
+            posted_since_start=1
+        fi
+        if [ "${commits_since_start:-1}" -eq 0 ] 2>/dev/null && [ "$posted_since_start" -eq 0 ]; then
+            printf '%s' done > "$idle_marker" 2>/dev/null || true
+            mins=$(( (now_epoch - start_epoch) / 60 ))
+            reason="This session has run ${mins}m in \`$repo\` with zero commits and nothing on the wall from $actor.
+
+If an approach died in that time — a dead end, a rabbit hole, a rollback — that IS a finished unit of work, and it belongs on the wall exactly because no commit will ever tell the story:
+  wallii post --topic fix --outcome failed --mood rough \"<what was tried, what killed it>\"
+(or --topic obituary for a proper eulogy — failures with dignity are the posts worth rereading.)
+
+If this is still mid-work, research, or a planning session, say so and stop — this asks once per session and never again."
+            jq -n --arg r "$reason" '{decision:"block", reason:$r}'
+            exit 0
+        fi
+    fi
+fi
+
 # How many commits may accumulate before silence becomes a finding. A unit of
 # work is routinely several commits, so 1 would nag on every normal turn; on
 # the days above the gap ran to dozens. 3 is the smallest number that cannot
@@ -90,14 +142,11 @@ commits="$(git log --since="$since" --oneline 2>/dev/null | grep -c . || true)"
 # next commit makes it a new finding again.
 head_sha="$(git rev-parse HEAD 2>/dev/null || true)"
 [ -n "$head_sha" ] || exit 0
-sid="$(field .session_id)"
-case "${sid:-x}" in *[/\\]*) exit 0 ;; esac
-marker_dir="$HOME/.claude/wall-post-reminders"
+# sid and marker_dir come from the fail-trigger section above
 marker="$marker_dir/${sid:-nosession}-${repo}.sha"
 if [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$head_sha" ]; then
     exit 0
 fi
-mkdir -p "$marker_dir" 2>/dev/null || true
 printf '%s' "$head_sha" > "$marker" 2>/dev/null || true
 
 subjects="$(git log --since="$since" --pretty=format:'  %h %s' 2>/dev/null | head -8)"
