@@ -32,6 +32,13 @@ type Stats struct {
 	// surface instead.
 	Contradicting int `json:"contradicting"`
 
+	// Dialogue: reactions and challenges are replies, not work, so they stay
+	// out of Posts — but a wall where they are zero is a wall nobody reads.
+	Reactions      int         `json:"reactions,omitempty"`
+	Challenges     int         `json:"challenges,omitempty"`
+	ChallengesOpen int         `json:"challenges_open,omitempty"`
+	ByChallenged   []NameCount `json:"by_challenged,omitempty"`
+
 	ByRepo  []NameCount  `json:"by_repo"`
 	ByTopic []NameCount  `json:"by_topic"`
 	ByMood  []NameCount  `json:"by_mood"`
@@ -67,7 +74,26 @@ func Compute(evs []Event) Stats {
 	moodSum := 0
 	actorMoodSum := map[string]int{}
 
+	// id → actor of the challenged event, so ByChallenged can name whose
+	// posts draw doubt (the parent may be any kind, including a reply)
+	actorByID := map[string]string{}
 	for _, e := range evs {
+		actorByID[e.ID()] = e.Actor
+	}
+	challenged := map[string]int{}
+
+	for _, e := range evs {
+		switch e.Kind {
+		case KindReact:
+			s.Reactions++
+			continue
+		case KindChallenge:
+			s.Challenges++
+			if a, ok := actorByID[e.Parent]; ok {
+				challenged[a]++
+			}
+			continue
+		}
 		if e.Kind != "" {
 			continue
 		}
@@ -120,6 +146,10 @@ func Compute(evs []Event) Stats {
 		}
 	}
 
+	if s.Challenges > 0 {
+		s.ChallengesOpen = len(OpenChallenges(evs))
+		s.ByChallenged = sortedCounts(challenged)
+	}
 	s.Repos = len(repos)
 	s.Actors = len(actors)
 	if s.MoodCount > 0 {

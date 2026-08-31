@@ -75,7 +75,22 @@ func cmdStats(args []string) error {
 		}
 		fmt.Println(took)
 	}
-	fmt.Printf("refs     %d/%d posts carry a ref (%d%%)\n\n", s.WithRefs, s.Posts, pct(s.WithRefs, s.Posts))
+	fmt.Printf("refs     %d/%d posts carry a ref (%d%%)\n", s.WithRefs, s.Posts, pct(s.WithRefs, s.Posts))
+	// A wall with zero dialogue is a wall nobody reads — say so instead of
+	// hiding an empty line.
+	if s.Reactions > 0 || s.Challenges > 0 {
+		line := fmt.Sprintf("dialog   %d reaction(s) · %d challenge(s)", s.Reactions, s.Challenges)
+		if s.Challenges > 0 {
+			line += fmt.Sprintf(" (%d open)", s.ChallengesOpen)
+		}
+		if len(s.ByChallenged) > 0 {
+			line += fmt.Sprintf(" — most challenged: %s (%d)", orDash(s.ByChallenged[0].Name), s.ByChallenged[0].Count)
+		}
+		fmt.Println(line)
+	} else {
+		fmt.Println("dialog   none — nobody answered anyone; react with: wallii tail --ids, then wallii react <id> \"…\"")
+	}
+	fmt.Println()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "ACTOR\tPOSTS\tREPOS\tLANDED\tMOOD\tREFS")

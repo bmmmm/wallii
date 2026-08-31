@@ -71,6 +71,7 @@ func cmdTail(args []string) error {
 	sinceS := fs.String("since", "", "filter: 2006-01-02, 36h or 3d")
 	grep := fs.String("grep", "", "filter: substring across all fields")
 	contra := fs.Bool("contradicting", false, "filter: only posts whose grade disagrees with their message")
+	ids := fs.Bool("ids", false, "show event IDs (for wallii react / challenge)")
 	asJSON := fs.Bool("json", false, "raw NDJSON output")
 	fs.Parse(args)
 
@@ -93,8 +94,17 @@ func cmdTail(args []string) error {
 	// Only under the flag: naming the reason is the point when you asked for
 	// these posts, and noise in every other listing.
 	r.showContradictions = *contra
+	r.showIDs = *ids
+	// Replies render indented under the event they answer, when that event is
+	// in the window; a reply whose parent fell outside still shows, marked as
+	// answering something further up.
+	threads := wall.Thread(events)
+	shown := map[string]bool{}
 	for _, e := range events {
-		r.print(os.Stdout, e, *asJSON)
+		if (e.Kind == wall.KindReact || e.Kind == wall.KindChallenge) && shown[e.ID()] {
+			continue
+		}
+		r.printThread(os.Stdout, e, threads, shown, *asJSON)
 	}
 	if !*follow {
 		if len(events) == 0 && !*asJSON {
@@ -153,6 +163,10 @@ type renderer struct {
 	// with its own message. Off by default: on a normal tail it would be
 	// noise, and the stats line already carries the count.
 	showContradictions bool
+	// showIDs prints each event's derived ID — the handle react/challenge
+	// take. Off by default: a column of hex on every listing is noise until
+	// you want to answer something.
+	showIDs bool
 }
 
 func newRenderer() *renderer {
@@ -188,6 +202,91 @@ func outcomeGlyph(outcome string) (string, int) {
 }
 
 func (r *renderer) print(w io.Writer, e wall.Event, asJSON bool) {
+	r.printAt(w, e, asJSON, 0)
+}
+
+// printThread prints e and, indented below it, every reply that answers it
+// (recursively — a challenge can be answered, and the answer challenged).
+func (r *renderer) printThread(w io.Writer, e wall.Event, threads map[string][]wall.Event, shown map[string]bool, asJSON bool) {
+	r.printAt(w, e, asJSON, 0)
+	shown[e.ID()] = true
+	r.printChildren(w, e.ID(), threads, shown, asJSON, 1)
+}
+
+func (r *renderer) printChildren(w io.Writer, id string, threads map[string][]wall.Event, shown map[string]bool, asJSON bool, depth int) {
+	for _, c := range threads[id] {
+		if shown[c.ID()] {
+			continue
+		}
+		shown[c.ID()] = true
+		r.printAt(w, c, asJSON, depth)
+		r.printChildren(w, c.ID(), threads, shown, asJSON, depth+1)
+	}
+}
+
+// replyGlyph marks dialogue in the feed: a react answers, a challenge doubts.
+func replyGlyph(kind string) (string, int) {
+	if kind == wall.KindChallenge {
+		return "⚔", 3
+	}
+	return "↳", 0
+}
+
+// printReply renders a react/challenge line indented under its parent. depth
+// 0 means the parent is not in the rendered window (or -f streamed it in), so
+// the line names what it answers instead of hanging in the air.
+func (r *renderer) printReply(w io.Writer, e wall.Event, depth int) {
+	r.dayHeader(w, e.TS.Local())
+	indent := strings.Repeat("  ", depth)
+	glyph, gc := replyGlyph(e.Kind)
+	orphan := ""
+	if depth == 0 {
+		orphan = " (re " + e.Parent + ")"
+	}
+	id := ""
+	if r.showIDs {
+		id = e.ID() + "  "
+	}
+	if !r.color {
+		line := fmt.Sprintf("%s%s         %s%s %s: %s%s", id, e.TS.Local().Format("15:04"), indent, glyph, orDash(e.Actor), e.Msg, orphan)
+		if len(e.Refs) > 0 {
+			line += "  " + strings.Join(e.Refs, " ")
+		}
+		fmt.Fprintln(w, line)
+		return
+	}
+	mark := glyph
+	if gc != 0 {
+		mark = fmt.Sprintf("\x1b[3%dm%s\x1b[0m", gc, glyph)
+	}
+	if id != "" {
+		id = fmt.Sprintf("\x1b[2m%s\x1b[0m  ", e.ID())
+	}
+	if orphan != "" {
+		orphan = fmt.Sprintf(" \x1b[2m(re %s)\x1b[0m", e.Parent)
+	}
+	refs := ""
+	for i, u := range e.Refs {
+		refs += fmt.Sprintf("  \x1b]8;;%s\x1b\\\x1b[4;34m↗%d\x1b[0m\x1b]8;;\x1b\\", u, i+1)
+	}
+	fmt.Fprintf(w, "%s\x1b[2m%s\x1b[0m         %s%s \x1b[2m%s:\x1b[0m %s%s%s\n",
+		id, e.TS.Local().Format("15:04"), indent, mark, orDash(e.Actor), e.Msg, orphan, refs)
+}
+
+func (r *renderer) dayHeader(w io.Writer, ts time.Time) {
+	day := ts.Format("2006-01-02")
+	if day == r.lastDay {
+		return
+	}
+	r.lastDay = day
+	if r.color {
+		fmt.Fprintf(w, "\x1b[2m── %s ──\x1b[0m\n", day)
+	} else {
+		fmt.Fprintf(w, "── %s ──\n", day)
+	}
+}
+
+func (r *renderer) printAt(w io.Writer, e wall.Event, asJSON bool, depth int) {
 	var notes []string
 	if r.showContradictions {
 		notes = wall.Contradictions(e)
@@ -208,6 +307,10 @@ func (r *renderer) print(w io.Writer, e wall.Event, asJSON bool) {
 		fmt.Fprintln(w, string(b))
 		return
 	}
+	if e.Kind == wall.KindReact || e.Kind == wall.KindChallenge {
+		r.printReply(w, e, depth)
+		return
+	}
 	defer func() {
 		for _, n := range notes {
 			if r.color {
@@ -218,12 +321,12 @@ func (r *renderer) print(w io.Writer, e wall.Event, asJSON bool) {
 		}
 	}()
 	ts := e.TS.Local()
-	if day := ts.Format("2006-01-02"); day != r.lastDay {
-		r.lastDay = day
+	r.dayHeader(w, ts)
+	id := ""
+	if r.showIDs {
+		id = e.ID() + "  "
 		if r.color {
-			fmt.Fprintf(w, "\x1b[2m── %s ──\x1b[0m\n", day)
-		} else {
-			fmt.Fprintf(w, "── %s ──\n", day)
+			id = fmt.Sprintf("\x1b[2m%s\x1b[0m  ", e.ID())
 		}
 	}
 	repo := pad(e.Repo, 16)
@@ -234,7 +337,7 @@ func (r *renderer) print(w io.Writer, e wall.Event, asJSON bool) {
 		took = " (" + fmtTook(e.TookS) + ")"
 	}
 	if !r.color {
-		line := fmt.Sprintf("%s  %s %s %s %s%s", ts.Format("15:04"), repo, topic, glyph, e.Msg, took)
+		line := fmt.Sprintf("%s%s  %s %s %s %s%s", id, ts.Format("15:04"), repo, topic, glyph, e.Msg, took)
 		if len(e.Refs) > 0 {
 			line += "  " + strings.Join(e.Refs, " ")
 		}
@@ -263,8 +366,8 @@ func (r *renderer) print(w io.Writer, e wall.Event, asJSON bool) {
 	if e.Actor != "" {
 		actor = fmt.Sprintf("  \x1b[2m·%s\x1b[0m", e.Actor)
 	}
-	fmt.Fprintf(w, "\x1b[2m%s\x1b[0m  \x1b[38;5;%dm%s\x1b[0m \x1b[2m%s\x1b[0m %s %s%s%s%s\n",
-		ts.Format("15:04"), repoColor(e.Repo), repo, topic, mark, e.Msg, took, refs, actor)
+	fmt.Fprintf(w, "%s\x1b[2m%s\x1b[0m  \x1b[38;5;%dm%s\x1b[0m \x1b[2m%s\x1b[0m %s %s%s%s%s\n",
+		id, ts.Format("15:04"), repoColor(e.Repo), repo, topic, mark, e.Msg, took, refs, actor)
 }
 
 func pad(s string, w int) string {

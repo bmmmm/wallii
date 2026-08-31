@@ -2,6 +2,8 @@
 package wall
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,9 +23,15 @@ const (
 
 // Registration kinds: an empty Kind is a regular post; attach/detach events
 // drive the registry view (Attachments) but live in the same append-only log.
+// React and challenge events answer another event (Parent holds its ID): a
+// react is any reply, a challenge doubts a post and stays open until the
+// challenged actor reacts. Both are dialogue, not work — stats and the
+// post-time lints skip them like the registry events.
 const (
-	KindAttach = "attach"
-	KindDetach = "detach"
+	KindAttach    = "attach"
+	KindDetach    = "detach"
+	KindReact     = "react"
+	KindChallenge = "challenge"
 )
 
 // Outcome values: did the reported work land? Matching the fix-loop STATUS
@@ -61,12 +69,22 @@ type Event struct {
 	Actor   string    `json:"actor,omitempty"`
 	Topic   string    `json:"topic,omitempty"`
 	Kind    string    `json:"kind,omitempty"`
+	Parent  string    `json:"parent,omitempty"` // ID of the event a react/challenge answers
 	Msg     string    `json:"msg"`
 	Refs    []string  `json:"refs,omitempty"`
 	Outcome string    `json:"outcome,omitempty"` // ok | partial | failed
 	TookS   int64     `json:"took_s,omitempty"`  // wall-clock duration of the work, seconds
 	TookSrc string    `json:"took_src,omitempty"`
 	Mood    string    `json:"mood,omitempty"` // great | good | ok | rough | stuck
+}
+
+// ID derives a short stable address for an event from fields that never
+// change after Append. Derived, not stored: the NDJSON lines stay exactly
+// what they were, and every reader computes the same handle. Seven hex chars
+// keep it typeable; FindByID accepts unique prefixes anyway.
+func (e Event) ID() string {
+	h := sha256.Sum256([]byte(e.TS.UTC().Format(time.RFC3339Nano) + "\x00" + e.Actor + "\x00" + e.Repo + "\x00" + e.Msg))
+	return hex.EncodeToString(h[:])[:7]
 }
 
 func (e Event) Validate() error {
@@ -83,8 +101,23 @@ func (e Event) Validate() error {
 	}
 	switch e.Kind {
 	case "", KindAttach, KindDetach:
+		if e.Parent != "" {
+			return fmt.Errorf("parent is only valid on react/challenge events, not %q", orPost(e.Kind))
+		}
+	case KindReact, KindChallenge:
+		if e.Parent == "" {
+			return fmt.Errorf("a %s needs a parent event ID — pick one from `wallii tail --ids`", e.Kind)
+		}
+		if len(e.Parent) < 4 || len(e.Parent) > 64 || strings.TrimLeft(e.Parent, "0123456789abcdef") != "" {
+			return fmt.Errorf("parent %q is not an event ID (lowercase hex, ≥4 chars)", e.Parent)
+		}
+		// dialogue carries no work telemetry: a grade on a reply would leak
+		// into nothing (stats skips kinds) and only invite confusion
+		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 {
+			return fmt.Errorf("a %s is dialogue — outcome/mood/took belong on posts", e.Kind)
+		}
 	default:
-		return fmt.Errorf("unknown kind %q — one of attach, detach, or empty", e.Kind)
+		return fmt.Errorf("unknown kind %q — one of attach, detach, react, challenge, or empty", e.Kind)
 	}
 	switch e.Outcome {
 	case "", OutcomeOK, OutcomePartial, OutcomeFailed:
@@ -130,6 +163,13 @@ func (e Event) Validate() error {
 		}
 	}
 	return nil
+}
+
+func orPost(kind string) string {
+	if kind == "" {
+		return "a post"
+	}
+	return kind
 }
 
 // hasControl reports C0 control characters or DEL — they would corrupt the

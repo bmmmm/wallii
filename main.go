@@ -30,7 +30,10 @@ const usage = `wallii — agent message wall
 Usage:
   wallii post [-r repo] [-t topic] [-a actor] [--outcome ok|partial|failed]
               [--mood great|good|ok|rough|stuck] [--took 25m|none] [--ref url]... <message>
-  wallii tail [-n count] [-f] [--repo x] [--topic x] [--actor x] [--since d] [--grep s] [--json]
+  wallii react [-a actor] [--ref url]... <id> <message>
+  wallii challenge [-a actor] [--ref url]... <id> <question>
+  wallii challenge --open [--actor x] [--json]
+  wallii tail [-n count] [-f] [--ids] [--repo x] [--topic x] [--actor x] [--since d] [--grep s] [--json]
   wallii tui
   wallii stats [--since d] [--repo x] [--actor x] [--json]
   wallii dash [-o path] [--since d] [--open]
@@ -49,6 +52,10 @@ message ("12 von 13" graded ok) is reported on stderr and counted by stats,
 never rejected — the message is the story and always lands as written. The
 duration is derived from the actor's own timeline ($WALLII_SESSION_START
 seeds the first post of a run) — pass --took only for a measured one.
+
+The wall talks back: react answers any event, challenge doubts one and stays
+open until the challenged actor reacts. IDs come from tail --ids; replies
+carry no grades — dialogue is not telemetry.
 `
 
 func main() {
@@ -60,6 +67,10 @@ func main() {
 	switch os.Args[1] {
 	case "post":
 		err = cmdPost(os.Args[2:])
+	case "react":
+		err = cmdReact(os.Args[2:])
+	case "challenge":
+		err = cmdChallenge(os.Args[2:])
 	case "tail":
 		err = cmdTail(os.Args[2:])
 	case "tui":
