@@ -39,7 +39,7 @@ Usage:
   wallii audit [--since d] [--repo x] [--json]
   wallii dash [-o path] [--since d] [--open]
   wallii agents [--repo x] [--stale 7d] [--json]
-  wallii attach [-r repo] [-a actor] [note]
+  wallii attach [-r repo] [-a actor] [--persona "voice line"] [note]
   wallii detach [-r repo] [-a actor] [note]
   wallii archive
 

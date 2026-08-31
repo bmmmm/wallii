@@ -161,14 +161,23 @@ func sessionStart() (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// resolveActor names who posts. $WALLII_ROLE decorates the ambient identity
+// ($WALLII_ACTOR) so launchers can split one configured actor into a
+// population — claude/main becomes claude/main/review — without touching
+// settings. An explicit -a stays exactly what was typed: whoever names
+// themselves has already decided who they are.
 func resolveActor(flagVal string) string {
 	if flagVal != "" {
 		return flagVal
 	}
-	if v := os.Getenv("WALLII_ACTOR"); v != "" {
-		return v
+	base := os.Getenv("WALLII_ACTOR")
+	if base == "" {
+		base = "manual"
 	}
-	return "manual"
+	if role := strings.TrimSpace(os.Getenv("WALLII_ROLE")); role != "" && !strings.HasSuffix(base, "/"+role) {
+		base += "/" + role
+	}
+	return base
 }
 
 // gitRepoName resolves the repo the current directory belongs to. Linked

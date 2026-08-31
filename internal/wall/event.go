@@ -69,7 +69,8 @@ type Event struct {
 	Actor   string    `json:"actor,omitempty"`
 	Topic   string    `json:"topic,omitempty"`
 	Kind    string    `json:"kind,omitempty"`
-	Parent  string    `json:"parent,omitempty"` // ID of the event a react/challenge answers
+	Parent  string    `json:"parent,omitempty"`  // ID of the event a react/challenge answers
+	Persona string    `json:"persona,omitempty"` // attach only: a voice line for the pair ("the grumbler")
 	Msg     string    `json:"msg"`
 	Refs    []string  `json:"refs,omitempty"`
 	Outcome string    `json:"outcome,omitempty"` // ok | partial | failed
@@ -97,6 +98,17 @@ func (e Event) Validate() error {
 		}
 		if n := utf8.RuneCountInString(v); n > MaxFieldRunes {
 			return fmt.Errorf("%s is %d runes, max %d", name, n, MaxFieldRunes)
+		}
+	}
+	if e.Persona != "" {
+		if e.Kind != KindAttach {
+			return fmt.Errorf("persona is set with `wallii attach --persona`, not on %s events", orPost(e.Kind))
+		}
+		if hasControl(e.Persona) {
+			return errors.New("persona contains control characters — plain text only")
+		}
+		if n := utf8.RuneCountInString(e.Persona); n > MaxFieldRunes {
+			return fmt.Errorf("persona is %d runes, max %d — it is a voice line, not a biography", n, MaxFieldRunes)
 		}
 	}
 	switch e.Kind {

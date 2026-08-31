@@ -67,13 +67,13 @@ func cmdAgents(args []string) error {
 	fmt.Printf("%d agents · %d repos · %d pairs · %d need attention\n\n", len(actors), len(repos), len(pairs), silent)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ACTOR\tREPO\tPOSTS\tLAST POST\tSTATE")
+	fmt.Fprintln(w, "ACTOR\tREPO\tPOSTS\tLAST POST\tSTATE\tPERSONA")
 	for _, p := range pairs {
 		last := "—"
 		if !p.LastPost.IsZero() {
 			last = ago(now.Sub(p.LastPost))
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", orDash(p.Actor), p.Repo, p.Posts, last, pairState(p, now, stale))
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\n", orDash(p.Actor), p.Repo, p.Posts, last, pairState(p, now, stale), p.Persona)
 	}
 	return w.Flush()
 }
@@ -127,11 +127,16 @@ func cmdDetach(args []string) error { return registerCmd(args, wall.KindDetach) 
 
 // registerCmd posts an attach/detach event — registration lives in the same
 // append-only log as everything else. Idempotent: a pair already in the
-// target state posts nothing.
+// target state posts nothing — unless attach carries a new persona, which
+// is worth a line of its own.
 func registerCmd(args []string, kind string) error {
 	fs := flag.NewFlagSet(kind, flag.ExitOnError)
 	repo := fs.String("r", "", "repo name (default: current git repo)")
 	actor := fs.String("a", "", `who registers (default: $WALLII_ACTOR or "manual")`)
+	persona := ""
+	if kind == wall.KindAttach {
+		fs.StringVar(&persona, "persona", "", `voice line rendered next to the pair ("the grumbler")`)
+	}
 	fs.Parse(args)
 
 	msg := strings.TrimSpace(strings.Join(fs.Args(), " "))
@@ -154,11 +159,14 @@ func registerCmd(args []string, kind string) error {
 	want := kind == wall.KindAttach
 	for _, p := range wall.Attachments(evs) {
 		if p.Actor == who && strings.EqualFold(p.Repo, *repo) && p.Attached == want {
-			fmt.Printf("%s ↔ %s is already %sed — nothing posted\n", who, p.Repo, kind)
-			return nil
+			// a fresh persona is a state change even on an attached pair
+			if persona == "" || persona == p.Persona {
+				fmt.Printf("%s ↔ %s is already %sed — nothing posted\n", who, p.Repo, kind)
+				return nil
+			}
 		}
 	}
-	e := wall.Event{TS: time.Now().UTC(), Repo: *repo, Actor: who, Topic: "wall", Kind: kind, Msg: msg}
+	e := wall.Event{TS: time.Now().UTC(), Repo: *repo, Actor: who, Topic: "wall", Kind: kind, Msg: msg, Persona: persona}
 	if err := wall.Append(dir, e); err != nil {
 		return err
 	}

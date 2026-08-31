@@ -60,3 +60,47 @@ func TestDialogRoundtrip(t *testing.T) {
 		t.Fatalf("RecentByActor must see only the post, got %d (%v)", len(prior), err)
 	}
 }
+
+func TestResolveActorRole(t *testing.T) {
+	t.Setenv("WALLII_ACTOR", "bot/base")
+	t.Setenv("WALLII_ROLE", "review")
+	if got := resolveActor(""); got != "bot/base/review" {
+		t.Fatalf("role must decorate the ambient actor, got %q", got)
+	}
+	// an explicit -a stays exactly what was typed
+	if got := resolveActor("bot/named"); got != "bot/named" {
+		t.Fatalf("explicit actor must not grow a role, got %q", got)
+	}
+	// no doubling when the identity already carries the role
+	t.Setenv("WALLII_ACTOR", "bot/base/review")
+	if got := resolveActor(""); got != "bot/base/review" {
+		t.Fatalf("role must not double, got %q", got)
+	}
+}
+
+func TestAttachPersona(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+
+	if err := cmdAttach([]string{"-r", "demo", "-a", "bot/grump", "--persona", "the grumbler", "here to doubt"}); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	evs, _, _ := wall.ReadLast(dir, 0, nil)
+	pairs := wall.Attachments(evs)
+	if len(pairs) != 1 || pairs[0].Persona != "the grumbler" {
+		t.Fatalf("persona must survive into the registry, got %+v", pairs)
+	}
+	// a new persona on an attached pair is a state change, not a no-op
+	if err := cmdAttach([]string{"-r", "demo", "-a", "bot/grump", "--persona", "the mellowed grumbler"}); err != nil {
+		t.Fatalf("re-attach with new persona: %v", err)
+	}
+	evs, _, _ = wall.ReadLast(dir, 0, nil)
+	if pairs = wall.Attachments(evs); pairs[0].Persona != "the mellowed grumbler" {
+		t.Fatalf("latest persona must win, got %+v", pairs)
+	}
+	// red: persona on a plain post must be rejected at the store
+	bad := wall.Event{TS: time.Now().UTC(), Repo: "demo", Actor: "bot/grump", Msg: "work", Persona: "sneaky"}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("persona outside attach must be rejected")
+	}
+}

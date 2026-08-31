@@ -14,8 +14,9 @@ type PairState struct {
 	FirstPost time.Time `json:"first_post,omitzero"`
 	LastPost  time.Time `json:"last_post,omitzero"`
 	Attached  bool      `json:"attached"`
-	Explicit  bool      `json:"explicit"` // an attach/detach event exists
-	StateAt   time.Time `json:"state_at"` // when the current state was entered
+	Explicit  bool      `json:"explicit"`          // an attach/detach event exists
+	StateAt   time.Time `json:"state_at"`          // when the current state was entered
+	Persona   string    `json:"persona,omitempty"` // latest voice line from an attach event
 }
 
 // Attachments folds the event stream into per (actor, repo) registration
@@ -40,6 +41,9 @@ func Attachments(evs []Event) []PairState {
 		switch e.Kind {
 		case KindAttach:
 			p.Attached, p.Explicit, p.StateAt = true, true, e.TS
+			if e.Persona != "" {
+				p.Persona = e.Persona
+			}
 		case KindDetach:
 			p.Attached, p.Explicit, p.StateAt = false, true, e.TS
 		default:
