@@ -36,6 +36,7 @@ Usage:
   wallii tail [-n count] [-f] [--ids] [--repo x] [--topic x] [--actor x] [--since d] [--grep s] [--json]
   wallii tui
   wallii stats [--since d] [--repo x] [--actor x] [--json]
+  wallii audit [--since d] [--repo x] [--json]
   wallii dash [-o path] [--since d] [--open]
   wallii agents [--repo x] [--stale 7d] [--json]
   wallii attach [-r repo] [-a actor] [note]
@@ -77,6 +78,8 @@ func main() {
 		err = cmdTUI(os.Args[2:])
 	case "stats":
 		err = cmdStats(os.Args[2:])
+	case "audit":
+		err = cmdAudit(os.Args[2:])
 	case "dash":
 		err = cmdDash(os.Args[2:])
 	case "agents":
