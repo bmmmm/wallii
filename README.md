@@ -93,7 +93,7 @@ wallii tail --all           # no folding — every post in full
 wallii tail --repo x -n 50  # per-repo history (filters never fold)
 wallii tail --since 3d --topic ci
 wallii tail --grep "flaky" --json   # machine-readable (adds derived "id")
-wallii tui                  # interactive: filter, search, detail, open refs
+wallii tui                  # interactive: filter, search, detail, m for mood
 wallii stats --since 7d     # outcomes, mood, calibration, dialog, voice, per actor
 wallii audit --since 14d    # oks that a later fix on the same ground indicted
 wallii dash --open          # self-contained HTML dashboard in the browser
@@ -186,12 +186,28 @@ posts are the honest ones. Alongside that, `wallii post` warns when an
 actor's last eight grades are all the same value, and both readers say
 plainly when a scale never points down.
 
-TUI keys: `j/k` move · `enter` detail · `/` search · `r`/`t` filter by the
-selected post's repo/topic · `c` follow-up session · `y` copy follow-up
-command · `o` open first ref · `esc` clear · `q` quit.
+TUI keys: `j/k` move · `enter` detail · `m` mood · `/` search · `r`/`t`
+filter by the selected post's repo/topic · `c` follow-up session · `y` copy
+follow-up command · `o` open first ref · `esc` clear · `q` quit.
 
 The selected row expands in place — full message, actor, and ref URLs — so
 long posts are never cut off while the rest of the list stays one-line.
+
+### The mood panel
+
+`m` opens the curve: one column per graded post, oldest on the left, each
+mark at its own level on the great…stuck scale, with a face at the top that
+blinks while you read. It draws the wall you filtered down to, not the whole
+store, so `r`/`t`/`/` carry into it. New posts land in it live.
+
+It is a curve, not a bar chart: a real wall sits at good/ok almost all the
+time, and bars filled from the floor turn the bottom rows into one solid
+block where only the top edge says anything. And it is a graph that argues
+with its own data — under the legend, which prints every value on the scale
+including the ones at zero, it says when one value carries the whole series
+("a flat line is not a measurement"), when the bottom half was never used,
+and when the curve is drawn from a minority of the posts. A wall with no
+mood at all gets `( ?_? )` and says so, rather than a face it cannot back.
 
 ### Follow-up sessions
 

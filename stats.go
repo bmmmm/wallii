@@ -203,9 +203,11 @@ func pct(part, whole int) int {
 	return int(float64(part)/float64(whole)*100 + 0.5)
 }
 
-// moodWord names the average: ≥4.5 great, ≥3.5 good, ≥2.5 ok, ≥1.5 rough,
-// else stuck — the same 5..1 scale MoodScore assigns.
-func moodWord(avg float64) string {
+// moodIndex rounds an average onto an index into wall.Moods (0 great …
+// 4 stuck) on the same 5..1 scale MoodScore assigns: ≥4.5 great, ≥3.5 good,
+// ≥2.5 ok, ≥1.5 rough, else stuck. Both the word and the mood panel's face
+// pick their value with it, so they can never disagree.
+func moodIndex(avg float64) int {
 	idx := len(wall.Moods) - int(avg+0.5)
 	if idx < 0 {
 		idx = 0
@@ -213,8 +215,11 @@ func moodWord(avg float64) string {
 	if idx >= len(wall.Moods) {
 		idx = len(wall.Moods) - 1
 	}
-	return wall.Moods[idx]
+	return idx
 }
+
+// moodWord names the average.
+func moodWord(avg float64) string { return wall.Moods[moodIndex(avg)] }
 
 // fmtTook rounds to whole minutes first, then splits — the same math as the
 // dashboard's fmtTook, so terminal and browser never disagree on a duration.

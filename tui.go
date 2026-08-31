@@ -21,6 +21,7 @@ const (
 	modeList   = "list"
 	modeDetail = "detail"
 	modeSearch = "search"
+	modeMood   = "mood"
 )
 
 var (
@@ -71,6 +72,13 @@ type tuiModel struct {
 	tailPath       string
 	tailOff        int64
 	note           string
+
+	// mood panel: the trail is folded on entry and on ingest, never per
+	// frame; the epoch orphans ticks left over from an earlier visit.
+	moodTrail wall.MoodSummary
+	moodFrame int
+	moodEpoch int
+	moodFlash int
 }
 
 func newTUI(dir string, events []wall.Event) *tuiModel {
@@ -130,6 +138,9 @@ func (m *tuiModel) ingest() {
 	}
 	m.events = append(m.events, fresh...)
 	m.refilter()
+	if m.mode == modeMood {
+		m.refreshMood()
+	}
 	if stick {
 		m.cursor, m.scroll = 0, 0
 		return
@@ -150,6 +161,15 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.ingest()
 		return m, tickCmd()
+	case moodTickMsg:
+		if msg.epoch != m.moodEpoch || m.mode != modeMood {
+			return m, nil // a clock from an earlier visit — let it die
+		}
+		m.moodFrame++
+		if m.moodFlash > 0 {
+			m.moodFlash--
+		}
+		return m, moodTickCmd(msg.epoch)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -196,6 +216,15 @@ func (m *tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.mode == modeMood {
+		switch k.String() {
+		case "esc", "q", "enter", "m":
+			m.mode = modeList
+		case "ctrl+c":
+			return m, tea.Quit
+		}
+		return m, nil
+	}
 	switch k.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
@@ -215,6 +244,8 @@ func (m *tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.view) > 0 {
 			m.mode = modeDetail
 		}
+	case "m":
+		return m, m.enterMood()
 	case "/":
 		m.mode = modeSearch
 	case "esc":
@@ -325,6 +356,9 @@ func (m *tuiModel) View() string {
 	}
 	if m.mode == modeDetail {
 		return m.viewDetail()
+	}
+	if m.mode == modeMood {
+		return m.viewMood()
 	}
 	var b strings.Builder
 	b.WriteString(m.header() + "\n")
@@ -478,7 +512,7 @@ func (m *tuiModel) line(e wall.Event, sel bool) string {
 }
 
 func (m *tuiModel) footer() string {
-	hint := " j/k · enter detail · / search · r/t filter · c session · y copy cmd · o ref · esc clear · q quit"
+	hint := " j/k · enter detail · m mood · / search · r/t filter · c session · y copy cmd · o ref · esc clear · q quit"
 	if m.note != "" {
 		hint = " " + m.note + " ·" + hint
 	}
