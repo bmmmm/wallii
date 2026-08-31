@@ -90,6 +90,19 @@ func cmdStats(args []string) error {
 	} else {
 		fmt.Println("dialog   none — nobody answered anyone; react with: wallii tail --ids, then wallii react <id> \"…\"")
 	}
+	// The population's mirror: who leans on which word, who always opens the
+	// same way. Convergence here is monoculture even when every grade is fine.
+	for i, v := range s.Voice {
+		if i == 4 {
+			break
+		}
+		label := "voice"
+		if i > 0 {
+			label = ""
+		}
+		fmt.Printf("%-8s %s: favorite %q ×%d · %d%% open with %q · %d distinct words\n",
+			label, orDash(v.Actor), v.FavWord, v.FavCount, v.OpeningPct, v.Opening, v.Distinct)
+	}
 	fmt.Println()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)

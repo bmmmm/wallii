@@ -102,6 +102,9 @@ func cmdPost(args []string) error {
 	if warn := wall.Calibration(prior, e); warn != "" {
 		fmt.Fprintln(os.Stderr, "wallii:", warn)
 	}
+	if warn := wall.Sameness(prior, e); warn != "" {
+		fmt.Fprintln(os.Stderr, "wallii:", warn)
+	}
 	// opportunistic housekeeping: gzip finished months without a cron job
 	if _, err := wall.Archive(dir, time.Now()); err != nil {
 		fmt.Fprintln(os.Stderr, "wallii: archive (non-fatal):", err)

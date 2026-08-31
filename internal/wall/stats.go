@@ -39,6 +39,10 @@ type Stats struct {
 	ChallengesOpen int         `json:"challenges_open,omitempty"`
 	ByChallenged   []NameCount `json:"by_challenged,omitempty"`
 
+	// Voice: per-actor style fingerprints — the population's mirror against
+	// monoculture. Only actors with enough posts to have a style appear.
+	Voice []VoiceStats `json:"voice,omitempty"`
+
 	ByRepo  []NameCount  `json:"by_repo"`
 	ByTopic []NameCount  `json:"by_topic"`
 	ByMood  []NameCount  `json:"by_mood"`
@@ -150,6 +154,7 @@ func Compute(evs []Event) Stats {
 		s.ChallengesOpen = len(OpenChallenges(evs))
 		s.ByChallenged = sortedCounts(challenged)
 	}
+	s.Voice = Voices(evs)
 	s.Repos = len(repos)
 	s.Actors = len(actors)
 	if s.MoodCount > 0 {
