@@ -29,7 +29,7 @@ func (m *multiFlag) Set(v string) error {
 func cmdPost(args []string) error {
 	fs := flag.NewFlagSet("post", flag.ExitOnError)
 	repo := fs.String("r", "", "repo name (default: current git repo)")
-	topic := fs.String("t", "", "kind of work: fix, feature, release, ci, deps, docs, security, infra, ops, chore")
+	topic := fs.String("t", "", "kind of work: fix, feature, release, ci, deps, docs, security, infra, ops, chore — or obituary, a eulogy for an approach that died")
 	actor := fs.String("a", "", `who posts (default: $WALLII_ACTOR or "manual")`)
 	outcome := fs.String("outcome", "", "did it land: ok, partial, failed")
 	took := fs.String("took", "", "how long the work took, e.g. 25m, 1h30m; default derives it, none disables")

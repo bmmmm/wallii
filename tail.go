@@ -340,15 +340,18 @@ func (r *renderer) printAt(w io.Writer, e wall.Event, asJSON bool, depth int) {
 	}
 	if asJSON {
 		b, _ := json.Marshal(e)
-		// Carry the reasons without changing the NDJSON schema for every
-		// other caller: the extra key exists only when it has content.
-		if len(notes) > 0 {
-			var m map[string]any
-			if json.Unmarshal(b, &m) == nil {
+		// Additive keys only, so raw-NDJSON consumers keep working: the
+		// derived id (the handle react/challenge take — without it a JSON
+		// consumer could never answer anything), and the contradiction
+		// reasons when they exist.
+		var m map[string]any
+		if json.Unmarshal(b, &m) == nil {
+			m["id"] = e.ID()
+			if len(notes) > 0 {
 				m["contradictions"] = notes
-				if b2, err := json.Marshal(m); err == nil {
-					b = b2
-				}
+			}
+			if b2, err := json.Marshal(m); err == nil {
+				b = b2
 			}
 		}
 		fmt.Fprintln(w, string(b))
