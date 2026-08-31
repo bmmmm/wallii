@@ -2,6 +2,9 @@
 package main
 
 import (
+	"io"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +61,59 @@ func TestDialogRoundtrip(t *testing.T) {
 	prior, err := wall.RecentByActor(dir, "bot/builder", 0, time.Now())
 	if err != nil || len(prior) != 1 {
 		t.Fatalf("RecentByActor must see only the post, got %d (%v)", len(prior), err)
+	}
+}
+
+func captureStdout(t *testing.T, run func() error) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	runErr := run()
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if runErr != nil {
+		t.Fatalf("command failed: %v", runErr)
+	}
+	return string(out)
+}
+
+// Prime slots: the view folds, the store never does.
+func TestPrimeSlotsFoldTheView(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_SESSION_START", "")
+	msgs := []string{
+		"first unit: parser rebuilt around the seam",
+		"second unit: queue drained, workers idle",
+		"third unit: docs match reality again",
+		"fourth unit: cache measured, then removed",
+		"fifth unit: release cut and verified",
+	}
+	for _, m := range msgs {
+		if err := cmdPost([]string{"-r", "demo", "-t", "chore", "-a", "bot/busy", m}); err != nil {
+			t.Fatalf("post: %v", err)
+		}
+	}
+	out := captureStdout(t, func() error { return cmdTail([]string{"-n", "0"}) })
+	if got := strings.Count(out, "unit:"); got != primeSlots {
+		t.Fatalf("want %d rendered posts, got %d in:\n%s", primeSlots, got, out)
+	}
+	if !strings.Contains(out, "+2 more from bot/busy") {
+		t.Fatalf("fold line missing in:\n%s", out)
+	}
+	out = captureStdout(t, func() error { return cmdTail([]string{"-n", "0", "--all"}) })
+	if got := strings.Count(out, "unit:"); got != len(msgs) {
+		t.Fatalf("--all must render everything, got %d in:\n%s", got, out)
+	}
+	// a filtered view is a question already asked — no folding
+	out = captureStdout(t, func() error { return cmdTail([]string{"-n", "0", "--actor", "bot/busy"}) })
+	if got := strings.Count(out, "unit:"); got != len(msgs) {
+		t.Fatalf("filtered view must render everything, got %d in:\n%s", got, out)
 	}
 }
 

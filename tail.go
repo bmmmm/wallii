@@ -72,6 +72,7 @@ func cmdTail(args []string) error {
 	grep := fs.String("grep", "", "filter: substring across all fields")
 	contra := fs.Bool("contradicting", false, "filter: only posts whose grade disagrees with their message")
 	ids := fs.Bool("ids", false, "show event IDs (for wallii react / challenge)")
+	all := fs.Bool("all", false, "render every post in full (default: 3 prime slots per actor and day, rest folded)")
 	asJSON := fs.Bool("json", false, "raw NDJSON output")
 	fs.Parse(args)
 
@@ -100,12 +101,44 @@ func cmdTail(args []string) error {
 	// answering something further up.
 	threads := wall.Thread(events)
 	shown := map[string]bool{}
+	// Prime slots: per actor and day only the first three posts render in
+	// full, the rest fold into one grey line. The NDJSON keeps everything —
+	// scarcity lives purely in the view, and whoever knows only three lines
+	// stay visible starts curating instead of telegraphing 19 of them.
+	// Dialogue, registry events, filtered listings and --json stay whole.
+	// Folding applies to the unfiltered wall view only: whoever filters has
+	// already asked for something specific and gets all of it.
+	fold := !*all && !*asJSON && !*contra && *grep == "" && *repo == "" && *topic == "" && *actor == ""
+	folded := map[string]int{} // actor → folded count for the current day
+	slot := map[string]int{}
+	day := ""
+	flushFolds := func() {
+		for actor, n := range folded {
+			r.printFold(os.Stdout, actor, n)
+			delete(folded, actor)
+		}
+	}
 	for _, e := range events {
 		if (e.Kind == wall.KindReact || e.Kind == wall.KindChallenge) && shown[e.ID()] {
 			continue
 		}
+		if fold {
+			if d := e.TS.Local().Format("2006-01-02"); d != day {
+				flushFolds()
+				day = d
+				slot = map[string]int{}
+			}
+			if e.Kind == "" {
+				slot[e.Actor]++
+				if slot[e.Actor] > primeSlots {
+					folded[e.Actor]++
+					continue
+				}
+			}
+		}
 		r.printThread(os.Stdout, e, threads, shown, *asJSON)
 	}
+	flushFolds()
 	if !*follow {
 		if len(events) == 0 && !*asJSON {
 			fmt.Fprintln(os.Stderr, "wallii: no matching posts — wall dir:", dir)
@@ -222,6 +255,20 @@ func (r *renderer) printChildren(w io.Writer, id string, threads map[string][]wa
 		r.printAt(w, c, asJSON, depth)
 		r.printChildren(w, c.ID(), threads, shown, asJSON, depth+1)
 	}
+}
+
+// primeSlots is how many posts per actor and day render in full. Three is
+// enough for a day's story and few enough that a 19-post day has to choose.
+const primeSlots = 3
+
+// printFold is the grey line a day's surplus collapses into.
+func (r *renderer) printFold(w io.Writer, actor string, n int) {
+	line := fmt.Sprintf("                 · +%d more from %s — wallii tail --all", n, orDash(actor))
+	if r.color {
+		fmt.Fprintf(w, "\x1b[2m%s\x1b[0m\n", line)
+		return
+	}
+	fmt.Fprintln(w, line)
 }
 
 // replyGlyph marks dialogue in the feed: a react answers, a challenge doubts.
