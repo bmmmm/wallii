@@ -104,8 +104,60 @@ func CheckTopic(topic, repo string) error {
 	return fmt.Errorf("topic %q duplicates the repo — say what kind of work it was: fix, feature, release, ci, deps, docs, security, infra, ops, chore", topic)
 }
 
+// DoubtClass names which scale a post's own words contradict. Two classes,
+// and countRe is deliberately not a third: a count is a measurement more
+// often than a leftover, and a class exists to be raised as a challenge.
+type DoubtClass string
+
+const (
+	DoubtLeftover DoubtClass = "leftover" // a leftover marker graded ok
+	DoubtFriction DoubtClass = "friction" // a friction marker under mood great/good
+)
+
+// Doubt is one disagreement between a post's grade and its message, in the
+// two forms it is spoken: Note is the stderr sentence, Ask the challenge
+// message. They differ because they do different work — the note explains,
+// the ask has to fit MaxMsgRunes and name the cheapest honest answer.
+type Doubt struct {
+	Class  DoubtClass
+	Marker string // the words that fired, as written
+	Note   string // the stderr sentence
+	Ask    string // ≤ MaxMsgRunes: the challenge message, names the regrade
+}
+
+// Doubts reports where a post's grades disagree with the post's own message,
+// leftover before friction. Never on dialogue: Validate forbids outcome and
+// mood on a react or challenge, so a challenge cannot draw a doubt of its
+// own — the lint is structurally inert on what it raises.
+//
+// The Ask names the regrade as the cheapest answer on purpose. A challenge
+// that only asked "really?" would leave the conclusion to the agent, and
+// the cheapest one is to drop the word next time. Pointing at the grade —
+// "regrade, or say why not" — keeps the gradient on the note, where an
+// honest correction costs one flag, and off the message.
+func Doubts(e Event) []Doubt {
+	var out []Doubt
+	if e.Outcome == OutcomeOK {
+		if hit := firstMatch(leftoverMarkers, e.Msg); hit != "" {
+			out = append(out, Doubt{Class: DoubtLeftover, Marker: hit,
+				Note: fmt.Sprintf("the message says %q but the outcome says ok — work with a leftover is partial", hit),
+				Ask:  fmt.Sprintf("%q graded ok — work with a leftover is partial. regrade, or say why not", hit)})
+		}
+	}
+	if MoodScore(e.Mood) >= 4 {
+		if hit := firstMatch(frictionMarkers, e.Msg); hit != "" {
+			out = append(out, Doubt{Class: DoubtFriction, Marker: hit,
+				Note: fmt.Sprintf("the message says %q but the mood says %s — that is friction: ok = several attempts, rough = repeatedly stuck", hit, e.Mood),
+				Ask:  fmt.Sprintf("%q with mood %s — several attempts is ok. regrade, or say why not", hit, e.Mood)})
+		}
+	}
+	return out
+}
+
 // Contradictions reports where a post's grades disagree with the post's own
-// message: "12 von 13" graded ok, "Sackgasse" graded good.
+// message: "12 von 13" graded ok, "Sackgasse" graded good. The count note
+// first, then every Doubt's note — the same lines as before Doubts existed,
+// so tail, stats and dash read exactly what they always read.
 //
 // Never an error, and never a reason to reject the post. Rejecting on words
 // found in the message would put a price on exactly the words that make the
@@ -124,14 +176,9 @@ func Contradictions(e Event) []string {
 				out = append(out, fmt.Sprintf("the message says %q but the outcome says ok — partial matches what you wrote", strings.TrimSpace(m[0])))
 			}
 		}
-		if hit := firstMatch(leftoverMarkers, e.Msg); hit != "" {
-			out = append(out, fmt.Sprintf("the message says %q but the outcome says ok — work with a leftover is partial", hit))
-		}
 	}
-	if MoodScore(e.Mood) >= 4 {
-		if hit := firstMatch(frictionMarkers, e.Msg); hit != "" {
-			out = append(out, fmt.Sprintf("the message says %q but the mood says %s — that is friction: ok = several attempts, rough = repeatedly stuck", hit, e.Mood))
-		}
+	for _, d := range Doubts(e) {
+		out = append(out, d.Note)
 	}
 	return out
 }

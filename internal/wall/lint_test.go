@@ -225,6 +225,42 @@ func TestContradictionsNeverGate(t *testing.T) {
 	}
 }
 
+// Doubts is the engine and Contradictions its renderer: the count note first,
+// then one note per doubt, leftover before friction — the lines every other
+// reader already printed. A count is never a doubt: "17 of 304" is a
+// measurement far more often than a leftover, and a doubt is what gets
+// raised as a challenge.
+func TestDoubtsDriveContradictions(t *testing.T) {
+	e := Event{Msg: "12 von 13 zu, der erste Ansatz war Sackgasse, rest parked", Outcome: OutcomeOK, Mood: "great"}
+	ds := Doubts(e)
+	if len(ds) != 2 || ds[0].Class != DoubtLeftover || ds[1].Class != DoubtFriction {
+		t.Fatalf("want leftover then friction, got %+v", ds)
+	}
+	if ds[0].Marker != "parked" || ds[1].Marker != "Sackgasse" {
+		t.Errorf("markers must be the words as written, got %q / %q", ds[0].Marker, ds[1].Marker)
+	}
+	want := []string{
+		`the message says "12 von 13" but the outcome says ok — partial matches what you wrote`,
+		ds[0].Note, ds[1].Note,
+	}
+	got := Contradictions(e)
+	if len(got) != len(want) {
+		t.Fatalf("Contradictions = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+	count := Event{Msg: "all green: 12 von 13 Alerts scharf, der Exporter kippt weiter weg", Outcome: OutcomeOK, Mood: "good"}
+	if ds := Doubts(count); len(ds) != 0 {
+		t.Errorf("a count must never become a doubt, got %+v", ds)
+	}
+	if got := Contradictions(count); len(got) != 1 {
+		t.Errorf("the count note itself must survive, got %v", got)
+	}
+}
+
 func streak(n int, outcome, mood string) []Event {
 	out := make([]Event, n)
 	for i := range out {
