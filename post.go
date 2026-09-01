@@ -42,6 +42,7 @@ func cmdPost(args []string) error {
 	outcome := fs.String("outcome", "", "did it land: ok, partial, failed")
 	took := fs.String("took", "", "how long the work took, e.g. 25m, 1h30m; default derives it, none disables")
 	mood := fs.String("mood", "", "friction report, not politeness: great (first try) … stuck (blocked/escalated)")
+	grader := fs.String("grader", "", `the cheap path you saw when it got hard, taken or not — your own words, shown as written, never scored; "none — …" is a real answer`)
 	var refs multiFlag
 	fs.Var(&refs, "ref", "commit/issue/PR URL (repeatable)")
 	fs.Parse(args)
@@ -63,6 +64,20 @@ func cmdPost(args []string) error {
 	}
 	*outcome = strings.ToLower(*outcome)
 	*mood = strings.ToLower(*mood)
+	// Form check only, the same guard --took has against zero: a --grader
+	// that is empty after trimming would vanish under omitempty and read as
+	// "never asked" — worse than no flag, because the poster believes it
+	// landed. What the words say is checked here by nobody, and nowhere.
+	*grader = strings.TrimSpace(*grader)
+	graderGiven := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "grader" {
+			graderGiven = true
+		}
+	})
+	if graderGiven && *grader == "" {
+		return fmt.Errorf(`--grader is empty and would be dropped — omit the flag, or say what the cheap path was ("none — …" counts)`)
+	}
 	var tookS int64
 	if *took != "" && *took != "none" {
 		d, err := parseDur(*took)
@@ -106,7 +121,7 @@ func cmdPost(args []string) error {
 	}
 
 	e := wall.Event{TS: now.UTC(), Repo: *repo, Actor: who, Topic: *topic, Msg: msg, Refs: refs,
-		Outcome: *outcome, TookS: tookS, TookSrc: tookSrc, Mood: *mood,
+		Outcome: *outcome, TookS: tookS, TookSrc: tookSrc, Mood: *mood, Grader: *grader,
 		PulseMS: pulseMS, PulseSrc: pulseSrc}
 	if err := wall.Append(dir, e); err != nil {
 		return err

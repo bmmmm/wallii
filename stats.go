@@ -79,6 +79,7 @@ func cmdStats(args []string) error {
 		fmt.Println(took)
 	}
 	fmt.Printf("refs     %d/%d posts carry a ref (%d%%)\n", s.WithRefs, s.Posts, pct(s.WithRefs, s.Posts))
+	fmt.Println(graderLine(s))
 	for _, line := range dialogLines(s) {
 		fmt.Println(line)
 	}
@@ -180,6 +181,21 @@ func apiLine(s wall.Stats) string {
 		line += fmt.Sprintf(" · %d written with no api at all", s.PulseDown)
 	}
 	return line
+}
+
+// graderLine counts the posts that name the cheap path they saw, without
+// grading them: a fraction with the distinct count beside it, and no
+// percentage — unlike the refs line above it. A percentage is a dial, and
+// this field must not have one: refs cost a URL, a sentence costs nothing,
+// so "--grader none" on every post would push a coverage figure to 100.
+// The distinct count is what indicts that move — 483/483 · 1 distinct.
+// When nothing carries the field, the absence is named the way the dialog
+// line names silence, with the command that ends it.
+func graderLine(s wall.Stats) string {
+	if s.WithGrader == 0 {
+		return `grader   none — no post names the cheap path it saw; wallii post --grader "<the cheap path, taken or not>" …`
+	}
+	return fmt.Sprintf("grader   %d/%d posts name a grader moment · %d distinct", s.WithGrader, s.Posts, s.GraderDistinct)
 }
 
 // moodSpread lists the mood distribution in scale order. The average alone
