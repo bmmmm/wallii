@@ -54,6 +54,14 @@ type MoodSummary struct {
 	Counts []int
 	// Contradicting counts points whose grade disagrees with their message.
 	Contradicting int
+	// The window's own conditions: the mean turn time across the posts here
+	// that measured one, how many did, and how many were written with nothing
+	// answering. The drag is computed from this rather than from a live
+	// reading — a month's grades cannot be moved by one second's latency, and
+	// both halves of the arithmetic have to describe the same posts.
+	PulseMS    int64
+	PulseTurns int
+	PulseDown  int
 }
 
 // MoodLevel rounds an average onto the 5..1 scale, clamped: the level a curve
@@ -102,11 +110,21 @@ func (s MoodSummary) Low() bool {
 func MoodTrail(evs []Event) MoodSummary {
 	s := MoodSummary{Counts: make([]int, len(Moods))}
 	sum := 0
+	var pulseSum int64
 	for _, e := range evs {
 		if e.Kind != "" {
 			continue
 		}
 		s.Total++
+		// the conditions come off every post in the window, graded or not: a
+		// slow afternoon is slow whether or not anyone filled in a mood
+		switch e.PulseSrc {
+		case PulseSession:
+			s.PulseTurns++
+			pulseSum += e.PulseMS
+		case PulseNone:
+			s.PulseDown++
+		}
 		sc := MoodScore(e.Mood)
 		if sc == 0 {
 			continue
@@ -132,6 +150,9 @@ func MoodTrail(evs []Event) MoodSummary {
 	}
 	if s.Count > 0 {
 		s.Avg = float64(sum) / float64(s.Count)
+	}
+	if s.PulseTurns > 0 {
+		s.PulseMS = pulseSum / int64(s.PulseTurns)
 	}
 	return s
 }

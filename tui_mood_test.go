@@ -726,6 +726,16 @@ func pulsed(evs []wall.Event, p wall.Pulse) moodState {
 	return st
 }
 
+// turnPosts grades posts and says what each one's turn cost — the window's own
+// conditions, which is what the head and the api line are drawn from.
+func turnPosts(ms int64, moods ...string) []wall.Event {
+	evs := moodPosts(moods...)
+	for i := range evs {
+		evs[i].PulseMS, evs[i].PulseSrc = ms, wall.PulseSession
+	}
+	return evs
+}
+
 // Nothing measured, nothing claimed: a panel that never probed says nothing
 // about an API, and its head is the wall's own average.
 func TestMoodPanelWithoutAPulseSaysNothingAboutTheAPI(t *testing.T) {
@@ -740,11 +750,13 @@ func TestMoodPanelWithoutAPulseSaysNothingAboutTheAPI(t *testing.T) {
 
 // Latency only ever subtracts, and the panel shows the subtraction: a wall of
 // nothing but great, read through a four-second API, is not a great day.
-func TestMoodPanelDragsTheHeadWithLatency(t *testing.T) {
-	st := pulsed(moodPosts("great", "great", "great"),
-		wall.Pulse{At: time.Now(), OK: true, RTT: 45 * time.Second, Src: wall.PulseSession})
-	panel := render(st, 100, 26)
-	for _, want := range []string{"ok · 3.0", "wall 5.0", "− 2.0", "api 45s"} {
+// The window's own waiting drags its own grades: both halves of the head come
+// off the same posts, so the arithmetic can be checked against them.
+func TestMoodPanelDragsTheHeadWithTheWindowsWaiting(t *testing.T) {
+	st := pulsed(turnPosts(60_000, "great", "great", "great"),
+		wall.Pulse{At: time.Now(), OK: true, RTT: 2 * time.Second, Src: wall.PulseSession})
+	panel := render(st, 110, 26)
+	for _, want := range []string{"ok · 3.0", "wall 5.0", "− 2.0", "api ~1m over 3 posts", "now 2s"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("head is missing %q:\n%s", want, panel)
 		}
@@ -754,15 +766,30 @@ func TestMoodPanelDragsTheHeadWithLatency(t *testing.T) {
 	}
 }
 
+// A live reading is not the window. It shows as `now`, and it may not move
+// grades earned at another time — a month of work cannot turn rough because
+// one answer just took a minute.
+func TestMoodPanelLiveReadingDoesNotDragTheWindow(t *testing.T) {
+	st := pulsed(moodPosts("great", "great", "great"),
+		wall.Pulse{At: time.Now(), OK: true, RTT: 90 * time.Second, Src: wall.PulseSession})
+	panel := render(st, 110, 26)
+	if !strings.Contains(panel, "great · 5.0") || strings.Contains(panel, "−") {
+		t.Errorf("a live reading dragged a window that measured nothing:\n%s", panel)
+	}
+	if !strings.Contains(panel, "now 1m30s") {
+		t.Errorf("the live reading is not shown as now:\n%s", panel)
+	}
+}
+
 // A fast API is not a compliment: it leaves the grades exactly as posted.
 func TestMoodPanelFastAPILeavesTheGradesAlone(t *testing.T) {
-	st := pulsed(moodPosts("good", "good", "ok"),
+	st := pulsed(turnPosts(4_000, "good", "good", "ok"),
 		wall.Pulse{At: time.Now(), OK: true, RTT: 4 * time.Second, Src: wall.PulseSession})
-	panel := render(st, 100, 26)
+	panel := render(st, 110, 26)
 	if !strings.Contains(panel, "good · 3.7") {
 		t.Errorf("a fast api moved the wall's average:\n%s", panel)
 	}
-	if !strings.Contains(panel, "api 4s") || strings.Contains(panel, "−") {
+	if !strings.Contains(panel, "api ~4s over 3 posts") || strings.Contains(panel, "−") {
 		t.Errorf("receipt = want the turn time and no drag:\n%s", panel)
 	}
 }
@@ -841,19 +868,6 @@ func TestMoodPanelClipsALongPulseError(t *testing.T) {
 	}
 }
 
-func TestPulseDurRoundsToWhatCanBeFelt(t *testing.T) {
-	cases := map[time.Duration]string{
-		241500 * time.Microsecond: "242ms",
-		2840 * time.Millisecond:   "2.8s",
-		10 * time.Second:          "10s",
-	}
-	for d, want := range cases {
-		if got := pulseDur(d); got != want {
-			t.Errorf("pulseDur(%s) = %q, want %q", d, got, want)
-		}
-	}
-}
-
 // The pulse runs on the panel's clock: closing it ends the measuring, and a
 // probe fired on an earlier visit does not schedule the next one.
 func TestMoodPulseClockStopsWithThePanel(t *testing.T) {
@@ -891,5 +905,85 @@ func TestMoodPulseOffSwitchKeepsThePanelOffline(t *testing.T) {
 	}
 	if panel := m.viewMood(); strings.Contains(panel, "api") {
 		t.Errorf("an offline panel mentions the api:\n%s", panel)
+	}
+}
+
+// The line's height IS the drag: the top of the scale minus what the waiting
+// takes off a grade. Reading the picture and doing the arithmetic must give
+// the same answer, or the line is decoration.
+func TestPulseLineSitsAtTheDrag(t *testing.T) {
+	cases := []struct {
+		ms   int64
+		want string // the row label the line belongs on
+	}{
+		{4_000, "great"},   // drag 0 → the top of the scale
+		{30_000, "good"},   // drag 1
+		{60_000, "ok"},     // drag 2
+		{120_000, "rough"}, // drag 3
+	}
+	for _, c := range cases {
+		panel := render(moodStateOf(turnPosts(c.ms, "ok", "ok", "ok"), 99), 100, 30)
+		row := line(t, panel, c.want)
+		if !strings.Contains(row, moodLine) && !strings.Contains(row, moodBar) {
+			t.Errorf("%dms: no api line on the %q row:\n%s", c.ms, c.want, panel)
+		}
+	}
+}
+
+// A post nobody timed gets no point, and the line does not bridge the gap:
+// an interpolated stretch would draw a measurement that was never taken.
+func TestPulseLineLeavesGapsWhereNothingWasMeasured(t *testing.T) {
+	evs := moodPosts("ok", "ok", "ok")
+	evs[0].PulseMS, evs[0].PulseSrc = 60_000, wall.PulseSession // drag 2 → the "ok" row
+	// evs[1] and evs[2] carry nothing
+	panel := render(moodStateOf(evs, 99), 100, 30)
+	row := line(t, panel, "ok")
+	marks := strings.Count(row, moodLine)
+	if marks != 0 {
+		// the measured column already holds a mood block on this row, so the
+		// line recolors it instead of drawing its own glyph — what matters is
+		// that the two unmeasured columns stayed empty
+		t.Errorf("the line drew %d glyphs where only one column was measured:\n%s", marks, panel)
+	}
+	if strings.Contains(panel, "api time") == false {
+		t.Errorf("the line is drawn but not named in the legend:\n%s", panel)
+	}
+}
+
+// Without a single measured turn there is no line at all — and no legend
+// entry claiming there is one.
+func TestPulseLineAbsentWithoutMeasurements(t *testing.T) {
+	panel := render(moodStateOf(moodPosts("good", "ok", "great"), 99), 100, 30)
+	if strings.Contains(panel, "api time") {
+		t.Errorf("a legend entry for a line nobody could draw:\n%s", panel)
+	}
+	for _, lvl := range []string{"great", "good", "ok", "rough", "stuck"} {
+		if strings.Contains(line(t, panel, lvl), moodLine) {
+			t.Errorf("an api line on the %q row of an unmeasured wall:\n%s", lvl, panel)
+		}
+	}
+}
+
+// Thin coverage has to say so: four measured posts out of four hundred draw a
+// line that looks like a reading of the whole window.
+func TestPulseLineNamesItsCoverage(t *testing.T) {
+	evs := moodPosts(strings.Fields(strings.Repeat("ok ", 20))...)
+	evs[0].PulseMS, evs[0].PulseSrc = 20_000, wall.PulseSession
+	panel := render(moodStateOf(evs, 99), 100, 30)
+	if !strings.Contains(panel, "1 of 20 posts measured a turn") {
+		t.Errorf("the note does not report the line's coverage:\n%s", panel)
+	}
+}
+
+// A day column folds many turns; the line follows the day's mean.
+func TestPulseLineFollowsTheDayFold(t *testing.T) {
+	evs := moodPosts("ok", "ok")
+	evs[0].PulseMS, evs[0].PulseSrc = 30_000, wall.PulseSession
+	evs[1].PulseMS, evs[1].PulseSrc = 90_000, wall.PulseSession // mean 60s → drag 2
+	st := moodStateOf(evs, 99)
+	st.daily = true
+	st.refold()
+	if got := pulseLevel(st.drawn[0]); got != 3 {
+		t.Errorf("day column's line sits at level %d, want 3 (5 − a drag of 2)", got)
 	}
 }

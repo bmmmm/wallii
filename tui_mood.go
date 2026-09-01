@@ -39,6 +39,11 @@ const (
 	// moodStem draws the cursor's column where it has no mark of its own, so
 	// the inspected column is findable without painting over the curve.
 	moodStem = "│"
+	// moodLine is the latency line. Its height is the mood the waiting still
+	// allows — top of the scale when turns are quick, one row down for every
+	// step the waiting takes off a grade — so the gap between it and the
+	// curve is the drag, read straight off the picture instead of a number.
+	moodLine = "─"
 )
 
 // moodSpark renders a score as one of eight block heights, for the per-actor
@@ -177,18 +182,33 @@ func faceFor(avg float64, blinking bool) string {
 }
 
 // moodColor maps a score onto the same palette the outcome glyphs use —
-// 2 green, 3 yellow, 1 red — and returns 0 for ok, which stays the terminal's
+// 2 green, 3 yellow, 1 red — and returns "" for ok, which stays the terminal's
 // own foreground. Color marks friction; the unremarkable middle gets none.
-func moodColor(score int) int {
+func moodColor(score int) string {
 	switch score {
 	case 5, 4:
-		return 2
+		return "2"
 	case 2:
-		return 3
+		return "3"
 	case 1:
-		return 1
+		return "1"
 	}
-	return 0
+	return ""
+}
+
+// colorPulse is the latency line: a 256-color pink, deliberately outside the
+// red/yellow/green the grades and outcomes use. It is not a worse or better
+// value on the same scale — it is the other measurement, and it must not read
+// as one more shade of "bad".
+const colorPulse = "213"
+
+// colorOf turns the outcome palette's ANSI number into a style color, mapping
+// its 0 ("no color") onto the empty string moodCell uses for the same thing.
+func colorOf(ansi int) string {
+	if ansi == 0 {
+		return ""
+	}
+	return strconv.Itoa(ansi)
 }
 
 // enterMood opens the panel, keeping the cursor where it was. Jumping into a
@@ -405,29 +425,39 @@ func moodHead(now wall.MoodNow, blink bool) string {
 	return fmt.Sprintf("%s   %s · %.1f", faceFor(now.Avg, blink), moodWord(now.Avg), now.Avg)
 }
 
-// moodReceipt shows the arithmetic behind the head — what the wall graded,
-// what the latency took off it, and what the API answered in. Silent while
-// nothing has been measured and nothing is being measured: an unprobed panel
-// must not imply an API it never asked.
+// moodReceipt shows the arithmetic behind the head: what the window graded,
+// what its own waiting took off that, and what it waited — with the count, so
+// a mean over three posts can never pass for the whole window. The live
+// reading rides along at the end as `now`, kept apart from the rest because it
+// is the only term that is not about these posts.
 func moodReceipt(st moodState, now wall.MoodNow) string {
-	if !st.pulse.Known() && !st.pulsing {
-		return ""
-	}
-	wallTerm := "no grades"
+	var parts []string
 	if st.trail.Count > 0 {
-		wallTerm = fmt.Sprintf("wall %.1f", st.trail.Avg)
+		w := fmt.Sprintf("wall %.1f", st.trail.Avg)
 		if now.Drag > 0 && !now.Crash {
-			wallTerm += fmt.Sprintf(" − %.1f", now.Drag)
+			w += fmt.Sprintf(" − %.1f", now.Drag)
 		}
+		parts = append(parts, w)
+	} else if st.pulse.Known() || st.pulsing {
+		parts = append(parts, "no grades")
 	}
-	return wallTerm + " · " + moodAPITerm(st.pulse)
+	if st.trail.PulseTurns > 0 {
+		parts = append(parts, fmt.Sprintf("api ~%s over %s",
+			pulseDur(time.Duration(st.trail.PulseMS)*time.Millisecond), plural(st.trail.PulseTurns, "post")))
+	}
+	if st.trail.PulseDown > 0 {
+		parts = append(parts, fmt.Sprintf("%d with none", st.trail.PulseDown))
+	}
+	if st.pulse.Known() || st.pulsing {
+		parts = append(parts, moodNowTerm(st.pulse))
+	}
+	return strings.Join(parts, " · ")
 }
 
-// moodAPITerm is the pulse in words. A turn and a ping are named differently
-// on purpose: `api 17s` is what a turn cost, `ping 170ms` is only proof the
-// API is there, and reading the second as the first is how a wall ends up
-// claiming a good day in the middle of a slow one.
-func moodAPITerm(p wall.Pulse) string {
+// moodNowTerm is the live half in one word-pair. It says `now` for a measured
+// turn because that is what separates it from the window's mean beside it; a
+// probe stays a ping, and an outage keeps its reason.
+func moodNowTerm(p wall.Pulse) string {
 	switch {
 	case !p.Known():
 		return "api …"
@@ -436,7 +466,7 @@ func moodAPITerm(p wall.Pulse) string {
 	case !p.Turn():
 		return "ping " + pulseDur(p.RTT)
 	}
-	return "api " + pulseDur(p.RTT)
+	return "now " + pulseDur(p.RTT)
 }
 
 // eventPulseTerm names the conditions one post was written under. Empty when
@@ -478,10 +508,20 @@ func pointPulseTerm(p wall.MoodPoint) string {
 // below a second, a tenth of one above it. The extra digits are real and
 // meaningless — nobody feels the difference between 241ms and 247ms.
 func pulseDur(d time.Duration) string {
-	if d < time.Second {
+	switch {
+	case d < time.Second:
 		return d.Round(time.Millisecond).String()
+	case d < time.Minute:
+		return d.Round(100 * time.Millisecond).String()
 	}
-	return d.Round(100 * time.Millisecond).String()
+	// Go writes a round minute as "1m0s"; the zero is noise in a line that is
+	// already dense. "1m30s" keeps its seconds, because those are not noise.
+	s := d.Round(time.Second).String()
+	s = strings.TrimSuffix(s, "0m0s")
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	return s
 }
 
 func moodHeader(st moodState, width int, window, pin string) string {
@@ -523,8 +563,8 @@ func moodFooter(note string, width int, graph bool) string {
 // whether it is lit — the cursor's column, or a post that just landed.
 type moodCell struct {
 	ch    string
-	color int  // 0 = the terminal's own foreground
-	lit   bool // reverse video
+	color string // "" = the terminal's own foreground
+	lit   bool   // reverse video
 }
 
 // renderCells writes a row, batching runs of equal style into one render — a
@@ -548,8 +588,8 @@ func renderCells(cs []moodCell) string {
 			}
 		}
 		style := lipgloss.NewStyle()
-		if cs[i].color > 0 {
-			style = style.Foreground(lipgloss.Color(strconv.Itoa(cs[i].color)))
+		if cs[i].color != "" {
+			style = style.Foreground(lipgloss.Color(cs[i].color))
 		}
 		if cs[i].lit {
 			style = style.Reverse(true)
@@ -615,6 +655,16 @@ func moodGraph(st moodState, width, height int) string {
 			case i == cur:
 				c.ch, c.lit = moodStem, false // findable off its own mark
 			}
+			// the latency line runs through the same band. Where it meets a
+			// mark it recolors it instead of replacing it: the grade is what
+			// the panel is about, and a column whose block turns pink is
+			// exactly the column where the waiting caught up with it.
+			if pulseLevel(p) == lvl {
+				c.color = colorPulse
+				if c.ch == " " || c.ch == moodStem {
+					c.ch = moodLine
+				}
+			}
 			cells = append(cells, c)
 		}
 		row := renderCells(cells)
@@ -632,6 +682,18 @@ func moodGraph(st moodState, width, height int) string {
 	b.WriteString(moodOutcomeBand(pts[:shown], cur) + "\n")
 	b.WriteString(moodAxis(pts) + "\n")
 	return b.String()
+}
+
+// pulseLevel is the row the latency line sits on for one column: the top of
+// the scale minus what that column's turns take off a grade. 0 when the column
+// measured no turn — a gap in the line is the honest drawing of a post nobody
+// timed, and a line interpolated across it would invent the quiet stretch it
+// draws through.
+func pulseLevel(p wall.MoodPoint) int {
+	if p.PulseN == 0 {
+		return 0
+	}
+	return wall.MoodLevel(float64(len(wall.Moods)) - wall.PulseDrag(time.Duration(p.PulseMS)*time.Millisecond))
 }
 
 // revealed is the sweep-in: at frame 0 one column is up, by moodRevealFrames
@@ -652,7 +714,7 @@ func moodOutcomeBand(pts []wall.MoodPoint, cur int) string {
 	cells := make([]moodCell, 0, len(pts))
 	for i, p := range pts {
 		glyph, color := outcomeGlyph(p.Outcome)
-		cells = append(cells, moodCell{ch: glyph, color: color, lit: i == cur})
+		cells = append(cells, moodCell{ch: glyph, color: colorOf(color), lit: i == cur})
 	}
 	return fmt.Sprintf("  %s  %s", styleDim.Render(pad("out", moodLabelW)), renderCells(cells))
 }
@@ -758,6 +820,11 @@ func moodLegend(s wall.MoodSummary, width int) string {
 	if s.Contradicting > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s", s.Contradicting, moodContra))
 	}
+	if s.PulseTurns > 0 {
+		// the line has to name itself: a pink row through a mood graph is a
+		// second measurement, and an unlabelled one would read as a verdict
+		parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color(colorPulse)).Render(moodLine+" api time"))
+	}
 	return lipgloss.NewStyle().MaxWidth(width).Render(" " + strings.Join(parts, " · "))
 }
 
@@ -766,6 +833,11 @@ func moodLegend(s wall.MoodSummary, width int) string {
 // reports, at the moment you are looking at the curve.
 func moodNote(s wall.MoodSummary) string {
 	switch {
+	// the line's own coverage comes first while it is thin: a pink line drawn
+	// from four posts out of four hundred is a sample, and it sits in the
+	// picture looking like a measurement of the whole window
+	case s.PulseTurns > 0 && s.PulseTurns*4 < s.Total:
+		return fmt.Sprintf("%d of %d posts measured a turn — the api line is drawn from those", s.PulseTurns, s.Total)
 	case s.Used() == 1:
 		return fmt.Sprintf("1 of %d values used — a flat line is not a measurement", len(wall.Moods))
 	case !s.Low():

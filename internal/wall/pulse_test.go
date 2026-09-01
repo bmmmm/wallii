@@ -21,13 +21,15 @@ func TestPulseDragRisesWithLatency(t *testing.T) {
 	}{
 		{170 * time.Millisecond, 0},
 		{5 * time.Second, 0},
-		{15 * time.Second, 0},
-		{17 * time.Second, 1},
-		{30 * time.Second, 1},
-		{45 * time.Second, 2},
-		{60 * time.Second, 2},
-		{90 * time.Second, 3},
-		{10 * time.Minute, 3}, // the drag has a floor: it cannot fall off the scale
+		{15 * time.Second, 0}, // anchor: quick enough to stay out of the way
+		{22500 * time.Millisecond, 0.5},
+		{30 * time.Second, 1}, // anchor
+		{45 * time.Second, 1.5},
+		{60 * time.Second, 2}, // anchor
+		{90 * time.Second, 2.5},
+		{120 * time.Second, 3}, // anchor
+		{10 * time.Minute, 3},  // the drag has a floor: it cannot fall off the scale
+		{100 * time.Hour, 3},   // and the floor holds at any absurdity
 	}
 	last := -1.0
 	for _, c := range cases {
@@ -42,37 +44,67 @@ func TestPulseDragRisesWithLatency(t *testing.T) {
 	}
 }
 
-func TestMoodNowDragsWithLatency(t *testing.T) {
-	s := MoodTrail(moodEvents("great", "great", "good")) // 4.67
-	turn := func(d time.Duration) Pulse {
-		return Pulse{At: time.Now(), OK: true, RTT: d, Src: PulseSession}
+// turnEvents grades posts and says what each one's turn cost, so a window can
+// be built with conditions of its own.
+func turnEvents(moods []string, ms []int64) []Event {
+	evs := moodEvents(moods...)
+	for i := range evs {
+		if i < len(ms) && ms[i] > 0 {
+			evs[i].PulseMS, evs[i].PulseSrc = ms[i], PulseSession
+		}
 	}
-	fast := s.Now(turn(4 * time.Second))
-	if fast.Avg != s.Avg || fast.Drag != 0 {
-		t.Errorf("a 4s turn = %.2f (drag %.1f), want the wall's own %.2f untouched", fast.Avg, fast.Drag, s.Avg)
+	return evs
+}
+
+// The window's own waiting is what drags it: both terms then describe the same
+// posts, and a month of grades cannot be moved by one second's reading.
+func TestMoodNowDragsWithTheWindowsOwnWaiting(t *testing.T) {
+	quick := MoodTrail(turnEvents([]string{"great", "great", "good"}, []int64{4_000, 6_000, 5_000}))
+	if n := quick.Now(Pulse{}); n.Avg != quick.Avg || n.Drag != 0 {
+		t.Errorf("a quick window = %.2f (drag %.1f), want its own %.2f untouched", n.Avg, n.Drag, quick.Avg)
 	}
-	slow := s.Now(turn(45 * time.Second))
-	if slow.Drag != 2 || slow.Avg != s.Avg-2 {
-		t.Errorf("a 45s turn = %.2f (drag %.1f), want %.2f (drag 2)", slow.Avg, slow.Drag, s.Avg-2)
+
+	slow := MoodTrail(turnEvents([]string{"great", "great", "good"}, []int64{30_000, 60_000, 30_000})) // mean 40s
+	n := slow.Now(Pulse{})
+	if slow.PulseMS != 40_000 || slow.PulseTurns != 3 {
+		t.Fatalf("window measured %dms over %d turns, want 40000 over 3", slow.PulseMS, slow.PulseTurns)
 	}
-	if !slow.Known || slow.Crash {
-		t.Errorf("slow api = known %v, crash %v, want known and no crash — it answered", slow.Known, slow.Crash)
+	wantDrag := PulseDrag(40 * time.Second)
+	if n.Drag != wantDrag || n.Avg != slow.Avg-wantDrag {
+		t.Errorf("a 40s window = %.2f (drag %.2f), want %.2f (drag %.2f)", n.Avg, n.Drag, slow.Avg-wantDrag, wantDrag)
+	}
+	if !n.Known || n.Crash {
+		t.Errorf("slow window = known %v, crash %v, want known and no crash — it answered", n.Known, n.Crash)
+	}
+}
+
+// A live reading is not the window: it rides along in the panel as `now`, but
+// it may not move grades that were earned at another time.
+func TestMoodNowDoesNotDragWithTheLiveReading(t *testing.T) {
+	s := MoodTrail(moodEvents("great", "great", "good")) // no conditions measured
+	for _, p := range []Pulse{
+		{At: time.Now(), OK: true, RTT: 90 * time.Second, Src: PulseSession}, // a slow turn, right now
+		{At: time.Now(), OK: true, RTT: 170 * time.Millisecond, Src: PulseProbe},
+	} {
+		if n := s.Now(p); n.Drag != 0 || n.Avg != s.Avg {
+			t.Errorf("a live %s reading moved a window with no measurements to %.2f (drag %.1f)", p.Src, n.Avg, n.Drag)
+		}
 	}
 }
 
 // The bug this scale was born with: a probe answering in 170ms is not a fast
-// day, it is an open socket. Only a measured turn may move the mood.
+// day, it is an open socket. Pings never reach the window's conditions.
 func TestMoodNowIgnoresAPing(t *testing.T) {
-	s := MoodTrail(moodEvents("great", "great", "good"))
-	ping := Pulse{At: time.Now(), OK: true, RTT: 170 * time.Millisecond, Src: PulseProbe}
-	if n := s.Now(ping); n.Drag != 0 || n.Avg != s.Avg {
-		t.Errorf("a ping moved the mood to %.2f (drag %.1f), want %.2f untouched", n.Avg, n.Drag, s.Avg)
+	evs := moodEvents("great", "great", "good")
+	for i := range evs {
+		evs[i].PulseMS, evs[i].PulseSrc = 170, PulseProbe
 	}
-	// and a slow ping is still only a ping — it says the network is unhappy,
-	// not that a turn took that long
-	slowPing := Pulse{At: time.Now(), OK: true, RTT: 2 * time.Second, Src: PulseProbe}
-	if n := s.Now(slowPing); n.Drag != 0 {
-		t.Errorf("a slow ping claimed a drag of %.1f", n.Drag)
+	s := MoodTrail(evs)
+	if s.PulseTurns != 0 || s.PulseMS != 0 {
+		t.Fatalf("pings counted as turns: %d turns, %dms", s.PulseTurns, s.PulseMS)
+	}
+	if n := s.Now(Pulse{}); n.Drag != 0 || n.Avg != s.Avg {
+		t.Errorf("a window of pings moved the mood to %.2f (drag %.1f), want %.2f untouched", n.Avg, n.Drag, s.Avg)
 	}
 }
 
@@ -91,8 +123,8 @@ func TestMoodNowCrashesWithoutAPI(t *testing.T) {
 }
 
 func TestMoodNowClampsToTheScale(t *testing.T) {
-	s := MoodTrail(moodEvents("rough", "rough")) // 2.0
-	n := s.Now(Pulse{At: time.Now(), OK: true, RTT: 4 * time.Minute, Src: PulseSession})
+	s := MoodTrail(turnEvents([]string{"rough", "rough"}, []int64{240_000, 240_000})) // 2.0, four minutes a turn
+	n := s.Now(Pulse{})
 	if n.Avg != 1 {
 		t.Errorf("2.0 minus a 3-step drag = %.1f, want 1 — the scale has a floor", n.Avg)
 	}
@@ -107,7 +139,7 @@ func TestMoodNowIgnoresAnUnmeasuredPulse(t *testing.T) {
 }
 
 func TestMoodNowUngradedWallStaysUnknownUntilItCrashes(t *testing.T) {
-	s := MoodTrail([]Event{{TS: time.Now(), Repo: "alpha", Msg: "no grade"}})
+	s := MoodTrail([]Event{{TS: time.Now(), Repo: "alpha", Msg: "no grade", PulseMS: 40_000, PulseSrc: PulseSession}})
 	if n := s.Now(Pulse{At: time.Now(), OK: true, RTT: 40 * time.Second, Src: PulseSession}); n.Known {
 		t.Errorf("ungraded wall with a slow api = %.2f, want no reading — waiting subtracts, it does not invent a mood", n.Avg)
 	}
@@ -411,9 +443,9 @@ func TestSessionPulseReadsTheStatuslineCache(t *testing.T) {
 	if !p.Turn() || p.RTT != 17431*time.Millisecond || p.Src != PulseSession {
 		t.Fatalf("pulse = %s from %q (turn %v), want a 17.4s turn from the session", p.RTT, p.Src, p.Turn())
 	}
-	// and it drags the mood the way seventeen seconds should
-	if drag := PulseDrag(p.RTT); drag != 1 {
-		t.Errorf("a 17.4s turn drags %.1f, want 1", drag)
+	// and it is past the first anchor, so it costs the mood something
+	if drag := PulseDrag(p.RTT); drag <= 0 || drag >= 1 {
+		t.Errorf("a 17.4s turn drags %.2f, want somewhere between the 15s and 30s anchors", drag)
 	}
 }
 

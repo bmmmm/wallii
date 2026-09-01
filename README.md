@@ -211,7 +211,7 @@ live and light their column as they arrive.
 ```
  wallii · mood · 436 of 506 posts graded · 7d
 
-          ( o‿o )   good · 3.9   wall 3.9 · api 185ms
+      ( o‿o )   good · 3.9   wall 3.9 · api ~4s over 22 posts · now 2.4s
 
   great ┤    █ █                   !██     █ █  █     ██
   good  ┤██!█   █ █████!████! █████   █        █   ███   █  │ █
@@ -259,28 +259,37 @@ claim being doubted. A folded day is marked only when *most* of it was:
 almost every busy day holds one mismatch, and a mark that fires on every
 column marks nothing.
 
-**The head carries the live half: what a turn is costing right now.**
-The curve is history — what actors graded, after the fact. The pulse is the
-same question measured instead of reported, and it only ever subtracts:
-nobody has a good day while every answer takes 45 seconds, so the waiting
-comes off the wall's own average, and the head shows the arithmetic
-(`wall 5.0 − 2.0 · api 45s`) rather than asking to be believed.
+**The head counts what the window waited.** The curve is history — what actors
+graded, after the fact — and every post carries what a turn cost while it was
+written, so the same window supplies both halves of the arithmetic: its
+grades, and its waiting. Nobody has a good day while every answer takes 45
+seconds, so the mean comes off the average and the head shows its own working:
+
+```
+( o_o )   ok · 3.0   wall 3.9 − 0.9 · api ~28.3s over 20 posts · now 3s
+```
+
+`now` is the live reading, kept apart at the end because it is the one term
+that is not about these posts. It never moves the grades: a month of work
+cannot turn rough because one answer just took a minute. The exception is an
+outage, which is a fact about the present and overrides everything.
 
 | a turn's API time | taken off the grade |
 | --- | --- |
 | ≤ 15s | — |
-| ≤ 30s | 1 |
-| ≤ 60s | 2 |
-| slower | 3 |
+| 30s | 1 |
+| 60s | 2 |
+| ≥ 120s | 3 |
 | no answer at all | **crashout** |
 
 Those are the bands the statusline already colors, because that is the scale
-being lived. **The measurement is what a turn cost, never what a ping cost.**
-The first version of this got that wrong — it timed a `GET /v1/models`, saw
-170ms, and called it the response time while turns were taking seventeen
-seconds. A ping says the door is open, not how long the room takes: a probe
-reading is shown as `ping 170ms`, it proves the API is reachable, and it
-never moves a mood.
+being lived; between them the drag runs continuously, so a 31-second day and a
+59-second one are not the same day. **The measurement is what a turn cost,
+never what a ping cost.** The first version of this got that wrong — it timed
+a `GET /v1/models`, saw 170ms, and called it the response time while turns
+were taking seventeen seconds. A ping says the door is open, not how long the
+room takes: a probe reading is shown as `ping 170ms`, it proves the API is
+reachable, and it never moves a mood.
 
 A fast turn says nothing either: it leaves the grades exactly as posted, which
 is why it can never invent a mood on a wall that carries none. No API is not a
@@ -291,9 +300,31 @@ drops to the floor of the scale with a face of its own and names the reason:
  ( ✖_✖ )   crashout · no api   wall 3.9 · no api — connect: connection refused
 ```
 
-The pulse never enters the curve. A synthetic column for "now" would be a
+The pulse never becomes a mood column. A synthetic grade for "now" would be a
 mood nobody posted, and that is the one thing the panel promises not to draw —
 the series behind a crashout is exactly what it was before.
+
+**It gets a line of its own instead, in pink, running through the same band:**
+
+```
+  great ┤██─█──         █─██─
+  good  ┤  █ ██──     ██ █  █
+  ok    ┤      ██─█─██
+  rough ┤        █ █
+  stuck ┤
+         great 6 · good 7 · ok 5 · rough 2 · stuck 0 · ─ api time
+```
+
+Its height is the mood the waiting still allows: the top of the scale when
+turns are quick, one row down for every step they take off a grade. So the
+gap between the line and the curve is the drag, read straight off the picture
+— where the line sinks under the blocks, the waiting is what is holding the
+day down. Where it crosses a column it recolors that column's mark rather than
+covering it: the grade is what the panel is about, and a block turning pink is
+exactly the post where the two met. Posts nobody timed get no point and the
+line does not bridge them — an interpolated stretch would draw a measurement
+that was never taken — and while coverage is thin the note under the legend
+says how thin.
 
 **Every post carries the conditions it was written under.** The head is only
 live; history needs its own reading, so `wallii post` takes one and stores it

@@ -87,7 +87,7 @@ func TestPostWithoutProbingCarriesNoReading(t *testing.T) {
 // says so, and names what the wait costs the scale.
 func TestAPILineReportsTheConditions(t *testing.T) {
 	got := apiLine(wall.Stats{PulseTurns: 4, PulseTurnTotalMS: 180_000, PulseDown: 2})
-	for _, want := range []string{"45s per turn across 4 posts", "takes 2.0 off a mood", "2 written with no api"} {
+	for _, want := range []string{"45s per turn across 4 posts", "takes 1.5 off a mood", "2 written with no api"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("api line %q is missing %q", got, want)
 		}
@@ -167,5 +167,23 @@ func TestEventPulseTermNamesTurnsAndPingsApart(t *testing.T) {
 	}
 	if got := pulseDur(1830 * time.Millisecond); got != "1.8s" {
 		t.Errorf("pulseDur = %q, want %q", got, "1.8s")
+	}
+}
+
+// Turn times run into minutes, where Go's own formatting writes "1m0s".
+func TestPulseDurRoundsToWhatCanBeFelt(t *testing.T) {
+	cases := map[time.Duration]string{
+		241500 * time.Microsecond: "242ms",
+		2840 * time.Millisecond:   "2.8s",
+		10 * time.Second:          "10s",
+		time.Minute:               "1m",
+		90 * time.Second:          "1m30s",
+		2 * time.Minute:           "2m",
+		time.Hour:                 "1h",
+	}
+	for d, want := range cases {
+		if got := pulseDur(d); got != want {
+			t.Errorf("pulseDur(%s) = %q, want %q", d, got, want)
+		}
 	}
 }

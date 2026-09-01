@@ -291,6 +291,10 @@ func pulseErr(err error) string {
 // draws in colors, because that is the scale being lived: under 15s the tool
 // keeps up, to 30s you notice, to a minute you are waiting, past that you are
 // doing something else.
+// The anchors are landmarks, and the drag runs continuously between them:
+// waiting does not happen in steps, and a stepped drag draws a line that only
+// ever takes four positions — no shape, and the difference between a 31s day
+// and a 59s one disappears.
 var pulseAnchors = []struct {
 	upTo time.Duration
 	drag float64
@@ -298,37 +302,49 @@ var pulseAnchors = []struct {
 	{15 * time.Second, 0},
 	{30 * time.Second, 1},
 	{60 * time.Second, 2},
+	{120 * time.Second, 3},
 }
 
 const pulseMaxDrag = 3
 
 // PulseDrag is the penalty for one turn's API time, in steps of the mood scale.
 func PulseDrag(d time.Duration) float64 {
-	for _, a := range pulseAnchors {
+	prev := pulseAnchors[0]
+	if d <= prev.upTo {
+		return prev.drag
+	}
+	for _, a := range pulseAnchors[1:] {
 		if d <= a.upTo {
-			return a.drag
+			return prev.drag + (a.drag-prev.drag)*float64(d-prev.upTo)/float64(a.upTo-prev.upTo)
 		}
+		prev = a
 	}
 	return pulseMaxDrag
 }
 
-// MoodNow is the mood as of this second. Avg is what the face and the word are
-// drawn from; Drag and Crash keep the two terms behind it separable, so the
-// reading can show its own arithmetic instead of asking to be believed.
+// MoodNow is the mood of a window once its own conditions are counted. Avg is
+// what the face and the word are drawn from; Drag and Crash keep the terms
+// behind it separable, so the reading can show its own arithmetic instead of
+// asking to be believed.
 type MoodNow struct {
 	Avg   float64 // 1 … 5, or 0 when nothing measured says anything
-	Drag  float64 // steps the latency took off the wall's average
-	Crash bool    // no API — the bottom of the scale, whatever the wall said
+	Drag  float64 // steps the window's own waiting took off its average
+	Crash bool    // no API right now — the bottom of the scale, whatever was posted
 	Known bool    // false when the wall carries no grades and the API is fine
 }
 
-// Now folds the live pulse into the wall's average.
+// Now folds the window's measured conditions into its grades, and the live
+// pulse into the question of whether anything is possible at all.
 //
-// Only a turn drags: a probe that answered proves the API is there and nothing
-// more, so it leaves the grades exactly as posted — which is also why a healthy
-// pulse can never invent a mood on an ungraded wall. Waiting only ever
-// subtracts. And no API at all is not a subtraction but a verdict: nothing is
-// getting done at any grade, so the reading drops to the floor and says why.
+// The two halves come from different clocks on purpose. The drag is the mean
+// turn time across the posts in this window: both terms then describe the same
+// posts, and a month of grades cannot be moved by whatever one probe found a
+// second ago. The crash is live, because "the API is gone" is a fact about
+// now — no history survives it, so it overrides everything above.
+//
+// Waiting only ever subtracts, and only a measured turn counts as waiting: a
+// probe proves the API is there and nothing more, which is also why a healthy
+// pulse can never invent a mood on an ungraded wall.
 func (s MoodSummary) Now(p Pulse) MoodNow {
 	if p.Known() && !p.OK {
 		return MoodNow{Avg: 1, Drag: pulseMaxDrag, Crash: true, Known: true}
@@ -337,8 +353,8 @@ func (s MoodSummary) Now(p Pulse) MoodNow {
 		return MoodNow{}
 	}
 	n := MoodNow{Avg: s.Avg, Known: true}
-	if p.Turn() {
-		n.Drag = PulseDrag(p.RTT)
+	if s.PulseTurns > 0 {
+		n.Drag = PulseDrag(time.Duration(s.PulseMS) * time.Millisecond)
 		n.Avg = clampMood(s.Avg - n.Drag)
 	}
 	return n
