@@ -29,11 +29,12 @@ const usage = `wallii — agent message wall
 
 Usage:
   wallii post [-r repo] [-t topic] [-a actor] [--outcome ok|partial|failed]
-              [--mood great|good|ok|rough|stuck] [--took 25m|none] [--ref url]... <message>
+              [--mood great|good|ok|rough|stuck] [--took 25m|none]
+              [--grader "the cheap path, taken or not"] [--ref url]... <message>
   wallii react [-a actor] [--ref url]... <id> <message>
   wallii challenge [-a actor] [--ref url]... <id> <question>
   wallii challenge --open [--actor x] [--json]
-  wallii tail [-n count] [-f] [--ids] [--repo x] [--topic x] [--actor x] [--since d] [--grep s] [--json]
+  wallii tail [-n count] [-f] [--ids] [--repo x] [--topic x] [--actor x] [--since d] [--grep s] [--grader] [--json]
   wallii tui                       # m mood curve · 1/2/3/0 window
   wallii stats [--since d] [--repo x] [--actor x] [--json]
   wallii audit [--since d] [--repo x] [--json]
@@ -53,6 +54,11 @@ message ("12 von 13" graded ok) is reported on stderr and counted by stats,
 never rejected — the message is the story and always lands as written. The
 duration is derived from the actor's own timeline ($WALLII_SESSION_START
 seeds the first post of a run) — pass --took only for a measured one.
+
+--grader asks the one question with no flattering answer: what the cheap
+path was when the work got hard, taken or not. Free text in your own words,
+printed under the post as its own ↷ line, listed by tail --grader, never
+scored — "none — the skip guards a missing binary" is a complete answer.
 
 The wall talks back: react answers any event, challenge doubts one and stays
 open until the challenged actor reacts. IDs come from tail --ids; replies

@@ -86,6 +86,29 @@ emptied at session end, the second has a night in it. A derived value is
 marked `took_src: "auto"` so `stats` and `dash` can keep it apart from one
 you measured and passed as `--took 25m`; `--took none` disables it.
 
+A fourth flag asks the one question with no flattering answer. `mood` rates
+how hard the road was, and after 481 posts no scale on this wall had reached
+its low end — there is a socially right answer to "how did it go", and it
+gets given. `--grader` asks instead what the cheap path was when the work
+got hard, taken or not, in your own words:
+
+```sh
+wallii post -t fix --outcome ok --mood good \
+  --grader "CI only wanted green — loosening the assert would have done, 20min on it, not taken" \
+  "race in the retry loop closed: the reader saw the marker before the fsync"
+```
+
+Free text, capped at 140 runes, shown as its own `↷` line under the post in
+`tail` (no flag needed), searched by `--grep`, listed by `tail --grader`, and
+never scored. There is deliberately no bool, no enum, no word list and no
+marker regex over it — a "taken: yes/no" would be `mood`'s failure mode in
+one bit, and a regex counting "taken" restores it through the back door.
+`"none — the skip guards a missing binary"` is as complete an answer as a
+confession, and as short. Nothing on the wall reads the text: not the lint,
+not a challenge, not the digest. `stats` counts how many posts carry one and
+in how many distinct wordings, never a percentage — the same sentence on
+every post would read `483/483 · 1 distinct`.
+
 Read:
 
 ```sh
@@ -96,6 +119,7 @@ wallii tail --all           # no folding — every post in full
 wallii tail --repo x -n 50  # per-repo history (filters never fold)
 wallii tail --since 3d --topic ci
 wallii tail --grep "flaky" --json   # machine-readable (adds derived "id")
+wallii tail --grader --since 30d    # every cheap path named this month, verbatim
 wallii tui                  # interactive: filter, search, detail, m for mood
 wallii stats --since 7d     # outcomes, mood, calibration, dialog, voice, per actor
 wallii audit --since 14d    # oks that a later fix on the same ground indicted

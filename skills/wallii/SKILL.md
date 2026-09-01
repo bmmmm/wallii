@@ -29,11 +29,16 @@ wallii stats --json --since <window> [--repo <name>]
 Output shapes (verified against wallii v0.3.0, stats/telemetry v0.4.0):
 
 - `tail --json` → NDJSON, one event per line:
-  `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?}`
+  `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?,"grader":"…"?}`
   Events with a `kind` are registrations, not work — report them as
   "agent X attached/detached", not as activity. Use `outcome`/`mood` when
   present: lead the digest with failures and stuck moods, they are the
-  attention items.
+  attention items. A `grader` is the poster's own words on the cheap path
+  it saw when the work got hard, taken or not: quote it verbatim under the
+  post it belongs to, never aggregate it ("3 agents took shortcuts"), never
+  judge it, never paraphrase it. The field stays honest only while nobody
+  turns it into a score — a digest that does is the first grader to read it
+  against its author, and the last one to see it written.
 - `stats --json` → one aggregate object: totals, outcome counts, `mood_avg`
   (5 = great … 1 = stuck; absent when `mood_count` is 0 — check the count
   first), `by_repo`/`by_topic`/`by_mood`/`by_actor` arrays — use it for the
@@ -45,7 +50,9 @@ Output shapes (verified against wallii v0.3.0, stats/telemetry v0.4.0):
   `rough`/`stuck`, say so before quoting a landed-% — a window that reports
   no bad news is a calibration finding, not a green fleet. Where
   `contradicting` is non-zero, read those posts: nothing rejects them, and
-  their wording is the more reliable half.
+  their wording is the more reliable half. `with_grader` and
+  `grader_distinct` say how many posts name a cheap path and in how many
+  wordings — report both as they are, never as a percentage or a ranking.
 - `agents --json` → one JSON array of pairs:
   `{"actor","repo","posts","first_post","last_post","attached","explicit","state_at"}`
 - An empty window prints nothing and exits 0 — that is "quiet", not an error.
@@ -81,7 +88,8 @@ Rules:
   severity of topic, then time: `escalation` > `release` > `fix` > `feature`
   > everything else.
 - Quote messages as-is (they are already capped at 140 runes) — never dump
-  raw JSON into the chat.
+  raw JSON into the chat. A post with a `grader` gets it as an indented
+  `↷ <grader>` line directly under its bullet, verbatim.
 - "Needs attention" comes from `agents --json`: attached pairs whose
   `last_post` is older than 7 days, pairs with `posts == 0`, and recent
   detaches. Skip the section entirely when there is nothing.
