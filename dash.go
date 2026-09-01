@@ -33,6 +33,9 @@ type dashEvent struct {
 	Vs    int      `json:"vs,omitempty"`  // 1 when the grade disagrees with the message
 	Refs  []string `json:"refs,omitempty"`
 	Msg   string   `json:"msg"`
+	// Grader is quoted under the message, never aggregated: the browser
+	// gets the words, not a count of them.
+	Grader string `json:"grader,omitempty"`
 }
 
 func cmdDash(args []string) error {
@@ -67,6 +70,7 @@ func cmdDash(args []string) error {
 		out = append(out, dashEvent{
 			T: e.TS.UnixMilli(), Repo: e.Repo, Actor: e.Actor, Topic: e.Topic,
 			Out: e.Outcome, Mood: e.Mood, Took: e.TookS, Src: e.TookSrc, Vs: vs, Refs: e.Refs, Msg: e.Msg,
+			Grader: e.Grader,
 		})
 	}
 	// json.Marshal HTML-escapes < > & — safe to inline in a <script> block

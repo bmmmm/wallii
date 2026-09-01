@@ -126,7 +126,7 @@ func (m *tuiModel) passes(e wall.Event, since time.Time, q string, withDayPin bo
 		return false
 	}
 	if q != "" {
-		hay := strings.ToLower(e.Repo + " " + e.Topic + " " + e.Actor + " " + e.Msg + " " + strings.Join(e.Refs, " "))
+		hay := strings.ToLower(e.Repo + " " + e.Topic + " " + e.Actor + " " + e.Msg + " " + e.Grader + " " + strings.Join(e.Refs, " "))
 		if !strings.Contains(hay, q) {
 			return false
 		}
@@ -558,6 +558,11 @@ func (m *tuiModel) line(e wall.Event, sel bool) string {
 		if t := eventPulseTerm(e); t != "" {
 			fmt.Fprintf(&sb, " · %s", t)
 		}
+		// the poster's own words on the cheap path, before the refs: same
+		// standing as the message, never behind a key
+		if e.Grader != "" {
+			fmt.Fprintf(&sb, "\n   ↷ %s", e.Grader)
+		}
 		for i, u := range e.Refs {
 			if i == 3 {
 				fmt.Fprintf(&sb, "\n   … +%d more refs", len(e.Refs)-3)
@@ -633,6 +638,12 @@ func (m *tuiModel) viewDetail() string {
 		field("api", "no answer at all")
 	}
 	b.WriteString("\n  " + lipgloss.NewStyle().Width(max(20, m.width-4)).Render(e.Msg) + "\n")
+	// a wrapped paragraph, not a field(): 140 runes do not fit one line,
+	// and a grader cut off mid-sentence is worse than none shown
+	if e.Grader != "" {
+		para := lipgloss.NewStyle().Width(max(20, m.width-6)).Render(e.Grader)
+		b.WriteString("\n  " + styleDim.Render("↷") + " " + strings.ReplaceAll(para, "\n", "\n    ") + "\n")
+	}
 	if len(e.Refs) > 0 {
 		b.WriteString("\n")
 		for i, u := range e.Refs {
