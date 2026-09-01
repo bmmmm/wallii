@@ -84,6 +84,29 @@ func MoodLevel(avg float64) int {
 	return l
 }
 
+// Recent averages the last n graded posts — the end of the curve rather than
+// all of it.
+//
+// An average over an unbounded history cannot be contradicted: with four
+// hundred posts behind it, a rough afternoon moves the number by a
+// thousandth, so a panel showing only that number is a museum label, not a
+// reading of now. This is the term that can disagree with it, and the
+// disagreement is the finding.
+//
+// Reports false when the window holds no more than n posts: there the recent
+// stretch IS the window, and printing the same number twice says nothing.
+func (s MoodSummary) Recent(n int) (float64, bool) {
+	if n <= 0 || s.Count <= n {
+		return 0, false
+	}
+	pts := s.Points[len(s.Points)-n:]
+	sum := 0.0
+	for _, p := range pts {
+		sum += p.Avg
+	}
+	return sum / float64(len(pts)), true
+}
+
 // Used counts how many of the five values ever appear. One value over
 // hundreds of posts is a flat line, not a reading.
 func (s MoodSummary) Used() int {

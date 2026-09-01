@@ -274,6 +274,24 @@ that is not about these posts. It never moves the grades: a month of work
 cannot turn rough because one answer just took a minute. The exception is an
 outage, which is a fact about the present and overrides everything.
 
+**`last 10` is there because an average over hundreds of posts cannot be
+contradicted.** With 470 graded posts behind it, a rough afternoon moves the
+headline by a thousandth — so the panel would smile through a bad day and be
+arithmetically right about it. The last ten graded posts are the term that can
+disagree, with an arrow when they do, and when the gap passes a third of a
+step the note under the legend says it in words:
+
+```
+( o‿o )   good · 3.9   last 10 · 3.5 ↓ · api ~4.1s over 10 posts · now 3.6s
+ the last 10 average 3.5, not the 3.9 above — that one spans all 476 graded posts
+```
+
+Ten posts, not a time span: a quiet week would leave a duration empty exactly
+when the wall has something to say. The face and the word stay with the
+window's own average, so they never disagree with the number beside them —
+and `wall 3.9` only appears as its own term when something moved it (a drag,
+or a crashout), because otherwise it is the headline number printed twice.
+
 | a turn's API time | taken off the grade |
 | --- | --- |
 | ≤ 15s | — |

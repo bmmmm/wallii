@@ -1172,3 +1172,71 @@ func TestMoodHeadDropsAZeroDrag(t *testing.T) {
 		t.Errorf("head dropped a drag that matters:\n%s", big)
 	}
 }
+
+// A lifetime average cannot be contradicted: with hundreds of posts behind it
+// a rough afternoon moves it by a thousandth, and the panel then shows a
+// smiling face over work that just went wrong. The recent stretch is the term
+// that can disagree.
+func TestMoodHeadShowsTheRecentStretch(t *testing.T) {
+	moods := append(strings.Fields(strings.Repeat("great ", 40)), strings.Fields(strings.Repeat("rough ", 10))...)
+	st := moodStateOf(moodPosts(moods...), 99)
+	panel := render(st, 110, 30)
+
+	if !strings.Contains(panel, "last 10 · 2.0 ↓") {
+		t.Errorf("head does not carry the recent stretch:\n%s", panel)
+	}
+	// the headline number stays what it is — an average over the window, and
+	// the face beside it stays consistent with it
+	if !strings.Contains(panel, "good · 4.4") {
+		t.Errorf("head stopped reporting the window's own average:\n%s", panel)
+	}
+	if !strings.Contains(panel, "the last 10 average 2.0, not the 4.4 above") {
+		t.Errorf("the note does not name the divergence:\n%s", panel)
+	}
+}
+
+// The arrow is a claim about direction, so it only appears where there is one.
+func TestMoodRecentArrowOnlyOnRealMovement(t *testing.T) {
+	flat := moodStateOf(moodPosts(strings.Fields(strings.Repeat("good ", 30))...), 99)
+	if got := render(flat, 110, 30); strings.Contains(got, "↓") || strings.Contains(got, "↑") {
+		t.Errorf("an unchanging wall drew a trend arrow:\n%s", got)
+	}
+	up := append(strings.Fields(strings.Repeat("ok ", 30)), strings.Fields(strings.Repeat("great ", 10))...)
+	if got := render(moodStateOf(moodPosts(up...), 99), 110, 30); !strings.Contains(got, "↑") {
+		t.Errorf("a recovering wall drew no upward arrow:\n%s", got)
+	}
+}
+
+// Below the threshold the recent stretch IS the window: printing the same
+// number twice under two names says nothing.
+func TestMoodRecentSilentOnAShortWall(t *testing.T) {
+	for _, n := range []int{1, 5, moodRecentN} {
+		st := moodStateOf(moodPosts(strings.Fields(strings.Repeat("good ", n))...), 99)
+		if got := render(st, 110, 30); strings.Contains(got, "last 10") {
+			t.Errorf("%d posts: head claims a recent stretch it does not have:\n%s", n, got)
+		}
+	}
+	st := moodStateOf(moodPosts(strings.Fields(strings.Repeat("good ", moodRecentN+1))...), 99)
+	if got := render(st, 110, 30); !strings.Contains(got, "last 10") {
+		t.Errorf("%d posts: head drops the recent stretch:\n%s", moodRecentN+1, got)
+	}
+}
+
+// The wall's own average earns a term only when something moved it. Without a
+// drag it is the number already in the head, and twice is not clearer.
+func TestMoodHeadDropsTheRedundantWallTerm(t *testing.T) {
+	plain := render(moodStateOf(moodPosts("good", "good", "ok"), 99), 110, 30)
+	if strings.Contains(plain, "wall 3.7") {
+		t.Errorf("head prints its own number twice:\n%s", plain)
+	}
+	dragged := render(pulsed(turnPosts(60_000, "great", "great", "great"),
+		wall.Pulse{At: time.Now(), OK: true, RTT: time.Minute, Src: wall.PulseSession}), 110, 30)
+	if !strings.Contains(dragged, "wall 5.0 − 2.0") {
+		t.Errorf("head hides the arithmetic behind a drag:\n%s", dragged)
+	}
+	crashed := render(pulsed(moodPosts("great", "great"),
+		wall.Pulse{At: time.Now(), Err: "connection refused"}), 110, 30)
+	if !strings.Contains(crashed, "wall 5.0") {
+		t.Errorf("a crashout hid what the wall was before it:\n%s", crashed)
+	}
+}

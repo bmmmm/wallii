@@ -441,14 +441,20 @@ func moodHead(now wall.MoodNow, blink bool) string {
 func moodReceipt(st moodState, now wall.MoodNow) string {
 	var parts []string
 	if st.trail.Count > 0 {
-		w := fmt.Sprintf("wall %.1f", st.trail.Avg)
-		// a drag that rounds to zero is not worth a term: "− 0.0" reads as an
-		// arithmetic bug, and the number it would subtract is invisible in the
-		// average printed right next to it
-		if now.Drag >= 0.05 && !now.Crash {
-			w += fmt.Sprintf(" − %.1f", now.Drag)
+		// the wall's own average only earns a term when the waiting moved it:
+		// with no drag it is the number already printed in the head, and
+		// printing it twice fills the line without adding a fact
+		switch {
+		case now.Crash:
+			// the crashout replaces the head's number, so the wall's own is
+			// the only place left to see what the day was before the verdict
+			parts = append(parts, fmt.Sprintf("wall %.1f", st.trail.Avg))
+		case now.Drag >= 0.05:
+			parts = append(parts, fmt.Sprintf("wall %.1f − %.1f", st.trail.Avg, now.Drag))
 		}
-		parts = append(parts, w)
+		if r, ok := st.trail.Recent(moodRecentN); ok {
+			parts = append(parts, fmt.Sprintf("last %d · %.1f%s", moodRecentN, r, trendMark(r-st.trail.Avg)))
+		}
 	} else if st.pulse.Known() || st.pulsing {
 		parts = append(parts, "no grades")
 	}
@@ -463,6 +469,28 @@ func moodReceipt(st moodState, now wall.MoodNow) string {
 		parts = append(parts, moodNowTerm(st.pulse))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// moodRecentN is how many posts count as "lately". Enough that one post
+// cannot swing it, few enough that it moves inside a session — a number, not
+// a duration, because a quiet week would leave a duration empty exactly when
+// the wall has something to say.
+const moodRecentN = 10
+
+// moodTrendGap is when the divergence stops being noise and becomes a finding
+// worth the note line: a third of a step is three of ten posts having moved.
+const moodTrendGap = 0.3
+
+// trendMark says which way the recent stretch sits against the whole. Nothing
+// when they agree: an arrow on a difference of 0.02 is a claim about noise.
+func trendMark(diff float64) string {
+	switch {
+	case diff <= -0.05:
+		return " ↓"
+	case diff >= 0.05:
+		return " ↑"
+	}
+	return ""
 }
 
 // moodNowTerm is the live half in one word-pair. It says `now` for a measured
@@ -977,6 +1005,14 @@ func moodLegend(s wall.MoodSummary, width int) string {
 // value is a habit, not a reading. Same finding the stats calibration line
 // reports, at the moment you are looking at the curve.
 func moodNote(s wall.MoodSummary) string {
+	// The one note that is about now rather than about the scale: a headline
+	// average over hundreds of posts cannot be moved by a bad afternoon, so
+	// when the end of the curve has left the middle of it, the panel says so
+	// instead of letting the big number speak for the small one.
+	if r, ok := s.Recent(moodRecentN); ok && math.Abs(r-s.Avg) >= moodTrendGap {
+		return fmt.Sprintf("the last %d average %.1f, not the %.1f above — that one spans all %d graded posts",
+			moodRecentN, r, s.Avg, s.Count)
+	}
 	switch {
 	// the line's own coverage comes first while it is thin: a pink line drawn
 	// from four posts out of four hundred is a sample, and it sits in the
