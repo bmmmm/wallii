@@ -19,6 +19,13 @@ import (
 // flagLike matches tokens like -t / --ref / --ref=x, but not "-5" or "--".
 var flagLike = regexp.MustCompile(`^--?[A-Za-z]`)
 
+// raiseLintChallenge is the one seam in this file, and the only injected
+// dependency in the repo. It exists for a single property nothing else could
+// test: a post must never die because the doubt about it could not be
+// written. The test swaps it for a function that fails and proves the post
+// still lands and cmdPost returns nil.
+var raiseLintChallenge = wall.RaiseLintChallenge
+
 type multiFlag []string
 
 func (m *multiFlag) String() string { return strings.Join(*m, ",") }
@@ -104,10 +111,35 @@ func cmdPost(args []string) error {
 	if err := wall.Append(dir, e); err != nil {
 		return err
 	}
+	// The doubt outlives the moment: the lint's first note becomes a
+	// challenge on the wall (challenge.go), written after the post and never
+	// in its way. A failure here costs the challenge and nothing else — a
+	// grade is worth more than the telemetry around it, and the post is
+	// worth more than the doubt about it.
+	var lint wall.LintChallenge
+	if wall.AutoChallengeEnabled() {
+		var lerr error
+		if lint, lerr = raiseLintChallenge(dir, e, now); lerr != nil {
+			fmt.Fprintln(os.Stderr, "wallii: lint challenge (non-fatal):", lerr)
+		}
+	}
+	// The note gets its handle either way — silence about a suppressed
+	// challenge would leave the agent believing nothing happened.
+	handle := ""
+	switch {
+	case lint.Raised:
+		id := lint.Challenge.ID()
+		handle = fmt.Sprintf(" — raised as challenge %s, answer with: wallii react %s \"…\"", id, id)
+	case lint.Open:
+		handle = " — already open as " + lint.Challenge.ID()
+	}
 	// Notes, never gates: the post is already on the wall, exactly as
 	// written. They are worth printing anyway — the next grade is the one
 	// they can still change.
 	for _, note := range wall.Contradictions(e) {
+		if note == lint.Doubt.Note {
+			note += handle
+		}
 		fmt.Fprintln(os.Stderr, "wallii:", note)
 	}
 	if warn := wall.Calibration(prior, e); warn != "" {

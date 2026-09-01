@@ -13,9 +13,13 @@ import (
 // wallii post times the API now, so the suite would otherwise reach the
 // network once per post — slow where it works, and a different test where it
 // does not. Probing is off for the package; the tests that are about the
-// pulse hand over a value of their own instead.
+// pulse hand over a value of their own instead. The same for the lint's
+// challenge: a post that contradicts its grade would otherwise put a second
+// event on every fixture wall, and the tests about the challenge switch it
+// on themselves.
 func TestMain(m *testing.M) {
 	os.Setenv("WALLII_PULSE", "off")
+	os.Setenv("WALLII_AUTO_CHALLENGE", "off")
 	os.Exit(m.Run())
 }
 
