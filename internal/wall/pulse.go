@@ -307,6 +307,23 @@ var pulseAnchors = []struct {
 
 const pulseMaxDrag = 3
 
+// PulseAtDrag inverts PulseDrag: the turn time that costs exactly this many
+// steps. A view drawing the drag on an axis needs it to label that axis in the
+// unit being drawn — seconds — instead of asking the reader to trust a height.
+func PulseAtDrag(drag float64) time.Duration {
+	prev := pulseAnchors[0]
+	if drag <= prev.drag {
+		return prev.upTo
+	}
+	for _, a := range pulseAnchors[1:] {
+		if drag <= a.drag {
+			return prev.upTo + time.Duration(float64(a.upTo-prev.upTo)*(drag-prev.drag)/(a.drag-prev.drag))
+		}
+		prev = a
+	}
+	return pulseAnchors[len(pulseAnchors)-1].upTo
+}
+
 // PulseDrag is the penalty for one turn's API time, in steps of the mood scale.
 func PulseDrag(d time.Duration) float64 {
 	prev := pulseAnchors[0]

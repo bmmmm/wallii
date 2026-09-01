@@ -510,7 +510,11 @@ func TestMoodPanelNeverExceedsTheWidth(t *testing.T) {
 	daily.load(evs)
 	actors := base
 	actors.byActor = true
-	views := map[string]moodState{"posts": base, "cursor": cursored, "daily": daily, "actors": actors}
+	// the latency line adds a second axis on the right, which is the easiest
+	// way to push a row past the window
+	lined := moodStateOf(turnPosts(45_000, strings.Fields(strings.Repeat("good ", 200))...), 99)
+	lined.pulse = wall.Pulse{At: time.Now(), OK: true, RTT: 90 * time.Second, Src: wall.PulseSession}
+	views := map[string]moodState{"posts": base, "cursor": cursored, "daily": daily, "actors": actors, "lined": lined}
 
 	for name, st := range views {
 		for _, w := range []int{40, 64, 80, 100, 200} {
@@ -983,7 +987,66 @@ func TestPulseLineFollowsTheDayFold(t *testing.T) {
 	st := moodStateOf(evs, 99)
 	st.daily = true
 	st.refold()
-	if got := pulseLevel(st.drawn[0]); got != 3 {
-		t.Errorf("day column's line sits at level %d, want 3 (5 − a drag of 2)", got)
+	y, ok := pulseY(st.drawn[0])
+	if !ok || y != 3 {
+		t.Errorf("day column's line sits at %.2f (ok %v), want 3 — 5 minus a drag of 2", y, ok)
+	}
+}
+
+// The line's height is a continuous quantity laid over discrete rows, so the
+// glyph carries the third of a row the position falls in. Snapping to row
+// centers would put a 16s window and a 29s one in the same place.
+func TestPulseLinePositionIsProportional(t *testing.T) {
+	at := func(ms int64) (int, string) {
+		p := wall.MoodPoint{PulseMS: ms, PulseN: 1}
+		for sr := 0; sr < len(wall.Moods); sr++ {
+			if g, ok := pulseGlyph(p, sr, 1); ok {
+				return sr, g
+			}
+		}
+		t.Fatalf("%dms lands on no row", ms)
+		return 0, ""
+	}
+	// 15s is drag 0 (the top row), 30s is drag 1 (one row down): everything
+	// between has to appear between them, and in order
+	var last int
+	for i, ms := range []int64{15_000, 20_000, 25_000, 30_000} {
+		sr, g := at(ms)
+		pos := sr*3 + map[string]int{moodLineTop: 0, moodLine: 1, moodLineBot: 2}[g]
+		if i > 0 && pos <= last {
+			t.Errorf("%dms sits at %d, not below the previous %d — the line is snapping", ms, pos, last)
+		}
+		last = pos
+	}
+	// and the anchors land on their own rows: 15s at great, 30s at good,
+	// 60s at ok, 120s at rough
+	for _, c := range []struct {
+		ms  int64
+		row int
+	}{{15_000, 0}, {30_000, 1}, {60_000, 2}, {120_000, 3}} {
+		if sr, g := at(c.ms); sr != c.row || g != moodLine {
+			t.Errorf("%dms sits on row %d as %q, want row %d dead center", c.ms, sr, g, c.row)
+		}
+	}
+}
+
+// The second axis names the line's unit. A height in mood steps is not a
+// number anyone can read back as seconds.
+func TestPulseAxisLabelsTheSeconds(t *testing.T) {
+	want := map[int]string{5: "≤15s", 4: "30s", 3: "1m", 2: "2m", 1: ""}
+	for lvl, w := range want {
+		if got := pulseAxisLabel(lvl); got != w {
+			t.Errorf("axis label at level %d = %q, want %q", lvl, got, w)
+		}
+	}
+	panel := render(moodStateOf(turnPosts(30_000, "ok", "ok"), 99), 100, 30)
+	for _, w := range []string{"├ ≤15s", "├ 30s", "├ 1m", "├ 2m"} {
+		if !strings.Contains(panel, w) {
+			t.Errorf("panel is missing the axis mark %q:\n%s", w, panel)
+		}
+	}
+	// no line, no second axis: an axis for nothing is a claim
+	if bare := render(moodStateOf(moodPosts("ok", "ok"), 99), 100, 30); strings.Contains(bare, "├") {
+		t.Errorf("an unmeasured wall drew a latency axis:\n%s", bare)
 	}
 }

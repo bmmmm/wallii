@@ -304,22 +304,36 @@ The pulse never becomes a mood column. A synthetic grade for "now" would be a
 mood nobody posted, and that is the one thing the panel promises not to draw —
 the series behind a crashout is exactly what it was before.
 
-**It gets a line of its own instead, in pink, running through the same band:**
+**It gets a line of its own instead, in pink, on its own axis:**
 
 ```
-  great ┤██─█──         █─██─
-  good  ┤  █ ██──     ██ █  █
-  ok    ┤      ██─█─██
-  rough ┤        █ █
-  stuck ┤
-         great 6 · good 7 · ok 5 · rough 2 · stuck 0 · ─ api time
+        ┤                     ├
+  great ┤▔▔▔─▁             ─▔ ├ ≤15s
+        ┤████████████████████ ├
+  good  ┤████████████████████ ├ 30s
+        ┤        ▔─       ▔   ├ 
+  ok    ┤          ▔─         ├ 1m
+        ┤            ▔─  ▔    ├
+  rough ┤              ▔▔     ├ 2m
+  stuck ┤                     ├
+         great 0 · good 20 · … · ─ api time
 ```
 
 Its height is the mood the waiting still allows: the top of the scale when
-turns are quick, one row down for every step they take off a grade. So the
-gap between the line and the curve is the drag, read straight off the picture
-— where the line sinks under the blocks, the waiting is what is holding the
-day down. Where it crosses a column it recolors that column's mark rather than
+turns are quick, one row down for every step they take off a grade. So the gap
+between the line and the curve is the drag, read straight off the picture —
+where the line sinks under the blocks, the waiting is what is holding the day
+down.
+
+**Seconds are a continuous axis over five discrete rows**, so the line does not
+snap to them: `▔ ─ ▁` place it in the top, middle or bottom third of a row,
+and a taller window (which gives each mood level two or three rows) buys it
+proportionally more resolution. The right-hand axis names the unit, because a
+height in mood steps is not a number anyone can read back as seconds — and
+because the anchors land exactly on the row centers, those labels are exact,
+not approximate.
+
+Where the line crosses a column it recolors that column's mark rather than
 covering it: the grade is what the panel is about, and a block turning pink is
 exactly the post where the two met. Posts nobody timed get no point and the
 line does not bridge them — an interpolated stretch would draw a measurement

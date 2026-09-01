@@ -39,11 +39,18 @@ const (
 	// moodStem draws the cursor's column where it has no mark of its own, so
 	// the inspected column is findable without painting over the curve.
 	moodStem = "│"
-	// moodLine is the latency line. Its height is the mood the waiting still
-	// allows — top of the scale when turns are quick, one row down for every
-	// step the waiting takes off a grade — so the gap between it and the
-	// curve is the drag, read straight off the picture instead of a number.
-	moodLine = "─"
+	// The latency line. Its height is the mood the waiting still allows — top
+	// of the scale when turns are quick, one row down for every step the
+	// waiting takes off a grade — so the gap between it and the curve is the
+	// drag, read straight off the picture instead of a number.
+	//
+	// Three glyphs, not one: seconds are a continuous axis laid over five
+	// discrete rows, and a line that snapped to row centers would put 16s and
+	// 29s in the same place. Top, middle and bottom of the cell give the
+	// position three times the resolution the rows have.
+	moodLineTop = "▔"
+	moodLine    = "─"
+	moodLineBot = "▁"
 )
 
 // moodSpark renders a score as one of eight block heights, for the per-actor
@@ -603,13 +610,21 @@ func renderCells(cs []moodCell) string {
 const (
 	moodLabelW = 5
 	moodLeft   = 2 + moodLabelW + 2 // "  great ┤"
+	// The second axis on the right: the latency line's own unit, because a
+	// height in mood steps is not a number anybody can read back as seconds.
+	moodAxisW  = 4                 // "≤15s"
+	moodRightW = 1 + 2 + moodAxisW // " ├ 15s"
 )
 
 // moodVisible picks the stretch of the series the window can show: the newest
 // columns, unless the cursor sits left of them, in which case it anchors the
 // left edge — walking left with h scrolls the series back.
 func moodVisible(st moodState, width int) (pts []wall.MoodPoint, start, cols int) {
-	cols = max(width-moodLeft-1, 4)
+	right := 0
+	if st.trail.PulseTurns > 0 {
+		right = moodRightW
+	}
+	cols = max(width-moodLeft-right-1, 4)
 	start = max(len(st.drawn)-cols, 0)
 	if st.cursor >= 0 && st.cursor < start {
 		start = st.cursor
@@ -642,7 +657,11 @@ func moodGraph(st moodState, width, height int) string {
 
 	var b strings.Builder
 	rows := moodRows(height)
-	for lvl := len(wall.Moods); lvl >= 1; lvl-- { // 5 (great) … 1 (stuck)
+	axis := st.trail.PulseTurns > 0 // the second axis only where there is a line
+	// one pass per screen row rather than per level: the latency line lives
+	// between the rows as often as on them, so the row is the unit
+	for sr := 0; sr < len(wall.Moods)*rows; sr++ {
+		lvl := len(wall.Moods) - sr/rows // 5 (great) … 1 (stuck)
 		cells := make([]moodCell, 0, shown)
 		for i, p := range pts[:shown] {
 			c := moodCell{ch: " ", lit: i == cur}
@@ -659,22 +678,29 @@ func moodGraph(st moodState, width, height int) string {
 			// mark it recolors it instead of replacing it: the grade is what
 			// the panel is about, and a column whose block turns pink is
 			// exactly the column where the waiting caught up with it.
-			if pulseLevel(p) == lvl {
+			if g, ok := pulseGlyph(p, sr, rows); ok {
 				c.color = colorPulse
 				if c.ch == " " || c.ch == moodStem {
-					c.ch = moodLine
+					c.ch = g
 				}
 			}
 			cells = append(cells, c)
 		}
-		row := renderCells(cells)
-		for r := 0; r < rows; r++ {
-			label := ""
-			if r == rows/2 {
-				label = wall.Moods[len(wall.Moods)-lvl]
+		label, right := "", ""
+		if sr%rows == rows/2 { // the level's own row carries both labels
+			label = wall.Moods[len(wall.Moods)-lvl]
+			if axis {
+				right = pulseAxisLabel(lvl)
 			}
-			fmt.Fprintf(&b, "  %s ┤%s\n", pad(label, moodLabelW), row)
 		}
+		fmt.Fprintf(&b, "  %s ┤%s", pad(label, moodLabelW), renderCells(cells))
+		if axis {
+			// the gutter is measured against the whole series, not the part
+			// the sweep has revealed, so the axis does not slide in with it
+			fmt.Fprintf(&b, "%s├ %s", strings.Repeat(" ", max(len(pts)-shown, 0)+1),
+				styleDim.Render(pad(right, moodAxisW)))
+		}
+		b.WriteString("\n")
 	}
 	// the axis spans the data, not the window: a rule running past the last
 	// column puts the right-hand date where nothing was ever posted
@@ -684,17 +710,61 @@ func moodGraph(st moodState, width, height int) string {
 	return b.String()
 }
 
-// pulseLevel is the row the latency line sits on for one column: the top of
-// the scale minus what that column's turns take off a grade. 0 when the column
-// measured no turn — a gap in the line is the honest drawing of a post nobody
-// timed, and a line interpolated across it would invent the quiet stretch it
-// draws through.
-func pulseLevel(p wall.MoodPoint) int {
+// pulseY is where the latency line belongs for one column, in mood units: the
+// top of the scale minus what that column's turns take off a grade. Not
+// rounded to a row — the drag is continuous and the rounding would be the
+// picture's largest error. False when the column measured no turn: a gap in
+// the line is the honest drawing of a post nobody timed, and a line
+// interpolated across it would invent the stretch it draws through.
+func pulseY(p wall.MoodPoint) (float64, bool) {
 	if p.PulseN == 0 {
-		return 0
+		return 0, false
 	}
-	return wall.MoodLevel(float64(len(wall.Moods)) - wall.PulseDrag(time.Duration(p.PulseMS)*time.Millisecond))
+	return float64(len(wall.Moods)) - wall.PulseDrag(time.Duration(p.PulseMS)*time.Millisecond), true
 }
+
+// pulseGlyph places that height on the screen: which row it falls in, and
+// where inside the row. rows is how many screen rows one mood level gets, so
+// a tall window buys the line proportionally more resolution — the band is
+// one continuous axis, not five buckets.
+func pulseGlyph(p wall.MoodPoint, screenRow, rows int) (string, bool) {
+	y, ok := pulseY(p)
+	if !ok {
+		return "", false
+	}
+	// row 0 is the top of the band, which sits half a level above the top
+	// level's center: a mark at level 5 belongs in the middle of the first row
+	pos := (float64(len(wall.Moods)) + 0.5 - y) * float64(rows)
+	if int(pos) != screenRow {
+		return "", false
+	}
+	switch f := pos - float64(int(pos)); {
+	case f < 1.0/3:
+		return moodLineTop, true
+	case f < 2.0/3:
+		return moodLine, true
+	}
+	return moodLineBot, true
+}
+
+// pulseAxisLabel is the second axis: what a turn has to cost for the line to
+// reach this level. Empty below the floor the drag caps at — an axis must not
+// print a number no reading can produce.
+func pulseAxisLabel(lvl int) string {
+	drag := float64(len(wall.Moods) - lvl)
+	if drag > pulseMaxDragSteps {
+		return ""
+	}
+	d := wall.PulseAtDrag(drag)
+	if drag == 0 {
+		return "≤" + pulseDur(d)
+	}
+	return pulseDur(d)
+}
+
+// pulseMaxDragSteps mirrors the cap in wall: the line can never fall past it,
+// so neither can its axis.
+const pulseMaxDragSteps = 3
 
 // revealed is the sweep-in: at frame 0 one column is up, by moodRevealFrames
 // all are. Rounding up matters below nine points, where a floor would open on
