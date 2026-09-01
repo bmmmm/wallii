@@ -111,6 +111,96 @@ func TestContradictionsSpotsFriction(t *testing.T) {
 	}
 }
 
+// A marker under a negation is the statement that there is no leftover and
+// no friction — the lint fired on exactly the posts that said so. The
+// window is two words and stops at clause punctuation: a negation further
+// away or in another clause must not silence a real marker.
+func TestContradictionsHonorNegation(t *testing.T) {
+	quiet := []string{
+		"sweep closed: 5 of 5 hosts patched, nothing parked",
+		"Runde zu: 4 von 4 Alerts wieder scharf, nichts vertagt",
+		"kein TODO mehr im Checkout-Flow, alles verdrahtet",
+		"no leftover in the migration, both shims removed",
+		"zero remaining flags after the cleanup, config is flat",
+		"todo list empty after the import sweep, three bugs closed",
+		"TODO-Backlog leer: Rundung, stdin-Slurp und der Cache-Race sind zu",
+		"not a dead end after all, the cache was the culprit",
+		"ohne Workaround gelandet, der Upstream-Fix reichte",
+		"no hack needed, the upstream patch landed in time",
+	}
+	for _, msg := range quiet {
+		if got := Contradictions(Event{Msg: msg, Outcome: OutcomeOK, Mood: "good"}); len(got) > 0 {
+			t.Errorf("negated marker noted in %q: %v", msg, got)
+		}
+	}
+	noted := []string{
+		"no time left, the remaining two consumers stay parked",
+		"queue empty now, not yet wired into the alerting",
+		"the pool is not yet empty, two jobs remaining",
+		"nichts gefunden im Log; der Export ist noch nicht verdrahtet",
+		"no rollback this time, but the retry path is still broken",
+	}
+	for _, msg := range noted {
+		if got := Contradictions(Event{Msg: msg, Outcome: OutcomeOK}); len(got) == 0 {
+			t.Errorf("a negation elsewhere silenced a real leftover: %q", msg)
+		}
+	}
+}
+
+// A marker glued into a path or identifier is a name: docs/todo-cutover.md
+// is a file, not the statement that something is left to do. Four of the
+// six TODO notes on the wall in 14 days were file names.
+func TestContradictionsSkipNames(t *testing.T) {
+	quiet := []string{
+		"cutover runbook in docs/todo-cutover.md — deploy, seed, links covered",
+		"TODO.md committed with the three follow-ups, probe tools rescued",
+		"handover: TODO+memory+plan brought to the current state",
+		"notes in todo.txt, the parked.json fixture renamed",
+		"remaining_budget field added to the ledger export",
+	}
+	for _, msg := range quiet {
+		if got := Contradictions(Event{Msg: msg, Outcome: OutcomeOK, Mood: "good"}); len(got) > 0 {
+			t.Errorf("name noted as a leftover in %q: %v", msg, got)
+		}
+	}
+	noted := []string{
+		"TODO: wire the invalidation, the cache layer is in",
+		"docs updated, invalidation todo — cache layer landed",
+		"parked: the legacy shim, import path migration done",
+		"TODO.md rewritten, and the exporter is still parked",
+	}
+	for _, msg := range noted {
+		if got := Contradictions(Event{Msg: msg, Outcome: OutcomeOK}); len(got) == 0 {
+			t.Errorf("a real leftover next to a name went unnoted: %q", msg)
+		}
+	}
+}
+
+// German "hing an" means depended on, not hung — the same homonym trap as
+// "still". Only the readings that mean *hung* are friction.
+func TestContradictionsReadHingAsHung(t *testing.T) {
+	quiet := []string{
+		"hook test hing an fremdem worktree, eigene fixture, mutation macht ihn rot",
+		"der Export hängt an der Queue-Reihenfolge, jetzt deterministisch",
+	}
+	for _, msg := range quiet {
+		if got := Contradictions(Event{Msg: msg, Mood: "good"}); len(got) > 0 {
+			t.Errorf("dependency read as friction in %q: %v", msg, got)
+		}
+	}
+	noted := []string{
+		"der Build hing fest im Module-Cache, Lock geräumt",
+		"der Runner hing minutenlang bei 80%, dann doch grün",
+		"Deploy blieb hängen, bis der alte Container weg war",
+		"build hung on the module cache until the lock was cleared",
+	}
+	for _, msg := range noted {
+		if got := Contradictions(Event{Msg: msg, Mood: "good"}); len(got) == 0 {
+			t.Errorf("hung build went unnoted: %q", msg)
+		}
+	}
+}
+
 // ok/rough/stuck already report the friction — nothing to say.
 func TestContradictionsIgnoreHonestMoods(t *testing.T) {
 	msg := "der erste Ansatz war Sackgasse, dritter Anlauf"

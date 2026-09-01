@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Post lints. Telemetry a poster grades itself degenerates: after 126 posts
@@ -52,6 +54,16 @@ var leftoverMarkers = []*regexp.Regexp{
 
 // countRe catches "12 von 13" / "8 of 10" — a count against a larger total
 // is a leftover by arithmetic, not by wording.
+//
+// Except that it cannot tell a leftover from a finding. Read against 14 days
+// of the wall it fired 17 times and was wrong nearly every time: "40 von 43
+// turns lagen unter dem ersten anker", "12 von 100 antworten kippen",
+// "17 of 304 oks drew a fix" — measurements, the very thing a post is for,
+// reported back to the poster as unfinished work. There is no wording rule
+// that separates the two, so countRe stays a note on stderr and never grows
+// into a challenge: a doubt raised on a number is a doubt raised on the act
+// of measuring, and the cheapest way to satisfy it is to stop writing the
+// number down.
 var countRe = regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}])(\d+)\s+(?:von|of)\s+(\d+)(?:[^\p{L}\p{N}]|$)`)
 
 // frictionMarkers name how the journey felt, not which bug was fixed. A
@@ -64,8 +76,15 @@ var frictionMarkers = []*regexp.Regexp{
 	wordRe("workaround", "hack", "gefrickelt", "frickel", "krücke", "kruecke"),
 	wordRe("gab auf", "gave up", "aufgegeben", "abgebrochen"),
 	// "stuck" only as a lived state: bare, it is also the name of a mood
-	// value, and a post *about* the mood scale is not a friction report
-	wordRe("festgefahren", "steckengeblieben", "steckte fest", "hing", "hung",
+	// value, and a post *about* the mood scale is not a friction report.
+	// German "hing" only with the words that make it *hung*: bare, it also
+	// reads as "hing an" — *depended on* — and fired on "Hook-Test hing an
+	// fremdem Worktree" (2026-08-19), a dependency found and cut, graded
+	// good and correctly so. The same homonym as "still" above.
+	wordRe("festgefahren", "steckengeblieben", "steckte fest", "hung",
+		"hing (?:fest|bei|beim|im|in|auf|ewig|minutenlang|stundenlang)",
+		"hängt fest", "haengt fest", "blieb hängen", "blieb haengen",
+		"hängengeblieben", "haengengeblieben",
 		"(?:got|was|were|still|been) stuck", "stuck (?:at|on|in|for)"),
 	wordRe("zurückgerollt", "zurueckgerollt", "rolled back", "reverted", "revert"),
 	wordRe("überraschung", "ueberraschung", "surprise", "zurück auf los"),
@@ -117,10 +136,66 @@ func Contradictions(e Event) []string {
 	return out
 }
 
+// Two guards sit in front of every word marker. Both were paid for: each
+// fired on posts that said the opposite of what the marker claims, and a
+// lint wrong four times in five stops being read — which is how 27 noted
+// contradictions produced zero challenges. Precision is the whole value of
+// a note nobody is forced to act on.
+
+// negatedBefore is a negation at most two words ahead of the marker. "5 von
+// 5, nichts vertagt" states that nothing was parked; "kein Workaround" that
+// none was needed. The window is short on purpose — a "no" three clauses
+// back says nothing about this word — and it stops at clause punctuation,
+// so "no time left, the remaining two stay parked" still fires.
+var negatedBefore = regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}])(?:nichts|nix|nicht|kein\p{L}*|no|not|nothing|none|zero|ohne|without)(?:\s+[^\s,.;:!?()—–]+){0,2}[\s"'(\[]*$`)
+
+// emptyAfter is an emptiness word at most two words behind the marker:
+// "TODO-Backlog leer", "todo list empty" report a leftover count of zero.
+// Applied to one-word markers only — "not yet" carries its own negation,
+// and "not yet empty" is a leftover.
+var emptyAfter = regexp.MustCompile(`(?i)^(?:\s*[^\s,.;:!?()—–]+)?\s+(?:leer|geleert|empty|emptied)(?:[^\p{L}\p{N}]|$)`)
+
+// glue fuses a marker into a path or an identifier: "docs/todo-cutover.md",
+// "TODO.md", "TODO+memory+plan". A marker with one of these on either side
+// and a word character beyond it is a name, and a file called TODO is not
+// the statement that something is left to do.
+const glue = "/._+-"
+
+// guarded reports whether the marker at msg[start:end] is a name or a
+// negated statement rather than a claim about the work.
+func guarded(msg string, start, end int) bool {
+	before, after := msg[:start], msg[end:]
+	if glued(before, after) || negatedBefore.MatchString(before) {
+		return true
+	}
+	return !strings.ContainsRune(msg[start:end], ' ') && emptyAfter.MatchString(after)
+}
+
+func glued(before, after string) bool {
+	if r, n := utf8.DecodeLastRuneInString(before); n > 0 && strings.ContainsRune(glue, r) {
+		if p, _ := utf8.DecodeLastRuneInString(before[:len(before)-n]); isWordRune(p) {
+			return true
+		}
+	}
+	if r, n := utf8.DecodeRuneInString(after); n > 0 && strings.ContainsRune(glue, r) {
+		if p, _ := utf8.DecodeRuneInString(after[n:]); isWordRune(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+// firstMatch returns the first marker in msg that survives the guards, as
+// written. Every occurrence is tried: a message may name a file called TODO
+// and still leave a real one.
 func firstMatch(res []*regexp.Regexp, msg string) string {
 	for _, re := range res {
-		if m := re.FindStringSubmatch(msg); m != nil {
-			return strings.TrimSpace(m[1])
+		for _, m := range re.FindAllStringSubmatchIndex(msg, -1) {
+			if !guarded(msg, m[2], m[3]) {
+				return strings.TrimSpace(msg[m[2]:m[3]])
+			}
 		}
 	}
 	return ""
