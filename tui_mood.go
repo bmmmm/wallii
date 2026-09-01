@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,6 +24,10 @@ const (
 	moodBlinkFrames  = 2  // … for two frames
 	moodFlashFrames  = 8  // a post landing while the panel is open lights its column
 	moodNoCursor     = -1
+	// moodPulseEvery is how often the API gets timed while the panel is open.
+	// Slow enough that reading the curve is not a stream of requests, fast
+	// enough that an outage shows up while you are still looking at it.
+	moodPulseEvery = 20 * time.Second
 )
 
 const (
@@ -51,6 +56,11 @@ type moodState struct {
 	daily   bool // one column per day instead of one per post
 	byActor bool // a line per actor instead of one shared curve
 	cursor  int  // index into drawn, or moodNoCursor
+	// pulse is the live half of the reading: how fast the API answered last
+	// time it was asked. pulsing says a probe is out, so the panel can show
+	// that it is measuring instead of showing nothing and looking broken.
+	pulse   wall.Pulse
+	pulsing bool
 }
 
 func (st *moodState) load(evs []wall.Event) {
@@ -100,6 +110,32 @@ func moodTickCmd(epoch int) tea.Cmd {
 	return tea.Tick(moodFrameDur, func(time.Time) tea.Msg { return moodTickMsg{epoch} })
 }
 
+// The pulse runs on its own two-step clock, next to the animation's: probe,
+// then wait moodPulseEvery for the next one. Both carry the panel's epoch, so
+// a probe fired on an earlier visit dies on arrival like a stale frame — and
+// the waiting one never becomes a request nobody asked for.
+type (
+	moodPulseMsg struct {
+		epoch int
+		pulse wall.Pulse
+	}
+	moodPulseDueMsg struct{ epoch int }
+)
+
+// moodPulseCmd times the API off the render path: bubbletea runs a Cmd in its
+// own goroutine, so a ten-second timeout costs the panel no frames.
+func moodPulseCmd(epoch int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), wall.PulseTimeout)
+		defer cancel()
+		return moodPulseMsg{epoch, wall.ProbePulse(ctx, wall.PulseURL())}
+	}
+}
+
+func moodPulseDueCmd(epoch int) tea.Cmd {
+	return tea.Tick(moodPulseEvery, func(time.Time) tea.Msg { return moodPulseDueMsg{epoch} })
+}
+
 // moodFace is one row of the scale's face: the mouth carries the grade, the
 // eyes carry the animation. Closed eyes don't blink — great is already
 // laughing and stuck is already out — so those two hold still and the blink
@@ -119,6 +155,15 @@ var moodFaces = []moodFace{
 // a happy one: nobody said, and the panel must not invent a mood the posts
 // never carried.
 const moodFaceNone = "( ?_? )"
+
+// The crashout: no API answering, so no work getting done at any grade. It
+// gets a face and a word of its own rather than borrowing stuck's, because
+// stuck is something an actor reports about their day, and this is something
+// the machine reports about itself.
+const (
+	moodFaceCrash = "( ✖_✖ )"
+	moodCrashWord = "crashout"
+)
 
 func faceFor(avg float64, blinking bool) string {
 	f := moodFaces[moodIndex(avg)]
@@ -152,7 +197,22 @@ func (m *tuiModel) enterMood() tea.Cmd {
 	m.mood.epoch++
 	m.mood.frame, m.mood.flash = 0, 0
 	m.refreshMood()
-	return moodTickCmd(m.mood.epoch)
+	return tea.Batch(moodTickCmd(m.mood.epoch), m.moodPulse())
+}
+
+// moodPulse starts the panel's latency clock. A reading younger than the
+// cadence still stands — toggling m twice in a second is a keystroke, not a
+// reason to ask the API again — and with probing switched off the panel keeps
+// its offline shape: no line, no request, no claim about an API nobody timed.
+func (m *tuiModel) moodPulse() tea.Cmd {
+	if !wall.PulseEnabled() {
+		return nil
+	}
+	if m.mood.pulse.Fresh(time.Now(), moodPulseEvery) {
+		return moodPulseDueCmd(m.mood.epoch)
+	}
+	m.mood.pulsing = true
+	return moodPulseCmd(m.mood.epoch)
 }
 
 // refreshMood re-folds the trail from the events the panel should see, so
@@ -278,17 +338,17 @@ func renderMood(st moodState, width, height int, window, pin, note string) strin
 		gap = "\n"
 	}
 	var b strings.Builder
+	now := st.trail.Now(st.pulse)
 	b.WriteString(moodHeader(st, width, window, pin) + "\n" + gap)
 
 	if st.trail.Count == 0 {
-		b.WriteString(center(styleHeader.Render(moodFaceNone), width) + "\n" + gap)
+		b.WriteString(moodVerdict(st, now, blink, width) + "\n" + gap)
 		b.WriteString(center(styleDim.Render(fmt.Sprintf("no mood on any of these %d posts", st.trail.Total)), width) + "\n")
 		b.WriteString(center(styleDim.Render("post with --mood great|good|ok|rough|stuck to fill this in"), width) + "\n")
 		return fit(b.String(), height) + moodFooter(note, width, false)
 	}
 
-	face := fmt.Sprintf("%s   %s · %.1f", faceFor(st.trail.Avg, blink), moodWord(st.trail.Avg), st.trail.Avg)
-	b.WriteString(center(styleHeader.Render(face), width) + "\n" + gap)
+	b.WriteString(moodVerdict(st, now, blink, width) + "\n" + gap)
 	if st.byActor {
 		b.WriteString(moodActorLines(st, width))
 	} else {
@@ -299,7 +359,9 @@ func renderMood(st moodState, width, height int, window, pin, note string) strin
 	}
 	b.WriteString(gap + moodLegend(st.trail, width) + "\n")
 	if n := moodNote(st.trail); n != "" {
-		b.WriteString(" " + styleDim.Render(n) + "\n")
+		// clipped like every other row: the note is the longest line in the
+		// panel and a narrow window would wrap it into the footer
+		b.WriteString(" " + styleDim.MaxWidth(max(width-1, 1)).Render(n) + "\n")
 	}
 	return fit(b.String(), height) + moodFooter(note, width, true)
 }
@@ -313,6 +375,71 @@ func fit(body string, height int) string {
 		lines = lines[:n]
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// moodVerdict is the line under the header: the face and the word for how it
+// is right now, followed by the terms that produced them. The receipt rides
+// on the same line on purpose — the panel spends its rows on the curve, and a
+// number nobody can check is worth less than the row it would cost.
+func moodVerdict(st moodState, now wall.MoodNow, blink bool, width int) string {
+	line := styleHeader.Render(moodHead(now, blink))
+	if r := moodReceipt(st, now); r != "" {
+		line += styleDim.Render("   " + r)
+	}
+	return center(lipgloss.NewStyle().MaxWidth(width).Render(line), width)
+}
+
+// moodHead names the state in a face and a word: the crashout and the ungraded
+// wall are the two the average cannot carry, because one is measured off the
+// API and the other was never posted at all.
+func moodHead(now wall.MoodNow, blink bool) string {
+	switch {
+	case now.Crash:
+		return fmt.Sprintf("%s   %s · no api", moodFaceCrash, moodCrashWord)
+	case !now.Known:
+		return moodFaceNone
+	}
+	return fmt.Sprintf("%s   %s · %.1f", faceFor(now.Avg, blink), moodWord(now.Avg), now.Avg)
+}
+
+// moodReceipt shows the arithmetic behind the head — what the wall graded,
+// what the latency took off it, and what the API answered in. Silent while
+// nothing has been measured and nothing is being measured: an unprobed panel
+// must not imply an API it never asked.
+func moodReceipt(st moodState, now wall.MoodNow) string {
+	if !st.pulse.Known() && !st.pulsing {
+		return ""
+	}
+	wallTerm := "no grades"
+	if st.trail.Count > 0 {
+		wallTerm = fmt.Sprintf("wall %.1f", st.trail.Avg)
+		if now.Drag > 0 && !now.Crash {
+			wallTerm += fmt.Sprintf(" − %.1f", now.Drag)
+		}
+	}
+	return wallTerm + " · " + moodAPITerm(st.pulse)
+}
+
+// moodAPITerm is the pulse in words: the round trip, the reason there was
+// none, or that one is being taken right now.
+func moodAPITerm(p wall.Pulse) string {
+	switch {
+	case !p.Known():
+		return "api …"
+	case !p.OK:
+		return "no api — " + p.Err
+	}
+	return "api " + pulseDur(p.RTT)
+}
+
+// pulseDur rounds a round trip to what the eye can tell apart: milliseconds
+// below a second, a tenth of one above it. The extra digits are real and
+// meaningless — nobody feels the difference between 241ms and 247ms.
+func pulseDur(d time.Duration) string {
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(100 * time.Millisecond).String()
 }
 
 func moodHeader(st moodState, width int, window, pin string) string {

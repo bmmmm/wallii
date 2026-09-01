@@ -716,3 +716,160 @@ func TestListEscPeelsThePinBeforeTheRest(t *testing.T) {
 		t.Errorf("second esc left the search %q", m.search)
 	}
 }
+
+// The pulse is the live half of the reading: the wall says how the work went,
+// the API says whether any is possible right now.
+
+func pulsed(evs []wall.Event, p wall.Pulse) moodState {
+	st := moodStateOf(evs, 99)
+	st.pulse = p
+	return st
+}
+
+// Nothing measured, nothing claimed: a panel that never probed says nothing
+// about an API, and its head is the wall's own average.
+func TestMoodPanelWithoutAPulseSaysNothingAboutTheAPI(t *testing.T) {
+	panel := render(moodStateOf(moodPosts("great", "great", "great"), 99), 80, 26)
+	if strings.Contains(panel, "api") {
+		t.Errorf("an unprobed panel mentions the api:\n%s", panel)
+	}
+	if !strings.Contains(panel, "great · 5.0") {
+		t.Errorf("head lost the wall's own average:\n%s", panel)
+	}
+}
+
+// Latency only ever subtracts, and the panel shows the subtraction: a wall of
+// nothing but great, read through a four-second API, is not a great day.
+func TestMoodPanelDragsTheHeadWithLatency(t *testing.T) {
+	st := pulsed(moodPosts("great", "great", "great"), wall.Pulse{At: time.Now(), OK: true, RTT: 4 * time.Second})
+	panel := render(st, 100, 26)
+	for _, want := range []string{"ok · 3.0", "wall 5.0", "− 2.0", "api 4s"} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("head is missing %q:\n%s", want, panel)
+		}
+	}
+	if strings.Contains(panel, "great · 5.0") {
+		t.Errorf("the head still reads as the undragged wall:\n%s", panel)
+	}
+}
+
+// A fast API is not a compliment: it leaves the grades exactly as posted.
+func TestMoodPanelFastAPILeavesTheGradesAlone(t *testing.T) {
+	st := pulsed(moodPosts("good", "good", "ok"), wall.Pulse{At: time.Now(), OK: true, RTT: 240 * time.Millisecond})
+	panel := render(st, 100, 26)
+	if !strings.Contains(panel, "good · 3.7") {
+		t.Errorf("a fast api moved the wall's average:\n%s", panel)
+	}
+	if !strings.Contains(panel, "api 240ms") || strings.Contains(panel, "−") {
+		t.Errorf("receipt = want the round trip and no drag:\n%s", panel)
+	}
+}
+
+// No API is not a slow day, it is a crashout: the reading drops to the floor
+// whatever the wall said, and says why.
+func TestMoodPanelCrashesWithoutAPI(t *testing.T) {
+	st := pulsed(moodPosts("great", "great"), wall.Pulse{At: time.Now(), Err: "connection refused"})
+	panel := render(st, 100, 26)
+	for _, want := range []string{moodFaceCrash, moodCrashWord, "no api", "connection refused", "wall 5.0"} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("crashout head is missing %q:\n%s", want, panel)
+		}
+	}
+	// the curve behind it is history and stays exactly what was posted
+	if got := line(t, panel, "great"); !strings.Contains(got, moodBar) {
+		t.Errorf("the crashout ate the curve: %q", got)
+	}
+}
+
+// An ungraded wall has no mood to drag — but an API that is not answering is
+// measured, not invented, so the crashout still shows.
+func TestMoodPanelCrashoutOnAnUngradedWall(t *testing.T) {
+	evs := []wall.Event{{TS: time.Now(), Repo: "alpha", Msg: "no grade"}}
+	panel := render(pulsed(evs, wall.Pulse{At: time.Now(), Err: "no route to host"}), 100, 26)
+	if !strings.Contains(panel, moodCrashWord) || !strings.Contains(panel, "no grades") {
+		t.Errorf("want a crashout over a wall with no grades:\n%s", panel)
+	}
+	if strings.Contains(panel, moodFaceNone) {
+		t.Errorf("the ungraded face outranked a measured outage:\n%s", panel)
+	}
+	// a healthy API on the same wall stays quiet: latency subtracts, it never invents
+	quiet := render(pulsed(evs, wall.Pulse{At: time.Now(), OK: true, RTT: 3 * time.Second}), 100, 26)
+	if !strings.Contains(quiet, moodFaceNone) {
+		t.Errorf("a slow api invented a mood on an ungraded wall:\n%s", quiet)
+	}
+}
+
+// While the first probe is out the panel says so, rather than looking like an
+// offline one for as long as the API takes to answer.
+func TestMoodPanelSaysItIsMeasuring(t *testing.T) {
+	st := moodStateOf(moodPosts("good"), 99)
+	st.pulsing = true
+	if panel := render(st, 80, 26); !strings.Contains(panel, "api …") {
+		t.Errorf("a probe in flight is invisible:\n%s", panel)
+	}
+}
+
+// A transport error can be a paragraph; the panel has one line.
+func TestMoodPanelClipsALongPulseError(t *testing.T) {
+	p := wall.Pulse{At: time.Now(), Err: strings.Repeat("dial tcp 10.0.0.1:443: i/o timeout, ", 12)}
+	for _, w := range []int{40, 60, 80} {
+		for i, l := range strings.Split(render(pulsed(moodPosts("good", "ok"), p), w, 26), "\n") {
+			if lipgloss.Width(l) > w {
+				t.Errorf("width %d: line %d is %d wide: %q", w, i, lipgloss.Width(l), l)
+			}
+		}
+	}
+}
+
+func TestPulseDurRoundsToWhatCanBeFelt(t *testing.T) {
+	cases := map[time.Duration]string{
+		241500 * time.Microsecond: "242ms",
+		2840 * time.Millisecond:   "2.8s",
+		10 * time.Second:          "10s",
+	}
+	for d, want := range cases {
+		if got := pulseDur(d); got != want {
+			t.Errorf("pulseDur(%s) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// The pulse runs on the panel's clock: closing it ends the measuring, and a
+// probe fired on an earlier visit does not schedule the next one.
+func TestMoodPulseClockStopsWithThePanel(t *testing.T) {
+	t.Setenv("WALLII_PULSE", "off") // no request leaves the test; only the clock is under test
+	m := newTUI(t.TempDir(), moodPosts("good", "ok"))
+	m.width, m.height = 80, 26
+	m.handleKey(key("m"))
+	reading := wall.Pulse{At: time.Now(), OK: true, RTT: 2 * time.Second}
+	if _, cmd := m.Update(moodPulseMsg{epoch: m.mood.epoch, pulse: reading}); cmd == nil {
+		t.Fatal("a reading did not schedule the next probe")
+	}
+	if m.mood.pulse.RTT != reading.RTT || m.mood.pulsing {
+		t.Errorf("state after a reading = %s, pulsing %v, want the reading and no probe in flight", m.mood.pulse.RTT, m.mood.pulsing)
+	}
+	stale := m.mood.epoch
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if _, cmd := m.Update(moodPulseDueMsg{epoch: stale}); cmd != nil {
+		t.Error("the panel is closed and it is still probing")
+	}
+	m.handleKey(key("m"))
+	if _, cmd := m.Update(moodPulseDueMsg{epoch: stale}); cmd != nil {
+		t.Error("a due tick from the previous visit still fires a probe")
+	}
+}
+
+// wallii reads local files; the one thing in it that touches the network can
+// be switched off, and then the panel neither probes nor claims.
+func TestMoodPulseOffSwitchKeepsThePanelOffline(t *testing.T) {
+	t.Setenv("WALLII_PULSE", "off")
+	m := newTUI(t.TempDir(), moodPosts("good", "ok"))
+	m.width, m.height = 80, 26
+	m.handleKey(key("m"))
+	if m.mood.pulsing {
+		t.Error("WALLII_PULSE=off still fired a probe")
+	}
+	if panel := m.viewMood(); strings.Contains(panel, "api") {
+		t.Errorf("an offline panel mentions the api:\n%s", panel)
+	}
+}

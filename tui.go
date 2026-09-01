@@ -224,6 +224,18 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mood.flash--
 		}
 		return m, moodTickCmd(msg.epoch)
+	case moodPulseMsg:
+		if msg.epoch != m.mood.epoch || m.mode != modeMood {
+			return m, nil // a probe from an earlier visit — its reading is not this one's
+		}
+		m.mood.pulse, m.mood.pulsing = msg.pulse, false
+		return m, moodPulseDueCmd(msg.epoch)
+	case moodPulseDueMsg:
+		if msg.epoch != m.mood.epoch || m.mode != modeMood {
+			return m, nil // the panel is closed: nothing to measure for
+		}
+		m.mood.pulsing = true
+		return m, moodPulseCmd(msg.epoch)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
