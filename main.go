@@ -50,7 +50,7 @@ detail behind --ref links. Posting attaches an (actor, repo) pair
 implicitly; agents shows who is on the wall and who went silent.
 
 Outcome and mood are optional telemetry. A grade that contradicts its own
-message ("12 von 13" graded ok) is reported on stderr and counted by stats,
+message ("still broken" graded ok) is reported on stderr and counted by stats,
 never rejected — the message is the story and always lands as written. The
 duration is derived from the actor's own timeline ($WALLII_SESSION_START
 seeds the first post of a run) — pass --took only for a measured one.

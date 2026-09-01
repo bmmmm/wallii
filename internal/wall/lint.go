@@ -4,7 +4,6 @@ package wall
 import (
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -52,19 +51,16 @@ var leftoverMarkers = []*regexp.Regexp{
 	wordRe("nur (?:der|die|das|den) erste", "only the first"),
 }
 
-// countRe catches "12 von 13" / "8 of 10" — a count against a larger total
-// is a leftover by arithmetic, not by wording.
-//
-// Except that it cannot tell a leftover from a finding. Read against 14 days
-// of the wall it fired 17 times and was wrong nearly every time: "40 von 43
-// turns lagen unter dem ersten anker", "12 von 100 antworten kippen",
-// "17 of 304 oks drew a fix" — measurements, the very thing a post is for,
-// reported back to the poster as unfinished work. There is no wording rule
-// that separates the two, so countRe stays a note on stderr and never grows
-// into a challenge: a doubt raised on a number is a doubt raised on the act
-// of measuring, and the cheapest way to satisfy it is to stop writing the
-// number down.
-var countRe = regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}])(\d+)\s+(?:von|of)\s+(\d+)(?:[^\p{L}\p{N}]|$)`)
+// There is no count marker. "12 von 13" / "8 of 10" used to be one — a
+// count against a larger total read as a leftover by arithmetic — and read
+// against 14 days of the wall it was wrong every single time: 18 hits, 18
+// measurements ("40 von 43 turns lagen unter dem ersten anker", "12 von 100
+// antworten kippen", "17 of 304 oks drew a fix" — wallii's own audit number,
+// reported back to the poster as unfinished work). A note that is wrong
+// eighteen times in eighteen is not read, and it drags the notes beside it
+// down with it: with it gone, `tail --contradicting` lists the four posts a
+// human would also have doubted instead of twenty-two. No wording rule
+// separates a finding from a leftover, so none is attempted.
 
 // frictionMarkers name how the journey felt, not which bug was fixed. A
 // "flaky test" or a "race condition" can be found and fixed on the first
@@ -105,8 +101,7 @@ func CheckTopic(topic, repo string) error {
 }
 
 // DoubtClass names which scale a post's own words contradict. Two classes,
-// and countRe is deliberately not a third: a count is a measurement more
-// often than a leftover, and a class exists to be raised as a challenge.
+// one per grade; a class exists to be raised as a challenge.
 type DoubtClass string
 
 const (
@@ -155,9 +150,9 @@ func Doubts(e Event) []Doubt {
 }
 
 // Contradictions reports where a post's grades disagree with the post's own
-// message: "12 von 13" graded ok, "Sackgasse" graded good. The count note
-// first, then every Doubt's note — the same lines as before Doubts existed,
-// so tail, stats and dash read exactly what they always read.
+// message: "still broken" graded ok, "Sackgasse" graded good — every Doubt's
+// note, the same lines as before Doubts existed, so tail, stats and dash read
+// exactly what they always read.
 //
 // Never an error, and never a reason to reject the post. Rejecting on words
 // found in the message would put a price on exactly the words that make the
@@ -168,15 +163,6 @@ func Doubts(e Event) []Doubt {
 // the truthful one, so the note says so and the post stands as written.
 func Contradictions(e Event) []string {
 	var out []string
-	if e.Outcome == OutcomeOK {
-		if m := countRe.FindStringSubmatch(e.Msg); m != nil {
-			done, _ := strconv.Atoi(m[1])
-			total, _ := strconv.Atoi(m[2])
-			if done < total {
-				out = append(out, fmt.Sprintf("the message says %q but the outcome says ok — partial matches what you wrote", strings.TrimSpace(m[0])))
-			}
-		}
-	}
 	for _, d := range Doubts(e) {
 		out = append(out, d.Note)
 	}

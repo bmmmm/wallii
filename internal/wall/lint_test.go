@@ -28,8 +28,6 @@ func TestCheckTopicRejectsRepoEcho(t *testing.T) {
 // otherwise, and "rest timer" is why "rest" alone is not a marker.
 func TestContradictionsSpotsLeftovers(t *testing.T) {
 	noted := []string{
-		"12 von 13 Alerts wieder scharf, der Exporter kippt weiter weg",
-		"8 of 10 flaky specs fixed, pushed to main",
 		"deps bumped, two suites still failing",
 		"retry budget raised, der Consumer haengt noch immer offen",
 		"import path migration done, the legacy shim is parked for now",
@@ -55,6 +53,12 @@ func TestContradictionsSpotsLeftovers(t *testing.T) {
 		"rest endpoint returns 204 on an empty cart instead of 500",
 		"3 von 3 Replicas gruen, Alerting zieht",
 		"all 12 of 12 checks green after the runner bump",
+		// a count against a larger total is a measurement, not a leftover:
+		// on the real wall the count marker was wrong 18 times in 18 before
+		// it was dropped (2026-09-02), so these stay quiet on purpose
+		"12 von 13 Alerts wieder scharf, der Exporter kippt weiter weg",
+		"8 of 10 flaky specs fixed, pushed to main",
+		"40 von 43 turns lagen unter dem ersten anker",
 		"gift card flow behind a feature flag, preview build attached",
 		"order lookup by number highlights the matching row",
 	}
@@ -216,7 +220,7 @@ func TestContradictionsIgnoreHonestMoods(t *testing.T) {
 // one. Contradictions returns notes, never an error, and nothing else here
 // can turn them into one.
 func TestContradictionsNeverGate(t *testing.T) {
-	e := Event{Repo: "x", Msg: "der erste Ansatz war Sackgasse, 12 von 13 zu", Outcome: OutcomeOK, Mood: "great"}
+	e := Event{Repo: "x", Msg: "der erste Ansatz war Sackgasse, der Rest ist noch nicht dran", Outcome: OutcomeOK, Mood: "great"}
 	if got := Contradictions(e); len(got) < 2 {
 		t.Fatalf("expected notes for both scales, got %v", got)
 	}
@@ -225,11 +229,10 @@ func TestContradictionsNeverGate(t *testing.T) {
 	}
 }
 
-// Doubts is the engine and Contradictions its renderer: the count note first,
-// then one note per doubt, leftover before friction — the lines every other
-// reader already printed. A count is never a doubt: "17 of 304" is a
-// measurement far more often than a leftover, and a doubt is what gets
-// raised as a challenge.
+// Doubts is the engine and Contradictions its renderer: one note per doubt,
+// leftover before friction — the lines every other reader already printed. A
+// count is never a doubt and no longer a note either: "17 of 304" is a
+// measurement, and a doubt is what gets raised as a challenge.
 func TestDoubtsDriveContradictions(t *testing.T) {
 	e := Event{Msg: "12 von 13 zu, der erste Ansatz war Sackgasse, rest parked", Outcome: OutcomeOK, Mood: "great"}
 	ds := Doubts(e)
@@ -239,10 +242,7 @@ func TestDoubtsDriveContradictions(t *testing.T) {
 	if ds[0].Marker != "parked" || ds[1].Marker != "Sackgasse" {
 		t.Errorf("markers must be the words as written, got %q / %q", ds[0].Marker, ds[1].Marker)
 	}
-	want := []string{
-		`the message says "12 von 13" but the outcome says ok — partial matches what you wrote`,
-		ds[0].Note, ds[1].Note,
-	}
+	want := []string{ds[0].Note, ds[1].Note}
 	got := Contradictions(e)
 	if len(got) != len(want) {
 		t.Fatalf("Contradictions = %v, want %v", got, want)
@@ -256,8 +256,8 @@ func TestDoubtsDriveContradictions(t *testing.T) {
 	if ds := Doubts(count); len(ds) != 0 {
 		t.Errorf("a count must never become a doubt, got %+v", ds)
 	}
-	if got := Contradictions(count); len(got) != 1 {
-		t.Errorf("the count note itself must survive, got %v", got)
+	if got := Contradictions(count); len(got) != 0 {
+		t.Errorf("a count is a measurement, not a note, got %v", got)
 	}
 }
 

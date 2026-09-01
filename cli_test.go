@@ -290,7 +290,7 @@ func TestPostKeepsContradictingMessagesVerbatim(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("WALLII_DIR", dir)
 	contradicting := [][]string{
-		{"-r", "x", "-t", "ci", "--outcome", "ok", "12 von 13 replicas green"},
+		{"-r", "x", "-t", "ci", "--outcome", "ok", "replicas green, one still broken"},
 		{"-r", "x", "-t", "fix", "--mood", "good", "der native Pfad war Sackgasse, der Shim tut es"},
 	}
 	for _, args := range contradicting {
@@ -305,7 +305,7 @@ func TestPostKeepsContradictingMessagesVerbatim(t *testing.T) {
 	if len(evs) != 2 {
 		t.Fatalf("expected both posts on the wall, got %d", len(evs))
 	}
-	if evs[0].Msg != "12 von 13 replicas green" || evs[1].Msg != "der native Pfad war Sackgasse, der Shim tut es" {
+	if evs[0].Msg != "replicas green, one still broken" || evs[1].Msg != "der native Pfad war Sackgasse, der Shim tut es" {
 		t.Errorf("messages must land verbatim, got %q / %q", evs[0].Msg, evs[1].Msg)
 	}
 	if got := wall.Compute(evs).Contradicting; got != 2 {
@@ -318,9 +318,9 @@ func TestPostKeepsContradictingMessagesVerbatim(t *testing.T) {
 // select exactly those and still compose with the other filters: a listing
 // that quietly widens the window is worse than no listing.
 func TestTailContradictingFilterSelectsOnlyTheHonestOnes(t *testing.T) {
-	honest := wall.Event{Repo: "x", Actor: "a", Outcome: wall.OutcomeOK, Msg: "12 von 13 replicas green"}
+	honest := wall.Event{Repo: "x", Actor: "a", Outcome: wall.OutcomeOK, Msg: "replicas green, one still broken"}
 	bland := wall.Event{Repo: "x", Actor: "a", Outcome: wall.OutcomeOK, Msg: "replicas green"}
-	otherRepo := wall.Event{Repo: "y", Actor: "a", Outcome: wall.OutcomeOK, Msg: "12 von 13 replicas green"}
+	otherRepo := wall.Event{Repo: "y", Actor: "a", Outcome: wall.OutcomeOK, Msg: "replicas green, one still broken"}
 
 	// Guard the premise: without it this test would pass on an empty selector.
 	if len(wall.Contradictions(honest)) == 0 {
@@ -353,7 +353,7 @@ func TestTailContradictingFilterSelectsOnlyTheHonestOnes(t *testing.T) {
 // and only where it was asked for.
 func TestRendererPrintsContradictionReasonOnlyWhenAsked(t *testing.T) {
 	e := wall.Event{Repo: "x", Topic: "ci", Actor: "a", TS: time.Now(),
-		Outcome: wall.OutcomeOK, Msg: "12 von 13 replicas green"}
+		Outcome: wall.OutcomeOK, Msg: "replicas green, one still broken"}
 
 	var quiet, loud strings.Builder
 	(&renderer{}).print(&quiet, e, false)
