@@ -111,6 +111,33 @@ func TestComputeGraderDistinctFoldsRepeats(t *testing.T) {
 	}
 }
 
+// Measurement against self-report, counted by presence alone: a post the
+// hook scanned, a post where the diff showed something, a post where the
+// poster also said something. Nothing reads what either of them says.
+func TestComputeSignalsCountMeasurementAgainstReport(t *testing.T) {
+	ts := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	sig := []string{`cart_test.go: t.Skip("flaky under load")`}
+	evs := []Event{
+		{TS: ts, Repo: "webshop", Actor: "a", Msg: "one", Signals: sig, SignalSrc: SignalHook, Grader: "skipped the flaky cart test instead of fixing the race"},
+		{TS: ts, Repo: "webshop", Actor: "a", Msg: "two", Signals: sig, SignalSrc: SignalHook, Grader: "none — the skip guards a missing binary"},
+		{TS: ts, Repo: "webshop", Actor: "b", Msg: "three", Signals: sig, SignalSrc: SignalHook},
+		{TS: ts, Repo: "webshop", Actor: "b", Msg: "four", SignalSrc: SignalHook},
+		{TS: ts, Repo: "webshop", Actor: "b", Msg: "five", Grader: "considered raising the timeout, fixed the loop instead"},
+		{TS: ts, Repo: "webshop", Actor: "b", Msg: "six"},
+	}
+	s := Compute(evs)
+	if s.SignalsMeasured != 4 || s.WithSignals != 3 || s.SignalsNamed != 2 {
+		t.Fatalf("signals = %d measured, %d with, %d named; want 4/3/2", s.SignalsMeasured, s.WithSignals, s.SignalsNamed)
+	}
+	// a grader without a measurement is a report, not a named signal
+	if s.WithGrader != 3 {
+		t.Errorf("with_grader = %d, want 3 — the grader counts on its own line", s.WithGrader)
+	}
+	if s := Compute(evs[4:]); s.SignalsMeasured != 0 || s.WithSignals != 0 || s.SignalsNamed != 0 {
+		t.Fatalf("a wall nobody measured must count zero, got %d/%d/%d", s.SignalsMeasured, s.WithSignals, s.SignalsNamed)
+	}
+}
+
 func TestValidateOutcomeMoodTook(t *testing.T) {
 	e := statsEvents()[0]
 	if err := e.Validate(); err != nil {

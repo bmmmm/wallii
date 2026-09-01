@@ -637,6 +637,12 @@ func (m *tuiModel) viewDetail() string {
 	case wall.PulseNone:
 		field("api", "no answer at all")
 	}
+	// what the diff showed, one line per finding — beside the grader below,
+	// which is what the poster said about it; the two are shown, never
+	// compared
+	for _, sig := range e.Signals {
+		field("signal", sig)
+	}
 	b.WriteString("\n  " + lipgloss.NewStyle().Width(max(20, m.width-4)).Render(e.Msg) + "\n")
 	// a wrapped paragraph, not a field(): 140 runes do not fit one line,
 	// and a grader cut off mid-sentence is worse than none shown
