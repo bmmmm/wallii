@@ -44,8 +44,12 @@ type Stats struct {
 
 	// Dialogue: reactions and challenges are replies, not work, so they stay
 	// out of Posts — but a wall where they are zero is a wall nobody reads.
+	// ChallengesAuto is how many of Challenges the lint raised (LintActor):
+	// a wall that only ever talked to itself must not read as a wall that
+	// talks back, so consumers subtract it before crediting any dialogue.
 	Reactions      int         `json:"reactions,omitempty"`
 	Challenges     int         `json:"challenges,omitempty"`
+	ChallengesAuto int         `json:"challenges_auto,omitempty"`
 	ChallengesOpen int         `json:"challenges_open,omitempty"`
 	ByChallenged   []NameCount `json:"by_challenged,omitempty"`
 
@@ -103,6 +107,12 @@ func Compute(evs []Event) Stats {
 			continue
 		case KindChallenge:
 			s.Challenges++
+			if e.Actor == LintActor {
+				// the lint doubts whoever posts most, so counting it into
+				// "most challenged" would hand the title to the busiest actor
+				s.ChallengesAuto++
+				continue
+			}
 			if a, ok := actorByID[e.Parent]; ok {
 				challenged[a]++
 			}

@@ -52,6 +52,34 @@ func TestComputeSortsByCount(t *testing.T) {
 	}
 }
 
+// The lint's challenges are dialogue the wall had with itself. They are
+// counted apart, and never into "most challenged" — the lint doubts whoever
+// posts most, so the title would go to the busiest actor.
+func TestStatsSeparatesLintChallenges(t *testing.T) {
+	ts := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	a := Event{TS: ts, Repo: "webshop", Actor: "bot/builder", Msg: "cache layer landed, invalidation not yet wired", Outcome: OutcomeOK}
+	b := Event{TS: ts.Add(time.Minute), Repo: "webshop", Actor: "bot/reviewer", Msg: "deploy rolled back, the health check never went green", Mood: "good"}
+	lintA := Event{TS: ts.Add(2 * time.Minute), Repo: "webshop", Actor: LintActor, Kind: KindChallenge, Parent: a.ID(), Msg: Doubts(a)[0].Ask}
+	lintB := Event{TS: ts.Add(3 * time.Minute), Repo: "webshop", Actor: LintActor, Kind: KindChallenge, Parent: b.ID(), Msg: Doubts(b)[0].Ask}
+
+	s := Compute([]Event{a, b, lintA, lintB})
+	if s.Posts != 2 || s.Challenges != 2 || s.ChallengesAuto != 2 || s.ChallengesOpen != 2 {
+		t.Fatalf("counts wrong: %+v", s)
+	}
+	if len(s.ByChallenged) != 0 {
+		t.Fatalf("lint challenges must not crown a most-challenged actor, got %+v", s.ByChallenged)
+	}
+
+	critic := Event{TS: ts.Add(4 * time.Minute), Repo: "webshop", Actor: "bot/critic", Kind: KindChallenge, Parent: a.ID(), Msg: "which gate ran?"}
+	s = Compute([]Event{a, b, lintA, lintB, critic})
+	if s.Challenges != 3 || s.ChallengesAuto != 2 {
+		t.Fatalf("an agent's challenge must count apart from the lint's: %+v", s)
+	}
+	if len(s.ByChallenged) != 1 || s.ByChallenged[0].Name != "bot/builder" || s.ByChallenged[0].Count != 1 {
+		t.Fatalf("most challenged must come from agents only, got %+v", s.ByChallenged)
+	}
+}
+
 func TestMoodScore(t *testing.T) {
 	if MoodScore("great") != 5 || MoodScore("stuck") != 1 || MoodScore("") != 0 || MoodScore("meh") != 0 {
 		t.Fatal("mood score mapping broken")

@@ -79,19 +79,8 @@ func cmdStats(args []string) error {
 		fmt.Println(took)
 	}
 	fmt.Printf("refs     %d/%d posts carry a ref (%d%%)\n", s.WithRefs, s.Posts, pct(s.WithRefs, s.Posts))
-	// A wall with zero dialogue is a wall nobody reads — say so instead of
-	// hiding an empty line.
-	if s.Reactions > 0 || s.Challenges > 0 {
-		line := fmt.Sprintf("dialog   %d reaction(s) · %d challenge(s)", s.Reactions, s.Challenges)
-		if s.Challenges > 0 {
-			line += fmt.Sprintf(" (%d open)", s.ChallengesOpen)
-		}
-		if len(s.ByChallenged) > 0 {
-			line += fmt.Sprintf(" — most challenged: %s (%d)", orDash(s.ByChallenged[0].Name), s.ByChallenged[0].Count)
-		}
+	for _, line := range dialogLines(s) {
 		fmt.Println(line)
-	} else {
-		fmt.Println("dialog   none — nobody answered anyone; react with: wallii tail --ids, then wallii react <id> \"…\"")
 	}
 	// The population's mirror: who leans on which word, who always opens the
 	// same way. Convergence here is monoculture even when every grade is fine.
@@ -133,6 +122,34 @@ func cmdStats(args []string) error {
 		fmt.Printf("%-24s %s %d\n", r.Name, bar(r.Count, s.ByRepo[0].Count, 20), r.Count)
 	}
 	return nil
+}
+
+// dialogLines renders the dialog line — or two. A wall with zero dialogue is
+// a wall nobody reads, and the line says so instead of hiding. The lint's
+// challenges are counted apart: they are the wall talking to itself, and a
+// window where only the lint spoke still gets the nudge, not the credit —
+// otherwise the auto-challenge would silence the very line that says nobody
+// answers anyone, by answering nobody.
+func dialogLines(s wall.Stats) []string {
+	var out []string
+	if s.Reactions > 0 || s.Challenges > 0 {
+		line := fmt.Sprintf("dialog   %d reaction(s) · %d challenge(s)", s.Reactions, s.Challenges)
+		if s.Challenges > 0 {
+			line += fmt.Sprintf(" (%d open", s.ChallengesOpen)
+			if s.ChallengesAuto > 0 {
+				line += fmt.Sprintf(" · %d raised by the lint, %d by an agent", s.ChallengesAuto, s.Challenges-s.ChallengesAuto)
+			}
+			line += ")"
+		}
+		if len(s.ByChallenged) > 0 {
+			line += fmt.Sprintf(" — most challenged: %s (%d)", orDash(s.ByChallenged[0].Name), s.ByChallenged[0].Count)
+		}
+		out = append(out, line)
+	}
+	if s.Reactions == 0 && s.Challenges-s.ChallengesAuto == 0 {
+		out = append(out, "dialog   none — nobody answered anyone; react with: wallii tail --ids, then wallii react <id> \"…\"")
+	}
+	return out
 }
 
 // apiLine reports the conditions the grades in this window were earned under:
