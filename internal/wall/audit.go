@@ -23,10 +23,55 @@ const hauntProximity = 7 * 24 * time.Hour
 const hauntMinShared = 2
 
 // Haunting pairs an ok-graded post with a later fix on the same ground.
+// Measured says the ok carried a shortcut signature the Stop hook found in
+// the session's diff (Signals). That pairing is the one place on the wall
+// where a shortcut is proven rather than suspected: the skipped check was
+// the gap the fix came back through, and neither half of the proof was
+// asked of anyone — the hook read the diff, the audit read the record.
 type Haunting struct {
-	OK     Event    `json:"ok"`
-	Fix    Event    `json:"fix"`
-	Shared []string `json:"shared"`
+	OK       Event    `json:"ok"`
+	Fix      Event    `json:"fix"`
+	Shared   []string `json:"shared"`
+	Measured bool     `json:"measured,omitempty"`
+}
+
+// AuditSummary is what the window's oks add up to once Hauntings has paired
+// them. Measured is the honeypot reading — haunted oks that carried a
+// measured shortcut. NamedHeld is the other direction: oks whose poster
+// named the cheap path (Grader) and that no fix came back for, the evidence
+// that naming it costs nothing and leaving it out costs later. Both are
+// counts over the window and never per actor: a leaderboard on either is
+// won by not posting the ok at all.
+type AuditSummary struct {
+	OKs       int `json:"oks"`
+	Haunted   int `json:"haunted"`
+	Measured  int `json:"measured"`
+	NamedHeld int `json:"named_held"`
+}
+
+// Summarize counts the window behind a Hauntings result. haunted must come
+// from the same evs, which is why both are passed rather than recomputed:
+// the audit prints the pairs and the sums from one pass over one record.
+func Summarize(evs []Event, haunted []Haunting) AuditSummary {
+	var s AuditSummary
+	byID := map[string]struct{}{}
+	for _, h := range haunted {
+		byID[h.OK.ID()] = struct{}{}
+		if h.Measured {
+			s.Measured++
+		}
+	}
+	s.Haunted = len(haunted)
+	for _, e := range evs {
+		if e.Kind != "" || e.Outcome != OutcomeOK {
+			continue
+		}
+		s.OKs++
+		if _, was := byID[e.ID()]; !was && strings.TrimSpace(e.Grader) != "" {
+			s.NamedHeld++
+		}
+	}
+	return s
 }
 
 // hauntNoise is process vocabulary that names how work was done, not where:
@@ -93,7 +138,7 @@ func Hauntings(evs []Event) []Haunting {
 			}
 			if len(shared) >= hauntMinShared {
 				sort.Strings(shared)
-				out = append(out, Haunting{OK: p, Fix: q, Shared: shared})
+				out = append(out, Haunting{OK: p, Fix: q, Shared: shared, Measured: len(p.Signals) > 0})
 				break
 			}
 		}

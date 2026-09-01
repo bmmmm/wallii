@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bmmmm/wallii/internal/wall"
 )
@@ -107,6 +108,57 @@ func TestSignalsLineReportsWithoutAPercentage(t *testing.T) {
 	}
 	if quiet := signalsLine(wall.Stats{Posts: 400, WithGrader: 12}); quiet != "" {
 		t.Errorf("a wall nobody measured printed %q", quiet)
+	}
+}
+
+// The audit is the honeypot that already existed: an ok that carried a
+// measured shortcut and then drew a fix is marked, the line the diff showed
+// is printed under it, and the two summary lines count both directions.
+func TestAuditMarksMeasuredShortcutsAndCountsNamedOksThatHeld(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	now := time.Now().UTC()
+	sig := `cart_test.go: t.Skip("flaky under load")`
+	seed := []wall.Event{
+		{TS: now.Add(-4 * time.Hour), Repo: "webshop", Actor: "bot/builder", Topic: "feature", Outcome: wall.OutcomeOK,
+			Msg: "cart totals stable across discount rounds", Signals: []string{sig}, SignalSrc: wall.SignalHook},
+		{TS: now.Add(-3 * time.Hour), Repo: "webshop", Actor: "bot/builder", Topic: "fix",
+			Msg: "cart totals drifted on discount rounds once more"},
+		{TS: now.Add(-2 * time.Hour), Repo: "webshop", Actor: "bot/reviewer", Topic: "feature", Outcome: wall.OutcomeOK,
+			Msg: "checkout survives an expired voucher", Grader: "none — the timeout guards a missing sandbox binary"},
+	}
+	for _, e := range seed {
+		if err := wall.Append(dir, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := captureStdout(t, func() error { return cmdAudit([]string{"--since", "1d"}) })
+	for _, want := range []string{
+		"· measured shortcut",
+		"    signal " + sig,
+		"1 of 2 ok posts drew a fix",
+		"1 of them carried a measured shortcut — the skipped check was the gap it came back through.",
+		"1 ok post named a grader moment and drew no fix — naming the cheap path costs nothing; leaving it out costs later.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("audit is missing %q in:\n%s", want, out)
+		}
+	}
+	// the JSON shape carries the mark under its own key, and only when set
+	out = captureStdout(t, func() error { return cmdAudit([]string{"--since", "1d", "--json"}) })
+	if !strings.Contains(out, `"measured":true`) {
+		t.Errorf("audit --json must carry the mark, got:\n%s", out)
+	}
+	// a window where everything held still says what the named oks prove
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := wall.Append(dir, seed[2]); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStdout(t, func() error { return cmdAudit([]string{"--since", "1d"}) })
+	if !strings.Contains(out, "no haunted oks") || !strings.Contains(out, "1 ok post named a grader moment and drew no fix") {
+		t.Errorf("a held window must still count the named oks, got:\n%s", out)
 	}
 }
 
