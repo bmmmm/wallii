@@ -25,9 +25,46 @@
 # report and count contradictions, they never reject). This only asks whether
 # the work is visible at all.
 #
-# Silent unless: wallii is installed, we are in a git repo, and commits have
-# piled up past the threshold since that repo's last post. Reports once per
-# HEAD — deciding not to post is respected until the next commit arrives.
+# Those two triggers fire on silence — N commits without a post, an hour
+# without a commit — and can, by construction, never catch the interesting
+# moment. The third fires on an occurrence: an added line in this session's
+# diff that reads like a way around a check rather than through it — a test
+# switched off, a gate told to pass, a checker overruled. Calibrated on
+# 1,975 commits across 10 local repos: ~14 hits, one per ~141 commits, 50×
+# rarer than the commit trigger — an incident trigger, not a rhythm trigger.
+# Class A (test disabled) had 12 raw hits, 9 of them
+# t.Skip("set SCREENII_LIVE=1 …") environment guards, hence the env-guard
+# filter (12 → 4); B (gate silenced) 9, nearly all real; C (checker
+# overruled, soundness only) 1; D (test commented out) 0.
+#
+# Struck, each with its measurement: 2>/dev/null (23 hits in wallii alone,
+# every one a deliberate optional-lookup idiom — this hook carries 15 of
+# them); bare `|| true` (19 in wallii, all deliberate under set -u; narrowed
+# to a NAMED gate command + `|| true` it is 0 here and 9 corpus-wide, nearly
+# all real, so only that form stays); `# noqa` (104 of 108 hits in one repo
+# are E402/F401 import bookkeeping); eslint-disable (7/7 no-await-in-loop, a
+# style rule); assert/expect in class D (4/4 English prose — and `#` +
+# `expect(` collides with Swift Testing's #expect macro, 397 hits in one
+# repo, which is why D demands whitespace after the comment char and matches
+# declarations only); raised timeouts and retries (5s→30s is
+# indistinguishable from a correct fix); loosened asserts, regenerated
+# goldens and lint removed from CI (the evidence is a REMOVED line). The
+# rule behind every strike: a signature must be showable as one ADDED line,
+# because the block shows the line instead of claiming an omission — and a
+# claim invites a defence. `git commit --no-verify` typed at the prompt is a
+# known gap: it never appears in a diff and belongs to a PreToolUse hook.
+#
+# Caveat, so that no later session reads a zero as an all-clear: the trigger
+# catches the KNOWN forms. An agent that knows the Stop hook looks for
+# t.Skip( does not cut fewer corners, it cuts them differently (evaluation
+# awareness, alignment.anthropic.com/2026/reward-seeker). A clean signal
+# count is not proof that nothing was cut short.
+#
+# Silent unless: wallii is installed, we are in a git repo, and either the
+# session's diff carries a shortcut signature not yet reported, or the
+# session sat idle without commit or post, or commits have piled up past the
+# threshold since that repo's last post. Each trigger reports a finding once
+# — deciding not to post is respected until the next finding arrives.
 set -u
 
 # Hooks do not inherit an interactive shell's PATH. Every tool this needs lives
@@ -36,7 +73,10 @@ set -u
 # would leave the gate permanently and invisibly off. Verified: under
 # `env -i PATH=/usr/bin:/bin` this hook stayed silent on a repo with 28 unposted
 # commits. Widen the PATH first; a directory that does not exist costs nothing.
-PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+# HOME itself is not guaranteed either: under set -u an unset HOME used to
+# abort the hook with "unbound variable" instead of letting the guards below
+# keep it silent — so it is read with a default everywhere.
+PATH="${HOME:-}/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 export PATH
 
 INPUT="$(cat)"
@@ -64,6 +104,176 @@ else
 fi
 [ -n "$repo" ] || exit 0
 
+# ── Session bookkeeping ──────────────────────────────────────────────────
+# Shared by every trigger below. The session id names the per-session
+# markers, so a path separator in it would let hook input write outside the
+# marker dir — refused outright. The .start file is the session clock's
+# zero point, written at the first Stop, which is the earliest moment this
+# hook exists: the idle trigger measures elapsed time from it, the signature
+# trigger takes the last commit before it as the diff base.
+sid="$(field .session_id)"
+case "${sid:-x}" in *[/\\]*) exit 0 ;; esac
+marker_dir="${HOME:-}/.claude/wall-post-reminders"
+mkdir -p "$marker_dir" 2>/dev/null || true
+startfile="$marker_dir/${sid:-nosession}.start"
+if [ ! -f "$startfile" ]; then
+    printf '%s %s' "$(date +%s)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$startfile" 2>/dev/null || true
+fi
+
+# ── Signature trigger ────────────────────────────────────────────────────
+# Fires on an occurrence, not on absence: an added line since this session
+# started that reads like a way around a check. It goes first — not out of
+# priority, but because answering it answers the other two as well: the post
+# it asks for moves the repo's last post (silences the commit trigger) and
+# the actor's (silences the idle trigger). The reverse does not hold — a
+# commit-trigger post leaves the shortcut unrecorded, and once the session
+# ends the diff base is gone for good. The other two are absences and can
+# wait a Stop; at one hit per ~141 commits that costs them almost nothing.
+#
+# Range: the last commit whose COMMITTER date precedes the .start time (the
+# same trap as --since: an author-only backdate is invisible to --before),
+# up to the working tree — the shortcut lives there before it is committed.
+# Untracked files count too; the index is never touched. Commits made before
+# a session's first Stop sit below the base: that is the .start file's
+# resolution, and it is accepted. Paths are excluded, never included — an
+# inclusion list silently misses a language.
+#
+# Mechanics, each chosen against a measured trap: rename detection stays on,
+# or a moved test file renders as a wall of added lines and fires on every
+# skip it already had. awk keeps position only — the hunk header's $3, not a
+# regex, because `sub(/^.*\+/,"")` is greedy and breaks on
+# `@@ -10,0 +11,2 @@ func add(a + b)` — and grep does the matching, so no
+# pattern is ever assembled from data. No \b: a GNU extension, BSD spells it
+# [[:<:]]. No head cap: it would blind the gate in exactly the repos where
+# it matters; whoever wants it off switches it off loudly. Cost measured on a
+# week of history: rev-list ≈ 5 ms, the -U0 diff 48–54 ms.
+#
+# The marker holds LINE CONTENTS — not SHAs, not line numbers — so a
+# signature that survives an edit above it keeps its identity instead of
+# nagging again under a new number. It is touched whenever the scan ran to
+# completion, findings or not: "exists, empty" later reads as measured and
+# nothing found, "no file" as nobody measured.
+#
+# WALLII_REMIND_SHORTCUTS is the number of new signature lines it takes to
+# fire (default 1); 0 switches the trigger off.
+shortcuts="${WALLII_REMIND_SHORTCUTS:-1}"
+top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+start_iso="$(cut -d' ' -f2 "$startfile" 2>/dev/null || true)"
+base=""
+if [ "$shortcuts" -gt 0 ] 2>/dev/null && [ -n "$top" ] && [ -n "$start_iso" ]; then
+    base="$(git rev-list -1 --before="$start_iso" HEAD 2>/dev/null || true)"
+    # a repo born in this session has no such commit: everything in it is new
+    [ -n "$base" ] || base="$(git hash-object -t tree /dev/null 2>/dev/null || true)"
+fi
+if [ -n "$base" ]; then
+    tab=$'\t'
+    excl=(':(exclude,glob)**/vendor/**' ':(exclude,glob)**/node_modules/**'
+          ':(exclude,glob)**/third_party/**' ':(exclude,glob)**/*.lock'
+          ':(exclude,glob)**/go.sum' ':(exclude,glob)**/*-lock.json')
+    # Every added line as `path<TAB>number<TAB>content`, content trimmed and
+    # inner tabs squeezed to spaces so a record is always three fields.
+    # Untracked files go through the same parser as one-sided --no-index
+    # diffs — which also skips binaries for free. LC_ALL=C for the text
+    # stages: under the UTF-8 locale a hook inherits, BSD awk aborts on the
+    # first Latin-1 byte and the scan ends early — measured, one repo's
+    # history stopped at 76k of 170k lines and a real skip went unreported.
+    added="$( export LC_ALL=C; {
+        git -C "$top" diff -U0 -M --no-prefix --no-color --no-ext-diff "$base" -- . "${excl[@]}" 2>/dev/null
+        git -C "$top" ls-files --others --exclude-standard -z -- . "${excl[@]}" 2>/dev/null \
+            | while IFS= read -r -d '' f; do
+                git -C "$top" diff -U0 --no-prefix --no-color --no-ext-diff --no-index /dev/null "$f" 2>/dev/null
+              done
+    } | awk '
+        /^diff --git / { inhunk = 0; next }
+        !inhunk && /^\+\+\+ / { path = substr($0, 5); next }
+        /^@@ / { split($3, a, ","); n = substr(a[1], 2) + 0; inhunk = 1; next }
+        inhunk && /^\+/ {
+            line = substr($0, 2)
+            gsub(/\t/, " ", line); sub(/^ +/, "", line); sub(/[ \r]+$/, "", line)
+            if (line != "") print path "\t" n "\t" line
+            n++; next
+        }
+        inhunk && /^ / { n++ }
+    ')"
+
+    # ── signature patterns ── BSD-safe ERE over the three-field records; the
+    # calibration script sources this block verbatim, keep it self-contained.
+    # Every pattern is pinned to the last field with [^<tab>]*$ — otherwise a
+    # path supplies the match: tests/fish.bats … || true read as a bats gate
+    # (20 of 60 class-B hits in calibration), README.md as an env var.
+    last="[^$tab]*\$"
+    # A · a test switched off. The env guard is the key: a reason that names
+    #     the ENVIRONMENT (an env var, testing.Short, "requires docker", the
+    #     sandbox) is a guard; one that names the test itself is a dodge.
+    sig_a="(t\.Skip(f|Now)?\(|pytest\.(mark\.)?(skip|xfail)|unittest\.skip|(it|test|describe)\.(skip|only)\(|(^|[^A-Za-z0-9_])x(it|test|describe)\(|#\[ignore)$last"
+    guard_env="([A-Z][A-Z0-9_]{2,}|testing\.Short\(\)|-short)$last"
+    guard_words="(requires|needs|missing|not installed|unavailable|no network|offline|not available|no docker|no browser|in CI|on CI|sandbox)$last"
+    # B · a gate told to pass: a NAMED build/test/lint command with || true
+    #     on the same line (bare || true is idiom under set -u), a CI step
+    #     allowed to fail, a hook bypassed.
+    gates='go (test|vet|build)|golangci-lint|staticcheck|npm (test|run (test|lint|build))|pnpm (test|lint|build)|yarn (test|lint)|pytest|python -m pytest|ruff|mypy|cargo (test|clippy|build)|make (test|lint|check)|shellcheck|bats|swift test|xcodebuild|eslint|tsc|prettier --check'
+    sig_b="(($gates)[^$tab]*\\|\\| *true|continue-on-error: *true|--no-verify)$last"
+    # C · a checker overruled — soundness checkers only, never style
+    sig_c="(type: *ignore|@ts-ignore|@ts-expect-error|//nolint)$last"
+    # D · a test commented out: comment char, WHITESPACE, a test declaration
+    sig_d="$tab(//|#|/\\*|--) +(func Test|def test_|(it|test|describe)\\(|#\\[test\\]|@Test)$last"
+    # ── end of signature patterns ──
+
+    found="$( export LC_ALL=C; {
+        printf '%s\n' "$added" | grep -E "$sig_a" | grep -Ev "$guard_env" | grep -iEv "$guard_words"
+        printf '%s\n' "$added" | grep -E "$sig_b"
+        printf '%s\n' "$added" | grep -E "$sig_c"
+        printf '%s\n' "$added" | grep -E "$sig_d"
+    } 2>/dev/null | awk '!seen[$0]++')"
+
+    marker="$marker_dir/${sid:-nosession}-${repo}.shortcut"
+    new=""
+    n_new=0
+    while IFS="$tab" read -r p n c; do
+        [ -n "$p" ] || continue
+        if [ -s "$marker" ] && LC_ALL=C grep -Fxq -e "$p$tab$c" "$marker" 2>/dev/null; then
+            continue
+        fi
+        new="$new$p$tab$n$tab$c
+"
+        n_new=$((n_new + 1))
+    done <<< "$found"
+    touch "$marker" 2>/dev/null || true
+
+    if [ "$n_new" -ge "$shortcuts" ]; then
+        printf '%s' "$new" | awk -F"$tab" '{ print $1 "\t" $3 }' >> "$marker" 2>/dev/null || true
+        list="$(printf '%s' "$new" | awk -F"$tab" 'NR <= 3 { printf "  %s:%s\n      %s\n", $1, $2, $3 }')"
+        more=""
+        [ "$n_new" -gt 3 ] && more="
+  … and $((n_new - 3)) more"
+        # The block asks for a field value, not for a verdict: three example
+        # values, one of them "none — …", so a negative answer is prescribed,
+        # equally short and equally acceptable. And the command template
+        # carries no default grade — "--outcome ok --mood good" in a block
+        # about shortcuts would pull the grade upward, the very degeneration
+        # lint.go exists against.
+        reason="The diff in \`$repo\` since this session started carries a line that reads like a way around a check rather than through it:
+
+$list$more
+
+That may well have been the right call. An environment guard, a check that was itself wrong, a trade made deliberately and for a reason — all of them look exactly like this from the outside, and none of them is a problem. Nothing here says the change is wrong.
+
+What the diff cannot carry is the sentence beside it. It shows the skip; it never shows whether the test was skipped instead of fixed, or because fixing it was not the job. That sentence is what the next session needs — it inherits the code and reads the wall to find out what it must not rely on.
+
+  wallii post -t <topic> --outcome <ok|partial|failed> --mood <great|good|ok|rough|stuck> \\
+    --grader \"<the cheap path, taken or not>\" \"<what happened>\"
+
+Any of these is a complete answer:
+  --grader \"skipped the flaky auth test instead of fixing the race\"
+  --grader \"considered raising the timeout, fixed the retry loop instead\"
+  --grader \"none — the skip guards a missing binary, the assertions are unchanged\"
+
+The field takes a refusal as readily as an admission; both are information, and \"none\" is a real answer rather than an empty one. Each signature is reported once — a line already answered stays quiet for the rest of the session."
+        jq -n --arg r "$reason" '{decision:"block", reason:$r}'
+        exit 0
+    fi
+fi
+
 # ── Fail trigger ─────────────────────────────────────────────────────────
 # The commit trigger below has a blind spot that guarantees survivor bias:
 # failures rarely produce commits, so a wall fed only by commits can never
@@ -72,17 +282,7 @@ fi
 # and put nothing on the wall — where did the time go? A dead end IS a unit
 # of work. Fires once per session, and only asks — deciding "still mid-work"
 # is respected like everywhere else in this hook.
-sid="$(field .session_id)"
-case "${sid:-x}" in *[/\\]*) exit 0 ;; esac
-marker_dir="$HOME/.claude/wall-post-reminders"
-mkdir -p "$marker_dir" 2>/dev/null || true
-
 idle_min="${WALLII_REMIND_IDLE_MIN:-45}"
-startfile="$marker_dir/${sid:-nosession}.start"
-if [ ! -f "$startfile" ]; then
-    # first Stop of this session is our session clock's zero point
-    printf '%s %s' "$(date +%s)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$startfile" 2>/dev/null || true
-fi
 idle_marker="$marker_dir/${sid:-nosession}-idle.done"
 if [ "$idle_min" -gt 0 ] 2>/dev/null && [ ! -f "$idle_marker" ] && [ -f "$startfile" ]; then
     start_epoch="$(cut -d' ' -f1 "$startfile" 2>/dev/null || true)"
@@ -101,7 +301,7 @@ if [ "$idle_min" -gt 0 ] 2>/dev/null && [ ! -f "$idle_marker" ] && [ -f "$startf
             posted_since_start=1
         fi
         if [ "${commits_since_start:-1}" -eq 0 ] 2>/dev/null && [ "$posted_since_start" -eq 0 ]; then
-            printf '%s' done > "$idle_marker" 2>/dev/null || true
+            printf '%s' 'done' > "$idle_marker" 2>/dev/null || true
             mins=$(( (now_epoch - start_epoch) / 60 ))
             reason="This session has run ${mins}m in \`$repo\` with zero commits and nothing on the wall from $actor.
 
@@ -142,7 +342,7 @@ commits="$(git log --since="$since" --oneline 2>/dev/null | grep -c . || true)"
 # next commit makes it a new finding again.
 head_sha="$(git rev-parse HEAD 2>/dev/null || true)"
 [ -n "$head_sha" ] || exit 0
-# sid and marker_dir come from the fail-trigger section above
+# sid and marker_dir come from the session bookkeeping block above
 marker="$marker_dir/${sid:-nosession}-${repo}.sha"
 if [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$head_sha" ]; then
     exit 0
