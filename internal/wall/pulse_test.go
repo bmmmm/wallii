@@ -5,24 +5,29 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestPulseDragRisesWithLatency(t *testing.T) {
+	// turn times, not round trips: the scale is what a turn costs, which is
+	// seconds where a ping is milliseconds
 	cases := []struct {
 		rtt  time.Duration
 		want float64
 	}{
-		{80 * time.Millisecond, 0},
-		{400 * time.Millisecond, 0},
-		{700 * time.Millisecond, 0.5},
-		{time.Second, 0.5},
-		{2 * time.Second, 1},
-		{4 * time.Second, 2},
-		{9 * time.Second, 3},
-		{time.Minute, 3}, // the drag has a floor: it cannot fall off the scale
+		{170 * time.Millisecond, 0},
+		{5 * time.Second, 0},
+		{15 * time.Second, 0},
+		{17 * time.Second, 1},
+		{30 * time.Second, 1},
+		{45 * time.Second, 2},
+		{60 * time.Second, 2},
+		{90 * time.Second, 3},
+		{10 * time.Minute, 3}, // the drag has a floor: it cannot fall off the scale
 	}
 	last := -1.0
 	for _, c := range cases {
@@ -39,16 +44,35 @@ func TestPulseDragRisesWithLatency(t *testing.T) {
 
 func TestMoodNowDragsWithLatency(t *testing.T) {
 	s := MoodTrail(moodEvents("great", "great", "good")) // 4.67
-	fast := s.Now(Pulse{At: time.Now(), OK: true, RTT: 120 * time.Millisecond})
-	if fast.Avg != s.Avg || fast.Drag != 0 {
-		t.Errorf("fast api = %.2f (drag %.1f), want the wall's own %.2f untouched", fast.Avg, fast.Drag, s.Avg)
+	turn := func(d time.Duration) Pulse {
+		return Pulse{At: time.Now(), OK: true, RTT: d, Src: PulseSession}
 	}
-	slow := s.Now(Pulse{At: time.Now(), OK: true, RTT: 4 * time.Second})
+	fast := s.Now(turn(4 * time.Second))
+	if fast.Avg != s.Avg || fast.Drag != 0 {
+		t.Errorf("a 4s turn = %.2f (drag %.1f), want the wall's own %.2f untouched", fast.Avg, fast.Drag, s.Avg)
+	}
+	slow := s.Now(turn(45 * time.Second))
 	if slow.Drag != 2 || slow.Avg != s.Avg-2 {
-		t.Errorf("slow api = %.2f (drag %.1f), want %.2f (drag 2)", slow.Avg, slow.Drag, s.Avg-2)
+		t.Errorf("a 45s turn = %.2f (drag %.1f), want %.2f (drag 2)", slow.Avg, slow.Drag, s.Avg-2)
 	}
 	if !slow.Known || slow.Crash {
 		t.Errorf("slow api = known %v, crash %v, want known and no crash — it answered", slow.Known, slow.Crash)
+	}
+}
+
+// The bug this scale was born with: a probe answering in 170ms is not a fast
+// day, it is an open socket. Only a measured turn may move the mood.
+func TestMoodNowIgnoresAPing(t *testing.T) {
+	s := MoodTrail(moodEvents("great", "great", "good"))
+	ping := Pulse{At: time.Now(), OK: true, RTT: 170 * time.Millisecond, Src: PulseProbe}
+	if n := s.Now(ping); n.Drag != 0 || n.Avg != s.Avg {
+		t.Errorf("a ping moved the mood to %.2f (drag %.1f), want %.2f untouched", n.Avg, n.Drag, s.Avg)
+	}
+	// and a slow ping is still only a ping — it says the network is unhappy,
+	// not that a turn took that long
+	slowPing := Pulse{At: time.Now(), OK: true, RTT: 2 * time.Second, Src: PulseProbe}
+	if n := s.Now(slowPing); n.Drag != 0 {
+		t.Errorf("a slow ping claimed a drag of %.1f", n.Drag)
 	}
 }
 
@@ -68,7 +92,7 @@ func TestMoodNowCrashesWithoutAPI(t *testing.T) {
 
 func TestMoodNowClampsToTheScale(t *testing.T) {
 	s := MoodTrail(moodEvents("rough", "rough")) // 2.0
-	n := s.Now(Pulse{At: time.Now(), OK: true, RTT: 30 * time.Second})
+	n := s.Now(Pulse{At: time.Now(), OK: true, RTT: 4 * time.Minute, Src: PulseSession})
 	if n.Avg != 1 {
 		t.Errorf("2.0 minus a 3-step drag = %.1f, want 1 — the scale has a floor", n.Avg)
 	}
@@ -84,8 +108,8 @@ func TestMoodNowIgnoresAnUnmeasuredPulse(t *testing.T) {
 
 func TestMoodNowUngradedWallStaysUnknownUntilItCrashes(t *testing.T) {
 	s := MoodTrail([]Event{{TS: time.Now(), Repo: "alpha", Msg: "no grade"}})
-	if n := s.Now(Pulse{At: time.Now(), OK: true, RTT: 3 * time.Second}); n.Known {
-		t.Errorf("ungraded wall with a slow api = %.2f, want no reading — latency subtracts, it does not invent a mood", n.Avg)
+	if n := s.Now(Pulse{At: time.Now(), OK: true, RTT: 40 * time.Second, Src: PulseSession}); n.Known {
+		t.Errorf("ungraded wall with a slow api = %.2f, want no reading — waiting subtracts, it does not invent a mood", n.Avg)
 	}
 	if n := s.Now(Pulse{At: time.Now(), Err: "no route to host"}); !n.Known || n.Avg != 1 {
 		t.Errorf("ungraded wall with no api = known %v, %.1f, want a measured crashout at 1", n.Known, n.Avg)
@@ -310,49 +334,177 @@ func TestValidateRejectsPulseOnAReply(t *testing.T) {
 // The conditions travel with the points the curve is drawn from, so a column
 // can say what the work behind it was up against.
 func TestMoodTrailCarriesTheConditions(t *testing.T) {
-	evs := moodEvents("good", "rough", "ok")
-	evs[0].PulseMS, evs[0].PulseSrc = 200, PulseProbe
+	evs := moodEvents("good", "rough", "ok", "good")
+	evs[0].PulseMS, evs[0].PulseSrc = 17_000, PulseSession
 	evs[1].PulseSrc = PulseNone
-	// evs[2] predates the field: no reading at all
+	evs[2].PulseMS, evs[2].PulseSrc = 170, PulseProbe // a ping, not a turn
+	// evs[3] predates the field: no reading at all
 
 	pts := MoodTrail(evs).Points
-	if pts[0].PulseMS != 200 || pts[0].PulseN != 1 || pts[0].PulseDown != 0 {
-		t.Errorf("measured post = %dms/%d/%d, want 200/1/0", pts[0].PulseMS, pts[0].PulseN, pts[0].PulseDown)
+	if pts[0].PulseMS != 17_000 || pts[0].PulseN != 1 || pts[0].PulseDown != 0 {
+		t.Errorf("measured turn = %dms/%d/%d, want 17000/1/0", pts[0].PulseMS, pts[0].PulseN, pts[0].PulseDown)
 	}
 	if pts[1].PulseN != 0 || pts[1].PulseDown != 1 {
 		t.Errorf("outage post = %d readings, %d down; want 0 and 1", pts[1].PulseN, pts[1].PulseDown)
 	}
-	if pts[2].PulseN != 0 || pts[2].PulseDown != 0 {
-		t.Errorf("unmeasured post = %d readings, %d down; want neither", pts[2].PulseN, pts[2].PulseDown)
+	if pts[2].PulseN != 0 || pts[2].PulseMS != 0 {
+		t.Errorf("ping post = %dms over %d readings, want none — reachability is not a turn", pts[2].PulseMS, pts[2].PulseN)
+	}
+	if pts[3].PulseN != 0 || pts[3].PulseDown != 0 {
+		t.Errorf("unmeasured post = %d readings, %d down; want neither", pts[3].PulseN, pts[3].PulseDown)
 	}
 }
 
 func TestMoodDaysAveragesTheConditions(t *testing.T) {
-	evs := moodEvents("good", "good", "ok", "rough")
-	evs[0].PulseMS, evs[0].PulseSrc = 100, PulseProbe
-	evs[1].PulseMS, evs[1].PulseSrc = 300, PulseProbe
+	evs := moodEvents("good", "good", "ok", "rough", "good")
+	evs[0].PulseMS, evs[0].PulseSrc = 10_000, PulseSession
+	evs[1].PulseMS, evs[1].PulseSrc = 30_000, PulseSession
 	evs[2].PulseSrc = PulseNone
-	// evs[3] carries nothing, and must not drag the mean toward zero
+	evs[3].PulseMS, evs[3].PulseSrc = 170, PulseProbe // must not pull the mean down
+	// evs[4] carries nothing, and must not pull it toward zero either
 
 	days := MoodDays(MoodTrail(evs).Points)
 	if len(days) != 1 {
 		t.Fatalf("folded into %d days, want 1", len(days))
 	}
 	d := days[0]
-	if d.PulseMS != 200 || d.PulseN != 2 || d.PulseDown != 1 {
-		t.Errorf("day = %dms over %d readings, %d down; want 200ms over 2, 1 down", d.PulseMS, d.PulseN, d.PulseDown)
+	if d.PulseMS != 20_000 || d.PulseN != 2 || d.PulseDown != 1 {
+		t.Errorf("day = %dms over %d turns, %d down; want 20000ms over 2, 1 down", d.PulseMS, d.PulseN, d.PulseDown)
 	}
 }
 
-func TestStatsSplitsMeasuredFromMissing(t *testing.T) {
+func TestStatsKeepsTurnsPingsAndOutagesApart(t *testing.T) {
 	evs := moodEvents("good", "good", "ok", "rough")
-	evs[0].PulseMS, evs[0].PulseSrc = 100, PulseProbe
-	evs[1].PulseMS, evs[1].PulseSrc = 300, PulseSession
-	evs[2].PulseSrc = PulseNone
+	evs[0].PulseMS, evs[0].PulseSrc = 10_000, PulseSession
+	evs[1].PulseMS, evs[1].PulseSrc = 30_000, PulseSession
+	evs[2].PulseMS, evs[2].PulseSrc = 170, PulseProbe
+	evs[3].PulseSrc = PulseNone
 
 	s := Compute(evs)
-	if s.PulseAnswered != 2 || s.PulseTotalMS != 400 || s.PulseDown != 1 {
-		t.Errorf("stats = %d answered / %dms / %d down; want 2 / 400 / 1 (the unmeasured post is neither)",
-			s.PulseAnswered, s.PulseTotalMS, s.PulseDown)
+	if s.PulseTurns != 2 || s.PulseTurnTotalMS != 40_000 {
+		t.Errorf("turns = %d / %dms, want 2 / 40000 — a ping is not a turn", s.PulseTurns, s.PulseTurnTotalMS)
+	}
+	if s.PulsePings != 1 || s.PulseDown != 1 {
+		t.Errorf("pings/down = %d/%d, want 1/1", s.PulsePings, s.PulseDown)
+	}
+}
+
+// The number the terminal already shows: the statusline renders every turn and
+// caches what it cost, so wallii reads that rather than inventing a second
+// measurement of a different thing.
+func TestSessionPulseReadsTheStatuslineCache(t *testing.T) {
+	dir := t.TempDir()
+	sid := "24d0857f-2f6f-454b-a846-9bfcb956de82"
+	if err := os.WriteFile(filepath.Join(dir, "session-"+sid[:8]),
+		[]byte("model=Opus 5\nlast_api_duration_ms=1604071\nlast_api_delta=17431\ncompactions=0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WALLII_PULSE", "")
+	t.Setenv(PulseMSEnv, "")
+	t.Setenv("CLAUDII_CACHE_DIR", dir)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", sid)
+
+	p, note := SessionPulse(context.Background())
+	if note != "" {
+		t.Errorf("note = %q, want none", note)
+	}
+	if !p.Turn() || p.RTT != 17431*time.Millisecond || p.Src != PulseSession {
+		t.Fatalf("pulse = %s from %q (turn %v), want a 17.4s turn from the session", p.RTT, p.Src, p.Turn())
+	}
+	// and it drags the mood the way seventeen seconds should
+	if drag := PulseDrag(p.RTT); drag != 1 {
+		t.Errorf("a 17.4s turn drags %.1f, want 1", drag)
+	}
+}
+
+// A session's own cache, but from an hour ago: that is what the last turn cost
+// before lunch, not what things are like now.
+func TestSessionPulseIgnoresAStaleCache(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session-24d0857f")
+	if err := os.WriteFile(path, []byte("last_api_delta=17431\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDII_CACHE_DIR", dir)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "24d0857f-2f6f")
+	if _, ok := filePulse(time.Now()); ok {
+		t.Error("a two-hour-old cache was taken as current")
+	}
+	// fresh again, and it counts again — the rule is the age, not the file
+	if err := os.Chtimes(path, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := filePulse(time.Now()); !ok {
+		t.Error("a cache written this second was ignored")
+	}
+}
+
+func TestPulseFileAcceptsBothShapes(t *testing.T) {
+	if ms, ok := pulseFileValue("17431\n"); !ok || ms != 17431 {
+		t.Errorf("bare milliseconds = %d/%v, want 17431", ms, ok)
+	}
+	if ms, ok := pulseFileValue("a=1\nlast_api_delta=17431\nb=2\n"); !ok || ms != 17431 {
+		t.Errorf("key=value file = %d/%v, want 17431", ms, ok)
+	}
+	for _, junk := range []string{"", "last_api_delta=\n", "last_api_delta=soon\n", "other=17431\n", "last_api_delta=-5\n"} {
+		if _, ok := pulseFileValue(junk); ok {
+			t.Errorf("%q was read as a reading", junk)
+		}
+	}
+}
+
+// An explicit value outranks the cache: a harness that says what its turns
+// cost has said so on purpose.
+func TestSessionPulseEnvOutranksTheFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "session-24d0857f"), []byte("last_api_delta=17431\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WALLII_PULSE", "")
+	t.Setenv("CLAUDII_CACHE_DIR", dir)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "24d0857f-2f6f")
+	t.Setenv(PulseMSEnv, "4200")
+
+	p, _ := SessionPulse(context.Background())
+	if p.RTT != 4200*time.Millisecond {
+		t.Errorf("pulse = %s, want the 4.2s the session was told to report", p.RTT)
+	}
+}
+
+func TestPulseFileOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "turn-ms")
+	if err := os.WriteFile(path, []byte("22000"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WALLII_PULSE", "")
+	t.Setenv(PulseMSEnv, "")
+	t.Setenv(PulseFileEnv, path)
+
+	p, _ := SessionPulse(context.Background())
+	if !p.Turn() || p.RTT != 22*time.Second {
+		t.Errorf("pulse = %s (turn %v), want a 22s turn from the named file", p.RTT, p.Turn())
+	}
+}
+
+// No session id, no cache, no file — the probe is all that is left, and it may
+// only ever answer "there" or "not there".
+func TestSessionPulseFallsBackToAPing(t *testing.T) {
+	t.Setenv("WALLII_PULSE", "")
+	t.Setenv(PulseMSEnv, "")
+	t.Setenv(PulseFileEnv, "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CLAUDII_CACHE_DIR", t.TempDir())
+	t.Setenv("WALLII_PULSE_URL", "http://127.0.0.1:9/v1/models")
+
+	p, _ := SessionPulse(context.Background())
+	if p.Src != PulseProbe {
+		t.Errorf("src = %q, want a probe when nothing else measured", p.Src)
+	}
+	if p.Turn() {
+		t.Error("a probe claimed to be a turn")
 	}
 }

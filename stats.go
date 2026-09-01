@@ -141,21 +141,25 @@ func cmdStats(args []string) error {
 // no post in the window carries a reading — most of the wall predates the
 // field, and a coverage of zero is not a fast API.
 func apiLine(s wall.Stats) string {
-	seen := s.PulseAnswered + s.PulseDown
-	if seen == 0 {
+	if s.PulseTurns+s.PulsePings+s.PulseDown == 0 {
 		return ""
 	}
 	line := "api      "
-	if s.PulseAnswered > 0 {
-		avg := time.Duration(s.PulseTotalMS/int64(s.PulseAnswered)) * time.Millisecond
-		line += fmt.Sprintf("%s average over %s", pulseDur(avg), plural(s.PulseAnswered, "post"))
+	switch {
+	case s.PulseTurns > 0:
+		avg := time.Duration(s.PulseTurnTotalMS/int64(s.PulseTurns)) * time.Millisecond
+		line += fmt.Sprintf("%s per turn across %s", pulseDur(avg), plural(s.PulseTurns, "post"))
 		if drag := wall.PulseDrag(avg); drag > 0 {
-			line += fmt.Sprintf(" — that speed takes %.1f off a mood", drag)
+			line += fmt.Sprintf(" — that pace takes %.1f off a mood", drag)
 		}
-	} else {
-		line += fmt.Sprintf("nothing answered across %s", plural(seen, "post"))
+	case s.PulsePings > 0:
+		// reachability is not response time, and a line that let the two look
+		// alike is the reason this counter exists separately at all
+		line += fmt.Sprintf("reachable on %s, but no turn time was measured", plural(s.PulsePings, "post"))
+	default:
+		line += fmt.Sprintf("nothing answered across %s", plural(s.PulseDown, "post"))
 	}
-	if s.PulseDown > 0 && s.PulseAnswered > 0 {
+	if s.PulseDown > 0 && s.PulseTurns+s.PulsePings > 0 {
 		line += fmt.Sprintf(" · %d written with no api at all", s.PulseDown)
 	}
 	return line

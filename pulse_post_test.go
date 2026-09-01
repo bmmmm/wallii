@@ -86,17 +86,22 @@ func TestPostWithoutProbingCarriesNoReading(t *testing.T) {
 // A grade earned in a four-second API is not the same grade. The stats line
 // says so, and names what the wait costs the scale.
 func TestAPILineReportsTheConditions(t *testing.T) {
-	got := apiLine(wall.Stats{PulseAnswered: 4, PulseTotalMS: 16_000, PulseDown: 2})
-	for _, want := range []string{"4s average over 4 posts", "takes 2.0 off a mood", "2 written with no api"} {
+	got := apiLine(wall.Stats{PulseTurns: 4, PulseTurnTotalMS: 180_000, PulseDown: 2})
+	for _, want := range []string{"45s per turn across 4 posts", "takes 2.0 off a mood", "2 written with no api"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("api line %q is missing %q", got, want)
 		}
 	}
-	if fast := apiLine(wall.Stats{PulseAnswered: 9, PulseTotalMS: 1_800}); strings.Contains(fast, "off a mood") {
-		t.Errorf("a fast api claimed a drag: %q", fast)
+	if fast := apiLine(wall.Stats{PulseTurns: 9, PulseTurnTotalMS: 45_000}); strings.Contains(fast, "off a mood") {
+		t.Errorf("a 5s turn claimed a drag: %q", fast)
 	}
-	if one := apiLine(wall.Stats{PulseAnswered: 1, PulseTotalMS: 157}); !strings.Contains(one, "over 1 post") || strings.Contains(one, "1 posts") {
+	if one := apiLine(wall.Stats{PulseTurns: 1, PulseTurnTotalMS: 17_000}); !strings.Contains(one, "across 1 post") || strings.Contains(one, "1 posts") {
 		t.Errorf("api line %q counts one post as several", one)
+	}
+	// Pings prove the API is there and nothing else. Saying so is the whole
+	// point: a line that called 170ms an average response time is the bug.
+	if ping := apiLine(wall.Stats{PulsePings: 12}); !strings.Contains(ping, "reachable on 12 posts") || !strings.Contains(ping, "no turn time was measured") {
+		t.Errorf("ping-only window reads %q", ping)
 	}
 	if none := apiLine(wall.Stats{PulseDown: 3}); !strings.Contains(none, "nothing answered across 3 posts") {
 		t.Errorf("all-down window reads %q", none)
@@ -108,18 +113,23 @@ func TestAPILineReportsTheConditions(t *testing.T) {
 }
 
 func TestMoodInspectorNamesTheConditions(t *testing.T) {
-	evs := moodPosts("good", "rough")
-	evs[0].PulseMS, evs[0].PulseSrc = 180, wall.PulseProbe
+	evs := moodPosts("good", "rough", "ok")
+	evs[0].PulseMS, evs[0].PulseSrc = 17_000, wall.PulseSession
 	evs[1].PulseSrc = wall.PulseNone
+	evs[2].PulseMS, evs[2].PulseSrc = 170, wall.PulseProbe
 	st := moodStateOf(evs, 99)
 
 	st.cursor = 0
-	if got := moodInspect(st, 120); !strings.Contains(got, "api 180ms") {
-		t.Errorf("inspector = %q, want the round trip that post was written in", got)
+	if got := moodInspect(st, 120); !strings.Contains(got, "api 17s") {
+		t.Errorf("inspector = %q, want what a turn cost that post", got)
 	}
 	st.cursor = 1
 	if got := moodInspect(st, 120); !strings.Contains(got, "no api") {
 		t.Errorf("inspector = %q, want the outage named", got)
+	}
+	st.cursor = 2
+	if got := moodInspect(st, 120); strings.Contains(got, "170ms") {
+		t.Errorf("inspector = %q, want a ping left out — it says nothing about the work", got)
 	}
 }
 
@@ -127,8 +137,8 @@ func TestMoodInspectorNamesTheConditions(t *testing.T) {
 // and a count of the ones written with nothing answering.
 func TestMoodDayColumnFoldsTheConditions(t *testing.T) {
 	evs := moodPosts("good", "good", "rough")
-	evs[0].PulseMS, evs[0].PulseSrc = 200, wall.PulseProbe
-	evs[1].PulseMS, evs[1].PulseSrc = 600, wall.PulseProbe
+	evs[0].PulseMS, evs[0].PulseSrc = 10_000, wall.PulseSession
+	evs[1].PulseMS, evs[1].PulseSrc = 30_000, wall.PulseSession
 	evs[2].PulseSrc = wall.PulseNone
 	st := moodStateOf(evs, 99)
 	st.daily = true
@@ -136,18 +146,24 @@ func TestMoodDayColumnFoldsTheConditions(t *testing.T) {
 	st.cursor = 0
 
 	p, _ := st.at()
-	if p.PulseMS != 400 || p.PulseN != 2 || p.PulseDown != 1 {
-		t.Fatalf("day folds to %dms over %d readings, %d down; want 400ms over 2, 1 down", p.PulseMS, p.PulseN, p.PulseDown)
+	if p.PulseMS != 20_000 || p.PulseN != 2 || p.PulseDown != 1 {
+		t.Fatalf("day folds to %dms over %d turns, %d down; want 20000ms over 2, 1 down", p.PulseMS, p.PulseN, p.PulseDown)
 	}
-	if got := moodInspect(st, 120); !strings.Contains(got, "api ~400ms") || !strings.Contains(got, "1 with none") {
+	if got := moodInspect(st, 120); !strings.Contains(got, "api ~20s") || !strings.Contains(got, "1 with none") {
 		t.Errorf("day inspector = %q, want the mean and the outage count", got)
 	}
 }
 
-func TestEventPulseTermRoundsLikeTheRestOfThePanel(t *testing.T) {
-	e := wall.Event{PulseMS: 2840, PulseSrc: wall.PulseProbe}
-	if got := eventPulseTerm(e); got != "api 2.8s" {
-		t.Errorf("eventPulseTerm = %q, want %q", got, "api 2.8s")
+// A turn and a ping are named apart everywhere they are shown: they are
+// different measurements, and one of them was mistaken for the other once.
+func TestEventPulseTermNamesTurnsAndPingsApart(t *testing.T) {
+	turn := wall.Event{PulseMS: 17_400, PulseSrc: wall.PulseSession}
+	if got := eventPulseTerm(turn); got != "api 17.4s" {
+		t.Errorf("turn renders %q, want %q", got, "api 17.4s")
+	}
+	ping := wall.Event{PulseMS: 170, PulseSrc: wall.PulseProbe}
+	if got := eventPulseTerm(ping); got != "ping 170ms" {
+		t.Errorf("ping renders %q, want %q — calling it api time is the bug", got, "ping 170ms")
 	}
 	if got := pulseDur(1830 * time.Millisecond); got != "1.8s" {
 		t.Errorf("pulseDur = %q, want %q", got, "1.8s")

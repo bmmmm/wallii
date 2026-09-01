@@ -23,9 +23,11 @@ type MoodPoint struct {
 	// posts are visible in the picture and not only in a number.
 	ContraN int
 	N       int // posts folded here: 1 for a post, more for a day
-	// The conditions the grade was earned under: what the API answered in
-	// (the mean over the posts of a folded day that carry a reading), how
-	// many carry one, and how many were written while nothing answered.
+	// The conditions the grade was earned under: what a turn cost (the mean
+	// over the posts of a folded day that measured one), how many did, and how
+	// many were written while nothing answered at all. Probe readings are left
+	// out — a ping proves the API is there and says nothing about the work,
+	// and averaging 170ms of handshake into 17s of waiting buries the finding.
 	PulseMS   int64
 	PulseN    int
 	PulseDown int
@@ -115,12 +117,11 @@ func MoodTrail(evs []Event) MoodSummary {
 		p := MoodPoint{TS: e.TS, Score: sc, Avg: float64(sc), Mood: e.Mood, Repo: e.Repo,
 			Actor: e.Actor, Topic: e.Topic, Msg: e.Msg, Outcome: e.Outcome, N: 1}
 		switch e.PulseSrc {
-		case "": // nobody measured — not the same as nothing answering
 		case PulseNone:
 			p.PulseDown = 1
-		default:
+		case PulseSession:
 			p.PulseMS, p.PulseN = e.PulseMS, 1
-		}
+		} // "" is nobody measured, PulseProbe is a ping — neither is a turn
 		// regex work, once per post per refold — the trail is rebuilt on
 		// ingest, not per frame, so this stays off the render path
 		if len(Contradictions(e)) > 0 {

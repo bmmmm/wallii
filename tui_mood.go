@@ -122,13 +122,16 @@ type (
 	moodPulseDueMsg struct{ epoch int }
 )
 
-// moodPulseCmd times the API off the render path: bubbletea runs a Cmd in its
-// own goroutine, so a ten-second timeout costs the panel no frames.
+// moodPulseCmd takes the reading off the render path: bubbletea runs a Cmd in
+// its own goroutine, so even a probe that has to time out costs the panel no
+// frames. It asks the same way a post does — the session's own number first —
+// so the head and the stored posts can never disagree about what a turn costs.
 func moodPulseCmd(epoch int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), wall.PulseTimeout)
 		defer cancel()
-		return moodPulseMsg{epoch, wall.ProbePulse(ctx, wall.PulseURL())}
+		p, _ := wall.SessionPulse(ctx)
+		return moodPulseMsg{epoch, p}
 	}
 }
 
@@ -420,14 +423,18 @@ func moodReceipt(st moodState, now wall.MoodNow) string {
 	return wallTerm + " · " + moodAPITerm(st.pulse)
 }
 
-// moodAPITerm is the pulse in words: the round trip, the reason there was
-// none, or that one is being taken right now.
+// moodAPITerm is the pulse in words. A turn and a ping are named differently
+// on purpose: `api 17s` is what a turn cost, `ping 170ms` is only proof the
+// API is there, and reading the second as the first is how a wall ends up
+// claiming a good day in the middle of a slow one.
 func moodAPITerm(p wall.Pulse) string {
 	switch {
 	case !p.Known():
 		return "api …"
 	case !p.OK:
 		return "no api — " + p.Err
+	case !p.Turn():
+		return "ping " + pulseDur(p.RTT)
 	}
 	return "api " + pulseDur(p.RTT)
 }
@@ -441,6 +448,8 @@ func eventPulseTerm(e wall.Event) string {
 		return ""
 	case wall.PulseNone:
 		return "no api"
+	case wall.PulseProbe:
+		return "ping " + pulseDur(time.Duration(e.PulseMS)*time.Millisecond)
 	}
 	return "api " + pulseDur(time.Duration(e.PulseMS)*time.Millisecond)
 }

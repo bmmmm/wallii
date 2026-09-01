@@ -741,9 +741,10 @@ func TestMoodPanelWithoutAPulseSaysNothingAboutTheAPI(t *testing.T) {
 // Latency only ever subtracts, and the panel shows the subtraction: a wall of
 // nothing but great, read through a four-second API, is not a great day.
 func TestMoodPanelDragsTheHeadWithLatency(t *testing.T) {
-	st := pulsed(moodPosts("great", "great", "great"), wall.Pulse{At: time.Now(), OK: true, RTT: 4 * time.Second})
+	st := pulsed(moodPosts("great", "great", "great"),
+		wall.Pulse{At: time.Now(), OK: true, RTT: 45 * time.Second, Src: wall.PulseSession})
 	panel := render(st, 100, 26)
-	for _, want := range []string{"ok · 3.0", "wall 5.0", "− 2.0", "api 4s"} {
+	for _, want := range []string{"ok · 3.0", "wall 5.0", "− 2.0", "api 45s"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("head is missing %q:\n%s", want, panel)
 		}
@@ -755,13 +756,32 @@ func TestMoodPanelDragsTheHeadWithLatency(t *testing.T) {
 
 // A fast API is not a compliment: it leaves the grades exactly as posted.
 func TestMoodPanelFastAPILeavesTheGradesAlone(t *testing.T) {
-	st := pulsed(moodPosts("good", "good", "ok"), wall.Pulse{At: time.Now(), OK: true, RTT: 240 * time.Millisecond})
+	st := pulsed(moodPosts("good", "good", "ok"),
+		wall.Pulse{At: time.Now(), OK: true, RTT: 4 * time.Second, Src: wall.PulseSession})
 	panel := render(st, 100, 26)
 	if !strings.Contains(panel, "good · 3.7") {
 		t.Errorf("a fast api moved the wall's average:\n%s", panel)
 	}
-	if !strings.Contains(panel, "api 240ms") || strings.Contains(panel, "−") {
-		t.Errorf("receipt = want the round trip and no drag:\n%s", panel)
+	if !strings.Contains(panel, "api 4s") || strings.Contains(panel, "−") {
+		t.Errorf("receipt = want the turn time and no drag:\n%s", panel)
+	}
+}
+
+// The head says which measurement it is holding. A probe that answered in
+// 240ms proves the API is reachable and nothing else — reading it as a fast
+// day is the mistake this wording exists to prevent.
+func TestMoodPanelCallsAPingAPing(t *testing.T) {
+	st := pulsed(moodPosts("great", "great", "great"),
+		wall.Pulse{At: time.Now(), OK: true, RTT: 240 * time.Millisecond, Src: wall.PulseProbe})
+	panel := render(st, 100, 26)
+	if !strings.Contains(panel, "ping 240ms") {
+		t.Errorf("a probe reading is not named as one:\n%s", panel)
+	}
+	if strings.Contains(panel, "api 240ms") || strings.Contains(panel, "−") {
+		t.Errorf("a ping was rendered as api time or claimed a drag:\n%s", panel)
+	}
+	if !strings.Contains(panel, "great · 5.0") {
+		t.Errorf("a ping moved the wall's average:\n%s", panel)
 	}
 }
 

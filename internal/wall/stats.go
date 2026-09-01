@@ -26,13 +26,15 @@ type Stats struct {
 	TookTotalS int64 `json:"took_total_s"`
 	TookAuto   int   `json:"took_auto"` // of TookCount, derived rather than measured
 
-	// Pulse: the conditions the grades were earned under. Answered and Down
-	// split the coverage the way the field does — a post with no pulse at all
-	// is neither, because nobody measured, and that must not read as an
-	// outage.
-	PulseAnswered int   `json:"pulse_answered,omitempty"`
-	PulseTotalMS  int64 `json:"pulse_total_ms,omitempty"`
-	PulseDown     int   `json:"pulse_down,omitempty"`
+	// Pulse: the conditions the grades were earned under. Turns are what a
+	// turn actually cost, pings only prove the API was reachable, and Down is
+	// an outage — three different findings, so three counters. A post with no
+	// pulse at all is none of them: nobody measured, which must never read as
+	// an outage.
+	PulseTurns       int   `json:"pulse_turns,omitempty"`
+	PulseTurnTotalMS int64 `json:"pulse_turn_total_ms,omitempty"`
+	PulsePings       int   `json:"pulse_pings,omitempty"`
+	PulseDown        int   `json:"pulse_down,omitempty"`
 
 	WithRefs int `json:"with_refs"`
 	// Contradicting counts posts whose grade disagrees with their own
@@ -153,9 +155,11 @@ func Compute(evs []Event) Stats {
 		case "": // nobody measured
 		case PulseNone:
 			s.PulseDown++
+		case PulseProbe:
+			s.PulsePings++
 		default:
-			s.PulseAnswered++
-			s.PulseTotalMS += e.PulseMS
+			s.PulseTurns++
+			s.PulseTurnTotalMS += e.PulseMS
 		}
 		if len(e.Refs) > 0 {
 			s.WithRefs++
