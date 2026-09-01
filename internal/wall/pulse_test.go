@@ -99,7 +99,14 @@ func stubAPI(t *testing.T, delay time.Duration, code int, fail error) *http.Clie
 		if r.Header.Get("x-api-key") != "" || r.Header.Get("authorization") != "" {
 			t.Error("the probe sent credentials — it times the wire, it does not authenticate")
 		}
-		select { // a real transport gives up when the caller does, and so does this one
+		// a real transport gives up when the caller does, and so does this one.
+		// The check comes before the wait: with an already-cancelled context and
+		// no delay both select cases are ready at once, and the answer would be
+		// a coin toss.
+		if err := r.Context().Err(); err != nil {
+			return nil, err
+		}
+		select {
 		case <-r.Context().Done():
 			return nil, r.Context().Err()
 		case <-time.After(delay):
