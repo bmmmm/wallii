@@ -169,8 +169,14 @@ func (m *tuiModel) handleMoodKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "q", "m", "enter":
+	case "q", "m":
 		m.mode = modeList
+	case "enter":
+		// enter goes one level deeper everywhere in the TUI: in the list it
+		// opens the post, and on a column it opens what the column is made of
+		if !m.jumpToPoint() {
+			m.mode = modeList
+		}
 	case "esc":
 		// esc peels one layer: it drops the inspector before it drops the
 		// panel, the way esc in the list clears filters before anything else
@@ -202,6 +208,39 @@ func (m *tuiModel) handleMoodKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mood.cursor = moodNoCursor
 	}
 	return m, nil
+}
+
+// jumpToPoint leaves the panel for the posts behind the column under the
+// cursor: a post column lands the list cursor on that post, a day column pins
+// the list to that day. Reports false when there is no cursor to follow, so
+// enter still just closes the panel.
+//
+// A post is matched by timestamp and message rather than by its derived ID:
+// the ID is a sha256 per event, and hashing the whole wall on every refold to
+// serve one keystroke is a poor trade — two posts sharing both fields to the
+// nanosecond are the same post anyway.
+func (m *tuiModel) jumpToPoint() bool {
+	p, ok := m.mood.at()
+	if !ok {
+		return false
+	}
+	m.mode = modeList
+	if p.N > 1 {
+		m.dayF = p.TS
+		m.cursor, m.scroll = 0, 0
+		m.refilter()
+		m.note = fmt.Sprintf("%s · %s", p.TS.Format("2006-01-02"), plural(p.N, "post"))
+		return true
+	}
+	for vi, ei := range m.view {
+		if e := m.events[ei]; e.TS.Equal(p.TS) && e.Msg == p.Msg {
+			m.cursor = vi
+			m.note = "from the mood curve"
+			return true
+		}
+	}
+	m.note = "that post is no longer in view"
+	return true
 }
 
 func (m *tuiModel) viewMood() string {
@@ -277,7 +316,7 @@ func plural(n int, unit string) string {
 func moodFooter(note string, width int, graph bool) string {
 	hint := " m/esc back"
 	if graph {
-		hint += " · h/l inspect · d day/post · a actors · 1/2/3/0 window"
+		hint += " · h/l inspect · enter jump in · d day/post · a actors · 1/2/3/0 window"
 	}
 	if note != "" {
 		hint = " " + note + " ·" + hint

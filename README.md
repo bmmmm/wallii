@@ -225,9 +225,16 @@ live and light their column as they arrive.
 ```
 
 Panel keys: `h`/`l` walk the curve and name the column under the cursor
-(`esc` drops the inspector before it drops the panel) · `d` folds the series
-by day, one column per calendar day instead of per post · `a` swaps the
-shared curve for one sparkline per actor · `1`/`2`/`3`/`0` set the window.
+(`esc` drops the inspector before it drops the panel) · `enter` jumps into
+the column · `d` folds the series by day, one column per calendar day instead
+of per post · `a` swaps the shared curve for one sparkline per actor ·
+`1`/`2`/`3`/`0` set the window.
+
+**`enter` goes one level deeper, the way it does everywhere in the TUI.** On
+a post column it drops you into the list with that post selected — expanded
+in place, with its refs, ready for `c` or `o`. On a folded day column it pins
+the list to that day: the question a day raises is "what happened then", and
+the answer is that day's posts and no others. `esc` in the list unpins it.
 
 **Height is mood, the row below it is outcome.** The pair is the point: a
 great mood over a failed outcome is the most interesting column on the wall,

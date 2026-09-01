@@ -2,6 +2,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -534,5 +535,89 @@ func TestMoodAxisSpansItsDataNotTheWindow(t *testing.T) {
 	}
 	if n := strings.Count(axis, "─"); n != 5 {
 		t.Errorf("axis is %d columns wide over 5 points: %q", n, axis)
+	}
+}
+
+// ---- jumping out of the curve into the posts behind it ----
+
+func TestMoodJumpLandsOnThePost(t *testing.T) {
+	evs := moodPosts("good", "rough", "great")
+	for i := range evs {
+		evs[i].Msg = []string{"first", "second", "third"}[i]
+	}
+	m := newTUI(t.TempDir(), evs)
+	m.width, m.height = 80, 26
+	m.handleKey(key("m"))
+	m.handleMoodKey(key("h")) // newest
+	m.handleMoodKey(key("h")) // one back: "second"
+	m.handleMoodKey(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.mode != modeList {
+		t.Fatalf("mode = %q after jumping, want the list", m.mode)
+	}
+	sel, ok := m.selected()
+	if !ok {
+		t.Fatal("nothing selected after the jump")
+	}
+	if sel.Msg != "second" {
+		t.Errorf("landed on %q, want the post under the cursor (second)", sel.Msg)
+	}
+}
+
+func TestMoodJumpPinsTheListToADay(t *testing.T) {
+	d := time.Date(2026, 3, 4, 9, 0, 0, 0, time.Local)
+	var evs []wall.Event
+	for i := 0; i < 5; i++ { // 3 on day one, 2 on day two
+		day := 0
+		if i >= 3 {
+			day = 1
+		}
+		evs = append(evs, wall.Event{TS: d.AddDate(0, 0, day).Add(time.Duration(i) * time.Hour),
+			Repo: "alpha", Msg: fmt.Sprintf("post %d", i), Mood: "good"})
+	}
+	m := newTUI(t.TempDir(), evs)
+	m.width, m.height = 80, 26
+	m.handleKey(key("m"))
+	m.handleMoodKey(key("d")) // day resolution
+	if len(m.mood.drawn) != 2 {
+		t.Fatalf("folded into %d columns, want 2", len(m.mood.drawn))
+	}
+	m.handleMoodKey(key("h")) // newest day
+	m.handleMoodKey(key("h")) // the older one
+	m.handleMoodKey(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.mode != modeList {
+		t.Fatalf("mode = %q, want the list", m.mode)
+	}
+	if m.dayF.IsZero() {
+		t.Fatal("day column jumped without pinning the list to its day")
+	}
+	if len(m.view) != 3 {
+		t.Errorf("list shows %d posts, want the 3 of that day", len(m.view))
+	}
+	for _, ei := range m.view {
+		if !sameDay(m.events[ei].TS.Local(), m.dayF) {
+			t.Errorf("post from %v survived the day pin %v", m.events[ei].TS, m.dayF)
+		}
+	}
+	// and the way back out
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if !m.dayF.IsZero() || len(m.view) != 5 {
+		t.Errorf("esc did not clear the day pin: dayF %v, %d posts", m.dayF, len(m.view))
+	}
+}
+
+// Without a cursor there is no column to jump into, so enter keeps its old
+// meaning and simply closes the panel.
+func TestMoodEnterWithoutCursorJustCloses(t *testing.T) {
+	m := newTUI(t.TempDir(), moodPosts("good", "ok"))
+	m.width, m.height = 80, 26
+	m.handleKey(key("m"))
+	m.handleMoodKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != modeList {
+		t.Errorf("mode = %q, want the list", m.mode)
+	}
+	if !m.dayF.IsZero() || m.note != "" {
+		t.Errorf("enter without a cursor changed the list: dayF %v, note %q", m.dayF, m.note)
 	}
 }

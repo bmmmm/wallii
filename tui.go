@@ -76,6 +76,10 @@ type tuiModel struct {
 	// list and the mood panel read the same one: what you are looking at and
 	// what the curve measures can never drift apart.
 	window string
+	// dayF pins the list to a single day. Only the mood panel sets it, when
+	// you jump into a folded day column — the question a day column raises is
+	// "what happened then", and the answer is that day's posts and no others.
+	dayF time.Time
 
 	mood moodState
 }
@@ -98,6 +102,9 @@ func (m *tuiModel) refilter() {
 	for i := len(m.events) - 1; i >= 0; i-- {
 		e := m.events[i]
 		if !since.IsZero() && e.TS.Before(since) {
+			continue
+		}
+		if !m.dayF.IsZero() && !sameDay(e.TS.Local(), m.dayF) {
 			continue
 		}
 		if m.repoF != "" && !strings.EqualFold(e.Repo, m.repoF) {
@@ -285,6 +292,7 @@ func (m *tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeSearch
 	case "esc":
 		m.search, m.repoF, m.topicF = "", "", ""
+		m.dayF = time.Time{}
 		m.refilter()
 	case "r":
 		if e, ok := m.selected(); ok {
@@ -466,6 +474,9 @@ func (m *tuiModel) header() string {
 	}
 	s := styleHeader.Render(fmt.Sprintf(" wallii · %d posts · %d today · %d repos", len(m.view), today, len(repos)))
 	var fl []string
+	if !m.dayF.IsZero() {
+		fl = append(fl, m.dayF.Format("01-02"))
+	}
 	if m.window != "" {
 		fl = append(fl, m.window)
 	}
@@ -551,6 +562,9 @@ func (m *tuiModel) line(e wall.Event, sel bool) string {
 
 func (m *tuiModel) footer() string {
 	hint := " j/k · enter detail · m mood · 1/2/3/0 window · / search · r/t filter · c session · y copy · o ref · esc clear · q quit"
+	if !m.dayF.IsZero() {
+		hint = " " + m.dayF.Format("2006-01-02") + " only ·" + hint
+	}
 	if m.note != "" {
 		hint = " " + m.note + " ·" + hint
 	}
