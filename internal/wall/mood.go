@@ -62,6 +62,12 @@ type MoodSummary struct {
 	PulseMS    int64
 	PulseTurns int
 	PulseDown  int
+	// The spread behind that mean. A window whose turns ran 2s to 90s and one
+	// where every turn took 12s have the same average and nothing else in
+	// common, and the drag — which saturates below the first anchor — cannot
+	// tell them apart on its own.
+	PulseMinMS int64
+	PulseMaxMS int64
 }
 
 // MoodLevel rounds an average onto the 5..1 scale, clamped: the level a curve
@@ -122,6 +128,12 @@ func MoodTrail(evs []Event) MoodSummary {
 		case PulseSession:
 			s.PulseTurns++
 			pulseSum += e.PulseMS
+			if s.PulseMinMS == 0 || e.PulseMS < s.PulseMinMS {
+				s.PulseMinMS = e.PulseMS
+			}
+			if e.PulseMS > s.PulseMaxMS {
+				s.PulseMaxMS = e.PulseMS
+			}
 		case PulseNone:
 			s.PulseDown++
 		}

@@ -1050,3 +1050,125 @@ func TestPulseAxisLabelsTheSeconds(t *testing.T) {
 		t.Errorf("an unmeasured wall drew a latency axis:\n%s", bare)
 	}
 }
+
+// bandRow returns the api band's row, without its label or its range.
+func bandRow(t *testing.T, panel string) string {
+	t.Helper()
+	for _, l := range strings.Split(panel, "\n") {
+		if strings.HasPrefix(l, "  api ") {
+			return l
+		}
+	}
+	t.Fatalf("no api band in panel:\n%s", panel)
+	return ""
+}
+
+// varied builds a window whose turns swing, all of them below the first
+// anchor: the line cannot show this, which is why the band exists.
+func varied(ms ...int64) []wall.Event {
+	evs := moodPosts(strings.Fields(strings.Repeat("good ", len(ms)))...)
+	for i := range evs {
+		evs[i].PulseMS, evs[i].PulseSrc = ms[i], wall.PulseSession
+	}
+	return evs
+}
+
+// The drag saturates under 15s on purpose — none of that waiting reaches a
+// grade — so a window that swings five-fold draws a flat line and needs a
+// second mark to show the swing at all.
+func TestPulseBandShowsTheSwingTheLineCannot(t *testing.T) {
+	panel := render(moodStateOf(varied(1800, 9000, 2400, 5500, 2000, 8800), 99), 100, 30)
+
+	heights := map[rune]bool{}
+	for _, r := range bandRow(t, panel) {
+		if strings.ContainsRune(string(moodSpark), r) {
+			heights[r] = true
+		}
+	}
+	if len(heights) < 3 {
+		t.Errorf("a five-fold swing drew %d distinct heights:\n%s", len(heights), panel)
+	}
+	// the line meanwhile is flat at the top, and says why
+	if !strings.Contains(panel, "all under 15s") {
+		t.Errorf("the flat line does not explain itself:\n%s", panel)
+	}
+	for _, lvl := range []string{"good", "ok", "rough", "stuck"} {
+		row := line(t, panel, lvl)
+		if strings.Contains(row, moodLine) || strings.Contains(row, moodLineTop) || strings.Contains(row, moodLineBot) {
+			t.Errorf("the api line left the top row for %q, but nothing cost a grade:\n%s", lvl, panel)
+		}
+	}
+}
+
+// Log-spaced: one slow outlier must not flatten everything else into the
+// floor, which is exactly what a linear scale does to latency.
+func TestPulseBandIsLogScaled(t *testing.T) {
+	row := bandRow(t, render(moodStateOf(varied(2000, 4000, 8000, 90000), 99), 100, 30))
+	marks := []rune{}
+	for _, r := range row {
+		if strings.ContainsRune(string(moodSpark), r) {
+			marks = append(marks, r)
+		}
+	}
+	if len(marks) != 4 {
+		t.Fatalf("band drew %d marks, want 4: %q", len(marks), row)
+	}
+	if !(marks[0] < marks[1] && marks[1] < marks[2] && marks[2] < marks[3]) {
+		t.Errorf("2s/4s/8s/90s drew %q — a doubling has to be visible next to an outlier", string(marks))
+	}
+}
+
+func TestPulseBandLabelsItsRange(t *testing.T) {
+	panel := render(moodStateOf(varied(2000, 90000, 4000), 99), 100, 30)
+	if !strings.Contains(panel, "log 2s–1m30s") {
+		t.Errorf("band does not name its range:\n%s", panel)
+	}
+	// no spread, no range: one number, and a flat row rather than a shape
+	flat := render(moodStateOf(varied(3000, 3000, 3000), 99), 100, 30)
+	if !strings.Contains(flat, "log 3s") || strings.Contains(flat, "3s–") {
+		t.Errorf("a window with no spread invented one:\n%s", flat)
+	}
+	if got := strings.Count(bandRow(t, flat), string(moodSpark[len(moodSpark)/2])); got != 3 {
+		t.Errorf("flat window drew %d middle marks, want 3:\n%s", got, flat)
+	}
+}
+
+// Posts nobody timed leave the band empty there, like the line above it.
+func TestPulseBandLeavesGaps(t *testing.T) {
+	evs := varied(2000, 4000, 8000)
+	evs[1].PulseMS, evs[1].PulseSrc = 0, ""
+	row := bandRow(t, render(moodStateOf(evs, 99), 100, 30))
+	marks := 0
+	for _, r := range row {
+		if strings.ContainsRune(string(moodSpark), r) {
+			marks++
+		}
+	}
+	if marks != 2 {
+		t.Errorf("band drew %d marks for 2 measured posts: %q", marks, row)
+	}
+}
+
+// The scale comes off the whole visible series, so it cannot rescale while
+// the sweep reveals it — three different pictures in one second.
+func TestPulseBandScaleHoldsThroughTheSweep(t *testing.T) {
+	evs := varied(2000, 4000, 8000, 16000, 32000, 64000)
+	for _, frame := range []int{0, 1, 3, 5, 99} {
+		if panel := render(moodStateOf(evs, frame), 100, 30); !strings.Contains(panel, "log 2s–1m4s") {
+			t.Errorf("frame %d: the band's range moved:\n%s", frame, panel)
+		}
+	}
+}
+
+// A drag that rounds to zero is not a term. "− 0.0" reads as a bug.
+func TestMoodHeadDropsAZeroDrag(t *testing.T) {
+	// 15.2s: past the first anchor by a whisker, a drag of 0.01
+	panel := render(moodStateOf(varied(15200, 15200), 99), 100, 30)
+	if strings.Contains(panel, "− 0.0") {
+		t.Errorf("head prints a zero drag:\n%s", panel)
+	}
+	// but a real one still shows
+	if big := render(moodStateOf(varied(45000, 45000), 99), 100, 30); !strings.Contains(big, "− 1.5") {
+		t.Errorf("head dropped a drag that matters:\n%s", big)
+	}
+}

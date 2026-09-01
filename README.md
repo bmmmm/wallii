@@ -340,6 +340,28 @@ line does not bridge them — an interpolated stretch would draw a measurement
 that was never taken — and while coverage is thin the note under the legend
 says how thin.
 
+**The drag saturates, so the swing gets its own row.** Under 15s nothing is
+lost, which means a window whose turns ran 1.8s to 9s — a five-fold swing —
+draws a flat line at the top. That is true and it is worth saying (the legend
+adds `· all under 15s`), but it is not the shape of the day. The `api` band
+under the outcome band is that shape, on the window's own scale:
+
+```
+  out    ✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓
+  api    ▁▂▄▆▂█▂▁▅▇▂▃█▁▃▆▄▂▇▁  log 1.8s–9s
+```
+
+Log-spaced, because latency is: 2s→4s and 30s→60s are the same event to
+whoever waited, and on a linear scale one slow outlier flattens every other
+column into the floor. The range is printed beside it — a relative shape with
+no numbers is a picture of nothing — and it comes off the whole visible series
+rather than the part the sweep has revealed, so it does not rescale while the
+graph draws itself. A window with no spread draws a flat middle row and one
+number: that there was nothing to see is also a finding.
+
+So the two marks answer two questions, and neither can answer the other's:
+**the line is what the waiting cost, the band is how the waiting moved.**
+
 **Every post carries the conditions it was written under.** The head is only
 live; history needs its own reading, so `wallii post` takes one and stores it
 on the event (`pulse_ms`, `pulse_src`). A grade is worth more when you can see

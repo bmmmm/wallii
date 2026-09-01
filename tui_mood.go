@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -441,7 +442,10 @@ func moodReceipt(st moodState, now wall.MoodNow) string {
 	var parts []string
 	if st.trail.Count > 0 {
 		w := fmt.Sprintf("wall %.1f", st.trail.Avg)
-		if now.Drag > 0 && !now.Crash {
+		// a drag that rounds to zero is not worth a term: "− 0.0" reads as an
+		// arithmetic bug, and the number it would subtract is invisible in the
+		// average printed right next to it
+		if now.Drag >= 0.05 && !now.Crash {
 			w += fmt.Sprintf(" − %.1f", now.Drag)
 		}
 		parts = append(parts, w)
@@ -706,6 +710,9 @@ func moodGraph(st moodState, width, height int) string {
 	// column puts the right-hand date where nothing was ever posted
 	fmt.Fprintf(&b, "  %s └%s\n", strings.Repeat(" ", moodLabelW), strings.Repeat("─", max(len(pts), 1)))
 	b.WriteString(moodOutcomeBand(pts[:shown], cur) + "\n")
+	if band := moodPulseBand(pts, shown, cur, width); band != "" {
+		b.WriteString(band + "\n")
+	}
 	b.WriteString(moodAxis(pts) + "\n")
 	return b.String()
 }
@@ -787,6 +794,67 @@ func moodOutcomeBand(pts []wall.MoodPoint, cur int) string {
 		cells = append(cells, moodCell{ch: glyph, color: colorOf(color), lit: i == cur})
 	}
 	return fmt.Sprintf("  %s  %s", styleDim.Render(pad("out", moodLabelW)), renderCells(cells))
+}
+
+// moodPulseBand runs under the outcome band: the same columns, the api time's
+// own scale. The line above answers what the waiting cost a grade, and
+// saturates on purpose — under the first anchor nothing is lost, so a window
+// that swung from 2s to 6s draws a flat line at the top, which is true and
+// says nothing about the swing. This row is the swing: the window's own
+// min…max spread over eight heights, so the shape shows at whatever scale the
+// window actually lived at.
+//
+// Log-spaced, because latency is: a doubling from 2s to 4s and one from 30s to
+// 60s are the same event to whoever waited, and one slow outlier on a linear
+// scale flattens everything else into the floor. The range is printed beside
+// it — a relative shape with no numbers is a picture of nothing.
+func moodPulseBand(pts []wall.MoodPoint, shown, cur, width int) string {
+	// the scale comes off the whole visible series, not the part the sweep has
+	// revealed: a range that rescales while the graph draws itself would show
+	// three different pictures in one second
+	lo, hi := int64(0), int64(0)
+	for _, p := range pts {
+		if p.PulseN == 0 {
+			continue
+		}
+		if lo == 0 || p.PulseMS < lo {
+			lo = p.PulseMS
+		}
+		if p.PulseMS > hi {
+			hi = p.PulseMS
+		}
+	}
+	if hi == 0 {
+		return "" // nothing in view was timed
+	}
+	cells := make([]moodCell, 0, shown)
+	for i, p := range pts[:shown] {
+		c := moodCell{ch: " ", lit: i == cur}
+		if p.PulseN > 0 {
+			c.ch, c.color = string(moodSpark[sparkAt(p.PulseMS, lo, hi)]), colorPulse
+		}
+		cells = append(cells, c)
+	}
+	span := pulseDur(time.Duration(lo) * time.Millisecond)
+	if hi != lo {
+		span += "–" + pulseDur(time.Duration(hi)*time.Millisecond)
+	}
+	line := fmt.Sprintf("  %s  %s  %s", styleDim.Render(pad("api", moodLabelW)),
+		renderCells(cells), styleDim.Render("log "+span))
+	return lipgloss.NewStyle().MaxWidth(width).Render(line)
+}
+
+// sparkAt places one reading on the eight block heights, log-spaced between
+// the window's own ends. A window with no spread draws a flat middle row:
+// that there was nothing to see is itself the finding, and stretching it to
+// full height would manufacture a shape out of rounding.
+func sparkAt(ms, lo, hi int64) int {
+	if hi <= lo {
+		return len(moodSpark) / 2
+	}
+	f := (math.Log(float64(max(ms, 1))) - math.Log(float64(max(lo, 1)))) /
+		(math.Log(float64(hi)) - math.Log(float64(max(lo, 1))))
+	return min(max(int(f*float64(len(moodSpark)-1)+0.5), 0), len(moodSpark)-1)
 }
 
 // moodAxis labels the span the drawn columns actually cover — not the whole
@@ -893,7 +961,14 @@ func moodLegend(s wall.MoodSummary, width int) string {
 	if s.PulseTurns > 0 {
 		// the line has to name itself: a pink row through a mood graph is a
 		// second measurement, and an unlabelled one would read as a verdict
-		parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color(colorPulse)).Render(moodLine+" api time"))
+		key := moodLine + " api time"
+		// and it has to say when it is flat on purpose. A line pinned to the
+		// top of a window whose turns tripled looks broken; it is not, it is
+		// reporting that none of that waiting reached a grade.
+		if wall.PulseDrag(time.Duration(s.PulseMaxMS)*time.Millisecond) == 0 {
+			key += " · all under " + pulseDur(wall.PulseAtDrag(0))
+		}
+		parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color(colorPulse)).Render(key))
 	}
 	return lipgloss.NewStyle().MaxWidth(width).Render(" " + strings.Join(parts, " · "))
 }
