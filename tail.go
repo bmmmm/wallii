@@ -21,10 +21,17 @@ type filter struct {
 	// message. stats counts them and calls them the honest ones; without
 	// this there was no way to actually read them.
 	contradicting bool
+	// grader keeps only posts that name the cheap path they saw. The field
+	// is worth nothing unless it can be found again — a month of them, read
+	// together, is where a rule comes from.
+	grader bool
 }
 
 func (f filter) match(e wall.Event) bool {
 	if f.contradicting && len(wall.Contradictions(e)) == 0 {
+		return false
+	}
+	if f.grader && e.Grader == "" {
 		return false
 	}
 	if f.repo != "" && !strings.EqualFold(e.Repo, f.repo) {
@@ -40,7 +47,7 @@ func (f filter) match(e wall.Event) bool {
 		return false
 	}
 	if f.grep != "" {
-		hay := strings.ToLower(e.Repo + " " + e.Topic + " " + e.Actor + " " + e.Msg + " " + strings.Join(e.Refs, " "))
+		hay := strings.ToLower(e.Repo + " " + e.Topic + " " + e.Actor + " " + e.Msg + " " + e.Grader + " " + strings.Join(e.Refs, " "))
 		if !strings.Contains(hay, strings.ToLower(f.grep)) {
 			return false
 		}
@@ -71,6 +78,7 @@ func cmdTail(args []string) error {
 	sinceS := fs.String("since", "", "filter: 2006-01-02, 36h or 3d")
 	grep := fs.String("grep", "", "filter: substring across all fields")
 	contra := fs.Bool("contradicting", false, "filter: only posts whose grade disagrees with their message")
+	graderF := fs.Bool("grader", false, "filter: only posts that name the cheap path they saw (--grader)")
 	ids := fs.Bool("ids", false, "show event IDs (for wallii react / challenge)")
 	all := fs.Bool("all", false, "render every post in full (default: 3 prime slots per actor and day, rest folded)")
 	asJSON := fs.Bool("json", false, "raw NDJSON output")
@@ -80,7 +88,7 @@ func cmdTail(args []string) error {
 	if err != nil {
 		return err
 	}
-	flt := filter{repo: *repo, topic: *topic, actor: *actor, grep: *grep, since: since, contradicting: *contra}
+	flt := filter{repo: *repo, topic: *topic, actor: *actor, grep: *grep, since: since, contradicting: *contra, grader: *graderF}
 
 	dir, err := wall.Dir()
 	if err != nil {
@@ -108,7 +116,7 @@ func cmdTail(args []string) error {
 	// Dialogue, registry events, filtered listings and --json stay whole.
 	// Folding applies to the unfiltered wall view only: whoever filters has
 	// already asked for something specific and gets all of it.
-	fold := !*all && !*asJSON && !*contra && *grep == "" && *repo == "" && *topic == "" && *actor == ""
+	fold := !*all && !*asJSON && !*contra && !*graderF && *grep == "" && *repo == "" && *topic == "" && *actor == ""
 	folded := map[string]int{} // actor → folded count for the current day
 	slot := map[string]int{}
 	day := ""
@@ -362,6 +370,18 @@ func (r *renderer) printAt(w io.Writer, e wall.Event, asJSON bool, depth int) {
 		return
 	}
 	defer func() {
+		// The grader is the poster's own words, like Msg and Refs — so it
+		// renders on every listing, never behind a flag. mood is invisible
+		// here and gets written only because a hook asks; a field that
+		// lives on a hook dies with it. ↷ rather than ↳: that glyph is
+		// dialogue's, and this is not a reply.
+		if e.Grader != "" {
+			if r.color {
+				fmt.Fprintf(w, "                 \x1b[2m↷\x1b[0m %s\n", e.Grader)
+			} else {
+				fmt.Fprintf(w, "                 ↷ %s\n", e.Grader)
+			}
+		}
 		for _, n := range notes {
 			if r.color {
 				fmt.Fprintf(w, "                    \x1b[2m↳ %s\x1b[0m\n", n)

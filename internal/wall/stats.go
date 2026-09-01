@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package wall
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // Stats aggregates regular posts (attach/detach events are registry state,
 // not work) into the numbers the stats command and the digest skill read.
@@ -41,6 +44,16 @@ type Stats struct {
 	// message. Nothing stops those from being posted — this is where they
 	// surface instead.
 	Contradicting int `json:"contradicting"`
+
+	// Grader: how many posts name the cheap path they saw, and in how many
+	// different words. Counted, never graded — a fraction with the distinct
+	// count beside it is a description, a percentage would be a dial. The
+	// distinct count is what makes the filler move visible: "--grader none"
+	// on every post reads 483/483 · 1 distinct, and nobody can average that
+	// into a good score. Nothing here reads the text; the same idiom as
+	// Voice, presence and variety only.
+	WithGrader     int `json:"with_grader"`
+	GraderDistinct int `json:"grader_distinct"`
 
 	// Dialogue: reactions and challenges are replies, not work, so they stay
 	// out of Posts — but a wall where they are zero is a wall nobody reads.
@@ -87,6 +100,9 @@ func Compute(evs []Event) Stats {
 	actorRepos := map[string]map[string]struct{}{}
 	moodSum := 0
 	actorMoodSum := map[string]int{}
+	// case-folded and trimmed, so "None" and "none " are the same sentence
+	// said twice, not two ways of saying it
+	graders := map[string]struct{}{}
 
 	// id → actor of the challenged event, so ByChallenged can name whose
 	// posts draw doubt (the parent may be any kind, including a reply)
@@ -168,7 +184,12 @@ func Compute(evs []Event) Stats {
 		if len(Contradictions(e)) > 0 {
 			s.Contradicting++
 		}
+		if g := strings.TrimSpace(e.Grader); g != "" {
+			s.WithGrader++
+			graders[strings.ToLower(g)] = struct{}{}
+		}
 	}
+	s.GraderDistinct = len(graders)
 
 	if s.Challenges > 0 {
 		s.ChallengesOpen = len(OpenChallenges(evs))

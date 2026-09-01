@@ -390,3 +390,131 @@ func TestCmdDashWritesSubstitutedFile(t *testing.T) {
 		t.Error("empty wall should inline an empty RAW array")
 	}
 }
+
+// The grader is the poster's own words, like the message — so it renders
+// on every listing with no flag asked for. Whoever moves it back behind a
+// flag turns this red: mood is invisible in tail and gets written only
+// because a hook asks, and a field that lives on a hook dies with it.
+func TestTailShowsGraderWithoutAnyFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_SESSION_START", "")
+	grader := "CI only wanted green — loosening the assert would have done, 20min on it, not taken"
+	if err := cmdPost([]string{"-r", "webshop", "-t", "fix", "-a", "bot/builder", "--outcome", "ok",
+		"--grader", grader, "race in the retry loop closed: the reader saw the marker before the fsync"}); err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	if err := cmdPost([]string{"-r", "webshop", "-t", "docs", "-a", "bot/builder", "readme matches the flags again"}); err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	out := captureStdout(t, func() error { return cmdTail(nil) })
+	if !strings.Contains(out, "↷ "+grader) {
+		t.Fatalf("bare tail must print the grader line, got:\n%s", out)
+	}
+	if got := strings.Count(out, "↷"); got != 1 {
+		t.Errorf("one post carries a grader, want exactly one ↷ line, got %d in:\n%s", got, out)
+	}
+	// color mode: the glyph is dim, the words are not — they are the post's
+	var b strings.Builder
+	(&renderer{color: true}).print(&b, wall.Event{TS: time.Now(), Repo: "webshop", Msg: "closed", Grader: grader}, false)
+	if !strings.Contains(b.String(), "↷\x1b[0m "+grader+"\n") {
+		t.Errorf("color tail must print the grader line, got:\n%q", b.String())
+	}
+	// --json carries it under its own key, again without asking
+	out = captureStdout(t, func() error { return cmdTail([]string{"--json"}) })
+	if !strings.Contains(out, `"grader":"CI only wanted green`) {
+		t.Errorf("tail --json must carry the grader, got:\n%s", out)
+	}
+}
+
+// --grader makes the field findable: a month of them read together is
+// where a rule comes from. It selects exactly the posts carrying one,
+// composes with the other filters, and — like every filter — never folds.
+func TestTailGraderFilterKeepsOnlyPostsWithOne(t *testing.T) {
+	named := wall.Event{Repo: "webshop", Actor: "a", Msg: "cache measured, then removed", Grader: "none — the numbers said no"}
+	silent := wall.Event{Repo: "webshop", Actor: "a", Msg: "cache measured, then removed"}
+	otherRepo := named
+	otherRepo.Repo = "api-gateway"
+
+	f := filter{grader: true}
+	if !f.match(named) {
+		t.Error("a post with a grader must survive the filter")
+	}
+	if f.match(silent) {
+		t.Error("a post without a grader must be filtered out")
+	}
+	if (filter{grader: true, repo: "webshop"}).match(otherRepo) {
+		t.Error("--grader must compose with --repo, not override it")
+	}
+	if !(filter{}).match(silent) {
+		t.Error("without the flag the filter must not drop anything")
+	}
+	// --grep reads the grader too: it is text on the post, not metadata
+	if !(filter{grep: "numbers said"}).match(named) {
+		t.Error("--grep must search the grader")
+	}
+
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_SESSION_START", "")
+	// five posts from one actor: the bare view would fold two of them
+	for i, g := range []string{"none — the numbers said no", "", "", "", "regenerated the golden instead of asking why"} {
+		args := []string{"-r", "webshop", "-t", "chore", "-a", "bot/busy"}
+		if g != "" {
+			args = append(args, "--grader", g)
+		}
+		if err := cmdPost(append(args, "unit "+strconv.Itoa(i)+" done")); err != nil {
+			t.Fatalf("post: %v", err)
+		}
+	}
+	out := captureStdout(t, func() error { return cmdTail([]string{"--grader"}) })
+	if got := strings.Count(out, "↷"); got != 2 {
+		t.Errorf("tail --grader must list exactly the two posts with one, unfolded, got %d in:\n%s", got, out)
+	}
+	if strings.Contains(out, "unit 1 done") || strings.Contains(out, "more from") {
+		t.Errorf("tail --grader must neither show bare posts nor fold, got:\n%s", out)
+	}
+}
+
+// --grader given but blank would vanish under omitempty and read as "never
+// asked": the same guard --took has against zero. The form is checked, the
+// words are not — a refusal lands like any confession, trimmed.
+func TestPostRejectsBlankGrader(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	for _, args := range [][]string{
+		{"-r", "x", "--grader", "", "blank grader"},
+		{"-r", "x", "--grader", "   ", "whitespace grader"},
+	} {
+		if err := cmdPost(args); err == nil {
+			t.Errorf("args %v accepted — an empty --grader would be silently dropped", args)
+		}
+	}
+	if err := cmdPost([]string{"-r", "x", "--grader", "  none — the skip guards a missing binary  ", "trimmed"}); err != nil {
+		t.Fatalf("a refusal was rejected: %v", err)
+	}
+	evs, _, err := wall.ReadLast(dir, 0, nil)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("read back: %v (%d events)", err, len(evs))
+	}
+	if evs[0].Grader != "none — the skip guards a missing binary" {
+		t.Errorf("stored grader = %q, want it trimmed", evs[0].Grader)
+	}
+}
+
+// Counted, never graded: the line carries a fraction and the distinct
+// count and no percentage — a percentage is a dial. Absence names the
+// command that ends it, the way the dialog line does.
+func TestGraderLineCountsWithoutAPercentage(t *testing.T) {
+	got := graderLine(wall.Stats{Posts: 483, WithGrader: 61, GraderDistinct: 58})
+	if want := "grader   61/483 posts name a grader moment · 58 distinct"; got != want {
+		t.Errorf("graderLine = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "%") {
+		t.Errorf("the grader line must not carry a percentage: %q", got)
+	}
+	none := graderLine(wall.Stats{Posts: 12})
+	if !strings.HasPrefix(none, "grader   none") || !strings.Contains(none, "wallii post --grader") {
+		t.Errorf("absence must be named with the command that ends it, got %q", none)
+	}
+}
