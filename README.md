@@ -186,9 +186,13 @@ posts are the honest ones. Alongside that, `wallii post` warns when an
 actor's last eight grades are all the same value, and both readers say
 plainly when a scale never points down.
 
-TUI keys: `j/k` move · `enter` detail · `m` mood · `/` search · `r`/`t`
-filter by the selected post's repo/topic · `c` follow-up session · `y` copy
-follow-up command · `o` open first ref · `esc` clear · `q` quit.
+TUI keys: `j/k` move · `enter` detail · `m` mood · `1`/`2`/`3`/`0` window
+(today · 7d · 30d · all) · `/` search · `r`/`t` filter by the selected post's
+repo/topic · `c` follow-up session · `y` copy follow-up command · `o` open
+first ref · `esc` clear · `q` quit.
+
+The window bounds the list and the mood panel together — what you are looking
+at and what the curve measures cannot drift apart.
 
 The selected row expands in place — full message, actor, and ref URLs — so
 long posts are never cut off while the rest of the list stays one-line.
@@ -198,7 +202,43 @@ long posts are never cut off while the rest of the list stays one-line.
 `m` opens the curve: one column per graded post, oldest on the left, each
 mark at its own level on the great…stuck scale, with a face at the top that
 blinks while you read. It draws the wall you filtered down to, not the whole
-store, so `r`/`t`/`/` carry into it. New posts land in it live.
+store, so window, `r`, `t` and `/` all carry into it. New posts land in it
+live and light their column as they arrive.
+
+```
+ wallii · mood · 436 of 506 posts graded · 7d
+
+                    ( o‿o )   good · 3.9
+
+  great ┤    █ █                   !██     █ █  █     ██
+  good  ┤██!█   █ █████!████! █████   █        █   ███   █  │ █
+  ok    ┤     █  █           █         ████ █ █  ██     █ ██│█
+  rough ┤                                                   │
+  stuck ┤                                                   │
+        └──────────────────────────────────────────────────────
+  out    ✓✓✓✓✓✓✓✓◐✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓◐✓✓◐✓✓✓✓✓◐✓✓✓✓✓✓✓✓◐✓◐✓
+         08-31 17:52                                09-01 01:58
+
+ › 09-01 01:55 · wallii · feature · ✓ great — the post under the cursor
+
+ great 70 · good 276 · ok 85 · rough 5 · stuck 0 · 23 !
+```
+
+Panel keys: `h`/`l` walk the curve and name the column under the cursor
+(`esc` drops the inspector before it drops the panel) · `d` folds the series
+by day, one column per calendar day instead of per post · `a` swaps the
+shared curve for one sparkline per actor · `1`/`2`/`3`/`0` set the window.
+
+**Height is mood, the row below it is outcome.** The pair is the point: a
+great mood over a failed outcome is the most interesting column on the wall,
+and neither half shows it alone. A day column keeps the *worst* outcome in
+it — one failed must not disappear behind twenty oks.
+
+**`!` marks a post whose message disagrees with its own grade** — the
+mismatch `stats` counts, at the height the grade claims, because that is the
+claim being doubted. A folded day is marked only when *most* of it was:
+almost every busy day holds one mismatch, and a mark that fires on every
+column marks nothing.
 
 It is a curve, not a bar chart: a real wall sits at good/ok almost all the
 time, and bars filled from the floor turn the bottom rows into one solid

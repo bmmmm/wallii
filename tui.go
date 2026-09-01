@@ -72,17 +72,17 @@ type tuiModel struct {
 	tailPath       string
 	tailOff        int64
 	note           string
+	// window bounds the whole view in time — "" (all), today, 7d, 30d. The
+	// list and the mood panel read the same one: what you are looking at and
+	// what the curve measures can never drift apart.
+	window string
 
-	// mood panel: the trail is folded on entry and on ingest, never per
-	// frame; the epoch orphans ticks left over from an earlier visit.
-	moodTrail wall.MoodSummary
-	moodFrame int
-	moodEpoch int
-	moodFlash int
+	mood moodState
 }
 
 func newTUI(dir string, events []wall.Event) *tuiModel {
 	m := &tuiModel{dir: dir, events: events, mode: modeList}
+	m.mood.cursor = moodNoCursor
 	m.tailPath = wall.CurrentFile(dir, time.Now())
 	m.tailOff = fileSize(m.tailPath)
 	m.refilter()
@@ -94,8 +94,12 @@ func (m *tuiModel) Init() tea.Cmd { return tickCmd() }
 func (m *tuiModel) refilter() {
 	m.view = m.view[:0]
 	q := strings.ToLower(m.search)
+	since := windowStart(m.window, time.Now())
 	for i := len(m.events) - 1; i >= 0; i-- {
 		e := m.events[i]
+		if !since.IsZero() && e.TS.Before(since) {
+			continue
+		}
 		if m.repoF != "" && !strings.EqualFold(e.Repo, m.repoF) {
 			continue
 		}
@@ -112,6 +116,37 @@ func (m *tuiModel) refilter() {
 	}
 	if m.cursor >= len(m.view) {
 		m.cursor = max(0, len(m.view)-1)
+	}
+}
+
+// windowKeys maps the number row onto the time windows: 1 today, 2 a week,
+// 3 a month, 0 the whole wall.
+var windowKeys = map[string]string{"1": "today", "2": "7d", "3": "30d", "0": ""}
+
+// windowStart resolves a window to its cutoff. Computed per filter run rather
+// than stored, so "today" still means today once midnight passes with the TUI
+// open — a stored cutoff would quietly keep showing yesterday.
+func windowStart(window string, now time.Time) time.Time {
+	switch window {
+	case "today":
+		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	case "7d":
+		return now.AddDate(0, 0, -7)
+	case "30d":
+		return now.AddDate(0, 0, -30)
+	}
+	return time.Time{}
+}
+
+// setWindow re-bounds the whole view: the list jumps to the newest post and
+// the panel refolds, because both now describe a different stretch of wall.
+func (m *tuiModel) setWindow(w string) {
+	m.window = w
+	m.cursor, m.scroll = 0, 0
+	m.refilter()
+	if m.mode == modeMood {
+		m.refreshMood()
+		m.mood.frame = 0 // a different series deserves its own sweep
 	}
 }
 
@@ -139,7 +174,11 @@ func (m *tuiModel) ingest() {
 	m.events = append(m.events, fresh...)
 	m.refilter()
 	if m.mode == modeMood {
+		before := m.mood.trail.Count
 		m.refreshMood()
+		if m.mood.trail.Count > before {
+			m.mood.flash = moodFlashFrames
+		}
 	}
 	if stick {
 		m.cursor, m.scroll = 0, 0
@@ -162,12 +201,12 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ingest()
 		return m, tickCmd()
 	case moodTickMsg:
-		if msg.epoch != m.moodEpoch || m.mode != modeMood {
+		if msg.epoch != m.mood.epoch || m.mode != modeMood {
 			return m, nil // a clock from an earlier visit — let it die
 		}
-		m.moodFrame++
-		if m.moodFlash > 0 {
-			m.moodFlash--
+		m.mood.frame++
+		if m.mood.flash > 0 {
+			m.mood.flash--
 		}
 		return m, moodTickCmd(msg.epoch)
 	case tea.KeyMsg:
@@ -217,13 +256,7 @@ func (m *tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.mode == modeMood {
-		switch k.String() {
-		case "esc", "q", "enter", "m":
-			m.mode = modeList
-		case "ctrl+c":
-			return m, tea.Quit
-		}
-		return m, nil
+		return m.handleMoodKey(k)
 	}
 	switch k.String() {
 	case "q", "ctrl+c":
@@ -246,6 +279,8 @@ func (m *tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "m":
 		return m, m.enterMood()
+	case "1", "2", "3", "0":
+		m.setWindow(windowKeys[k.String()])
 	case "/":
 		m.mode = modeSearch
 	case "esc":
@@ -431,6 +466,9 @@ func (m *tuiModel) header() string {
 	}
 	s := styleHeader.Render(fmt.Sprintf(" wallii · %d posts · %d today · %d repos", len(m.view), today, len(repos)))
 	var fl []string
+	if m.window != "" {
+		fl = append(fl, m.window)
+	}
 	if m.repoF != "" {
 		fl = append(fl, "repo="+m.repoF)
 	}
@@ -512,7 +550,7 @@ func (m *tuiModel) line(e wall.Event, sel bool) string {
 }
 
 func (m *tuiModel) footer() string {
-	hint := " j/k · enter detail · m mood · / search · r/t filter · c session · y copy cmd · o ref · esc clear · q quit"
+	hint := " j/k · enter detail · m mood · 1/2/3/0 window · / search · r/t filter · c session · y copy · o ref · esc clear · q quit"
 	if m.note != "" {
 		hint = " " + m.note + " ·" + hint
 	}

@@ -34,7 +34,7 @@ Usage:
   wallii challenge [-a actor] [--ref url]... <id> <question>
   wallii challenge --open [--actor x] [--json]
   wallii tail [-n count] [-f] [--ids] [--repo x] [--topic x] [--actor x] [--since d] [--grep s] [--json]
-  wallii tui                       # m opens the mood curve
+  wallii tui                       # m mood curve · 1/2/3/0 window
   wallii stats [--since d] [--repo x] [--actor x] [--json]
   wallii audit [--since d] [--repo x] [--json]
   wallii dash [-o path] [--since d] [--open]
