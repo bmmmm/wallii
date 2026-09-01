@@ -100,30 +100,38 @@ func (m *tuiModel) refilter() {
 	q := strings.ToLower(m.search)
 	since := windowStart(m.window, time.Now())
 	for i := len(m.events) - 1; i >= 0; i-- {
-		e := m.events[i]
-		if !since.IsZero() && e.TS.Before(since) {
-			continue
+		if m.passes(m.events[i], since, q, true) {
+			m.view = append(m.view, i)
 		}
-		if !m.dayF.IsZero() && !sameDay(e.TS.Local(), m.dayF) {
-			continue
-		}
-		if m.repoF != "" && !strings.EqualFold(e.Repo, m.repoF) {
-			continue
-		}
-		if m.topicF != "" && !strings.EqualFold(e.Topic, m.topicF) {
-			continue
-		}
-		if q != "" {
-			hay := strings.ToLower(e.Repo + " " + e.Topic + " " + e.Actor + " " + e.Msg + " " + strings.Join(e.Refs, " "))
-			if !strings.Contains(hay, q) {
-				continue
-			}
-		}
-		m.view = append(m.view, i)
 	}
 	if m.cursor >= len(m.view) {
 		m.cursor = max(0, len(m.view)-1)
 	}
+}
+
+// passes is the view's filter, in one place so the mood panel can use it
+// while skipping exactly one clause of it. withDayPin is that clause: see
+// panelEvents for why the panel does not honor the pin.
+func (m *tuiModel) passes(e wall.Event, since time.Time, q string, withDayPin bool) bool {
+	if !since.IsZero() && e.TS.Before(since) {
+		return false
+	}
+	if withDayPin && !m.dayF.IsZero() && !sameDay(e.TS.Local(), m.dayF) {
+		return false
+	}
+	if m.repoF != "" && !strings.EqualFold(e.Repo, m.repoF) {
+		return false
+	}
+	if m.topicF != "" && !strings.EqualFold(e.Topic, m.topicF) {
+		return false
+	}
+	if q != "" {
+		hay := strings.ToLower(e.Repo + " " + e.Topic + " " + e.Actor + " " + e.Msg + " " + strings.Join(e.Refs, " "))
+		if !strings.Contains(hay, q) {
+			return false
+		}
+	}
+	return true
 }
 
 // windowKeys maps the number row onto the time windows: 1 today, 2 a week,
@@ -291,8 +299,14 @@ func (m *tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.mode = modeSearch
 	case "esc":
-		m.search, m.repoF, m.topicF = "", "", ""
-		m.dayF = time.Time{}
+		// peel one layer: the day pin is the newest and narrowest filter, and
+		// dropping it along with everything else costs a search you may still
+		// want. A second esc clears the rest.
+		if !m.dayF.IsZero() {
+			m.dayF = time.Time{}
+		} else {
+			m.search, m.repoF, m.topicF = "", "", ""
+		}
 		m.refilter()
 	case "r":
 		if e, ok := m.selected(); ok {

@@ -143,26 +143,45 @@ func moodColor(score int) int {
 	return 0
 }
 
-// enterMood opens the panel. The cursor starts off the curve: reopening is a
-// request for the overview, not for the column you left behind.
+// enterMood opens the panel, keeping the cursor where it was. Jumping into a
+// column and coming back is the loop the panel exists for, and a cursor reset
+// on every return would make you find the column again each time. refold
+// clamps it if the series shrank meanwhile.
 func (m *tuiModel) enterMood() tea.Cmd {
 	m.mode = modeMood
 	m.mood.epoch++
 	m.mood.frame, m.mood.flash = 0, 0
-	m.mood.cursor = moodNoCursor
 	m.refreshMood()
 	return moodTickCmd(m.mood.epoch)
 }
 
-// refreshMood re-folds the trail from the events the list currently shows, so
-// window, repo, topic and search all carry into the panel: what you filtered
-// the wall down to is the wall whose mood you are reading.
+// refreshMood re-folds the trail from the events the panel should see, so
+// window, repo, topic and search all carry into it: what you filtered the
+// wall down to is the wall whose mood you are reading.
 func (m *tuiModel) refreshMood() {
+	m.mood.load(m.panelEvents())
+}
+
+// panelEvents is the list's filter minus the day pin, oldest first.
+//
+// The pin is the one filter the curve must not inherit. Every other filter is
+// something you asked the wall for; the pin is the result of navigating out
+// of the curve itself. Let it feed back in and the curve becomes the single
+// day you just opened — so the way back is a curve with one column on it, and
+// the second jump has nowhere to go. Skipping it keeps the loop open: jump
+// into a day, read it in the list, come back to the whole curve, jump into
+// the next. The header says the list is pinned so the two views cannot be
+// confused for each other.
+func (m *tuiModel) panelEvents() []wall.Event {
+	q := strings.ToLower(m.search)
+	since := windowStart(m.window, time.Now())
 	evs := make([]wall.Event, 0, len(m.view))
-	for i := len(m.view) - 1; i >= 0; i-- { // view is newest first, the trail runs oldest first
-		evs = append(evs, m.events[m.view[i]])
+	for _, e := range m.events { // events are oldest first, and so is the trail
+		if m.passes(e, since, q, false) {
+			evs = append(evs, e)
+		}
 	}
-	m.mood.load(evs)
+	return evs
 }
 
 func (m *tuiModel) handleMoodKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -244,10 +263,14 @@ func (m *tuiModel) jumpToPoint() bool {
 }
 
 func (m *tuiModel) viewMood() string {
-	return renderMood(m.mood, m.width, m.height, m.window, m.note)
+	pin := ""
+	if !m.dayF.IsZero() {
+		pin = m.dayF.Format("01-02")
+	}
+	return renderMood(m.mood, m.width, m.height, m.window, pin, m.note)
 }
 
-func renderMood(st moodState, width, height int, window, note string) string {
+func renderMood(st moodState, width, height int, window, pin, note string) string {
 	blink := st.frame%moodBlinkEvery < moodBlinkFrames
 	// a short window spends its lines on the curve, not on air around it
 	gap := ""
@@ -255,7 +278,7 @@ func renderMood(st moodState, width, height int, window, note string) string {
 		gap = "\n"
 	}
 	var b strings.Builder
-	b.WriteString(moodHeader(st, width, window) + "\n" + gap)
+	b.WriteString(moodHeader(st, width, window, pin) + "\n" + gap)
 
 	if st.trail.Count == 0 {
 		b.WriteString(center(styleHeader.Render(moodFaceNone), width) + "\n" + gap)
@@ -292,13 +315,16 @@ func fit(body string, height int) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func moodHeader(st moodState, width int, window string) string {
+func moodHeader(st moodState, width int, window, pin string) string {
 	left := fmt.Sprintf(" wallii · mood · %d of %d posts graded", st.trail.Count, st.trail.Total)
 	if st.daily {
 		left += " · " + plural(len(st.drawn), "day")
 	}
 	if window != "" {
 		left += " · " + window
+	}
+	if pin != "" {
+		left += " · list pinned to " + pin
 	}
 	if st.byActor {
 		left += " · by actor"

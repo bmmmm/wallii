@@ -31,7 +31,7 @@ func moodStateOf(evs []wall.Event, frame int) moodState {
 	return st
 }
 
-func render(st moodState, w, h int) string { return renderMood(st, w, h, "", "") }
+func render(st moodState, w, h int) string { return renderMood(st, w, h, "", "", "") }
 
 // line returns the panel row whose label column names lvl.
 func line(t *testing.T, panel, lvl string) string {
@@ -514,7 +514,7 @@ func TestMoodPanelNeverExceedsTheWidth(t *testing.T) {
 
 	for name, st := range views {
 		for _, w := range []int{40, 64, 80, 100, 200} {
-			for i, l := range strings.Split(renderMood(st, w, 30, "30d", ""), "\n") {
+			for i, l := range strings.Split(renderMood(st, w, 30, "30d", "03-04", ""), "\n") {
 				if got := lipgloss.Width(l); got > w {
 					t.Errorf("%s at width %d: line %d is %d wide: %q", name, w, i, got, l)
 				}
@@ -619,5 +619,100 @@ func TestMoodEnterWithoutCursorJustCloses(t *testing.T) {
 	}
 	if !m.dayF.IsZero() || m.note != "" {
 		t.Errorf("enter without a cursor changed the list: dayF %v, note %q", m.dayF, m.note)
+	}
+}
+
+// ---- the loop: jump in, read, come back, jump again ----
+
+func twoDayWall(t *testing.T) *tuiModel {
+	t.Helper()
+	d := time.Date(2026, 3, 4, 9, 0, 0, 0, time.Local)
+	var evs []wall.Event
+	for i := 0; i < 6; i++ {
+		day := 0
+		if i >= 3 {
+			day = 1
+		}
+		evs = append(evs, wall.Event{TS: d.AddDate(0, 0, day).Add(time.Duration(i) * time.Hour),
+			Repo: "alpha", Msg: fmt.Sprintf("post %d", i), Mood: "good"})
+	}
+	m := newTUI(t.TempDir(), evs)
+	m.width, m.height = 80, 26
+	return m
+}
+
+// The pin is the one filter the curve must not inherit: let it feed back in
+// and the way back is a curve with one column on it, so the second jump has
+// nowhere to go.
+func TestMoodPanelKeepsTheWholeCurveWhileTheListIsPinned(t *testing.T) {
+	m := twoDayWall(t)
+	m.handleKey(key("m"))
+	m.handleMoodKey(key("d"))
+	m.handleMoodKey(key("h")) // newest day
+	m.handleMoodKey(key("h")) // the older one
+	m.handleMoodKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.dayF.IsZero() || len(m.view) != 3 {
+		t.Fatalf("jump did not pin the list: dayF %v, %d posts", m.dayF, len(m.view))
+	}
+
+	m.handleKey(key("m")) // back into the panel
+	if len(m.mood.drawn) != 2 {
+		t.Errorf("curve collapsed to %d column(s) — the pin fed back into the panel", len(m.mood.drawn))
+	}
+	if m.mood.trail.Count != 6 {
+		t.Errorf("curve covers %d posts, want all 6", m.mood.trail.Count)
+	}
+	if pin := m.viewMood(); !strings.Contains(pin, "list pinned to") {
+		t.Errorf("panel does not say the list is pinned:\n%s", pin)
+	}
+	// and the second jump goes somewhere else
+	m.handleMoodKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.dayF.IsZero() {
+		t.Error("second jump lost the pin entirely")
+	}
+}
+
+// Jumping in and coming back is the loop the panel exists for, so the cursor
+// has to survive it — otherwise you find the column again every time.
+func TestMoodCursorSurvivesTheRoundTrip(t *testing.T) {
+	m := twoDayWall(t)
+	m.handleKey(key("m"))
+	m.handleMoodKey(key("h"))
+	m.handleMoodKey(key("h"))
+	want := m.mood.cursor
+	if want == moodNoCursor {
+		t.Fatal("no cursor to carry")
+	}
+	m.handleMoodKey(tea.KeyMsg{Type: tea.KeyEnter}) // into the list
+	m.handleKey(key("m"))                           // and back
+	if m.mood.cursor != want {
+		t.Errorf("cursor came back at %d, want %d", m.mood.cursor, want)
+	}
+}
+
+// esc peels one layer: the pin is the newest and narrowest filter, and
+// dropping it together with a search costs work you may still want.
+func TestListEscPeelsThePinBeforeTheRest(t *testing.T) {
+	m := twoDayWall(t)
+	m.search = "post"
+	m.refilter()
+	m.handleKey(key("m"))
+	m.handleMoodKey(key("d"))
+	m.handleMoodKey(key("h"))
+	m.handleMoodKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.dayF.IsZero() {
+		t.Fatal("no pin to peel")
+	}
+
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if !m.dayF.IsZero() {
+		t.Error("first esc did not drop the pin")
+	}
+	if m.search != "post" {
+		t.Errorf("first esc also cleared the search (%q) — one layer at a time", m.search)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.search != "" {
+		t.Errorf("second esc left the search %q", m.search)
 	}
 }

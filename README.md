@@ -234,7 +234,16 @@ of per post · `a` swaps the shared curve for one sparkline per actor ·
 a post column it drops you into the list with that post selected — expanded
 in place, with its refs, ready for `c` or `o`. On a folded day column it pins
 the list to that day: the question a day raises is "what happened then", and
-the answer is that day's posts and no others. `esc` in the list unpins it.
+the answer is that day's posts and no others.
+
+The pin stays until you drop it, and `m` takes you back to the **whole**
+curve, cursor where you left it — so the loop is jump in, read, come back,
+jump into the next one. The day pin is the one filter the curve does not
+inherit (the header says so while it holds): every other filter is something
+you asked the wall for, while the pin is the result of navigating out of the
+curve itself, and letting it feed back in would leave the way back a curve
+with one column on it. `esc` in the list peels one layer — the pin first,
+your search and repo/topic filters on the next press.
 
 **Height is mood, the row below it is outcome.** The pair is the point: a
 great mood over a failed outcome is the most interesting column on the wall,
