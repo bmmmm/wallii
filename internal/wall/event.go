@@ -21,6 +21,28 @@ const (
 	MaxRefRunes   = 512
 )
 
+// The grader field. Every scale on this wall has a socially right answer,
+// and after 481 posts none of them had reached its low end: mood asks how
+// the road felt, and "good" is what a road feels like when someone is
+// grading. --grader asks something with no flattering answer — what the
+// cheap path was when the work got hard, taken or not — and stores exactly
+// the words it was given. "none — the skip guards a missing binary" is as
+// complete an answer as a confession, and as short.
+//
+// Non-goals, permanently. No bool: "taken yes/no" is mood's failure mode in
+// one bit, and a ratio anyone will want to hold at zero. No enum, no word
+// list. No marker regex over the text: that restores the bool through the
+// back door, and posters learn to write around it. The field is never read
+// by the lint, the challenge, or the digest — it is quoted, never judged.
+// The only bad answer is the empty one, and emptiness shows in stats as
+// absence, never as a score.
+//
+// The cap shares MaxMsgRunes' number, not its identity, so the two can
+// drift apart. It is not MaxFieldRunes: the shortest honest example is 62
+// runes, a cap with no air produces rejects, and the cheapest way out of a
+// reject is to drop the field.
+const MaxGraderRunes = 140
+
 // Registration kinds: an empty Kind is a regular post; attach/detach events
 // drive the registry view (Attachments) but live in the same append-only log.
 // React and challenge events answer another event (Parent holds its ID): a
@@ -93,6 +115,10 @@ type Event struct {
 	TookS   int64     `json:"took_s,omitempty"`  // wall-clock duration of the work, seconds
 	TookSrc string    `json:"took_src,omitempty"`
 	Mood    string    `json:"mood,omitempty"` // great | good | ok | rough | stuck
+	// Grader is the cheap path the poster saw when the work got hard, taken
+	// or not, in the poster's own words. Free text under MaxGraderRunes —
+	// see the non-goals above the constant.
+	Grader string `json:"grader,omitempty"`
 	// PulseMS is what the API answered in while this post was written — the
 	// working conditions the grade above it was earned under. PulseSrc says
 	// who measured it, and carries PulseNone when nothing answered at all.
@@ -104,6 +130,11 @@ type Event struct {
 // change after Append. Derived, not stored: the NDJSON lines stay exactly
 // what they were, and every reader computes the same handle. Seven hex chars
 // keep it typeable; FindByID accepts unique prefixes anyway.
+//
+// The hash runs over TS, Actor, Repo and Msg — and must never grow. Grader,
+// like every field added after the first stored line, stays out: widening
+// the input changes the ID of every event already on the wall, and with it
+// breaks every Parent reference a react or challenge has stored.
 func (e Event) ID() string {
 	h := sha256.Sum256([]byte(e.TS.UTC().Format(time.RFC3339Nano) + "\x00" + e.Actor + "\x00" + e.Repo + "\x00" + e.Msg))
 	return hex.EncodeToString(h[:])[:7]
@@ -145,9 +176,10 @@ func (e Event) Validate() error {
 			return fmt.Errorf("parent %q is not an event ID (lowercase hex, ≥4 chars)", e.Parent)
 		}
 		// dialogue carries no work telemetry: a grade on a reply would leak
-		// into nothing (stats skips kinds) and only invite confusion
-		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 || e.PulseSrc != "" {
-			return fmt.Errorf("a %s is dialogue — outcome/mood/took/pulse belong on posts", e.Kind)
+		// into nothing (stats skips kinds) and only invite confusion. The
+		// grader is about the work too — a reply has no cheap path to name.
+		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 || e.PulseSrc != "" || e.Grader != "" {
+			return fmt.Errorf("a %s is dialogue — outcome/mood/took/pulse/grader belong on posts", e.Kind)
 		}
 	default:
 		return fmt.Errorf("unknown kind %q — one of attach, detach, react, challenge, or empty", e.Kind)
@@ -159,6 +191,14 @@ func (e Event) Validate() error {
 	}
 	if e.Mood != "" && MoodScore(e.Mood) == 0 {
 		return fmt.Errorf("unknown mood %q — one of %s", e.Mood, strings.Join(Moods, ", "))
+	}
+	// Form only, never content: one line, under the cap. What the words say
+	// is the reader's business.
+	if hasControl(e.Grader) {
+		return errors.New("grader must be a single line of plain text (no newlines or control characters)")
+	}
+	if n := utf8.RuneCountInString(e.Grader); n > MaxGraderRunes {
+		return fmt.Errorf("grader is %d runes, max %d — the cheap path in one breath, not the whole story", n, MaxGraderRunes)
 	}
 	if e.TookS < 0 {
 		return fmt.Errorf("took is negative (%ds) — durations only", e.TookS)

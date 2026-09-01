@@ -112,3 +112,55 @@ func TestValidateFieldLengths(t *testing.T) {
 		t.Error("oversize repo accepted")
 	}
 }
+
+// The grader is free text under a cap of its own: control characters would
+// break the one-line store, and the cap has to leave air — the shortest
+// honest example is already 62 runes, and a reject teaches dropping the
+// field. A refusal is as valid a value as a confession.
+func TestValidateGraderBoundary(t *testing.T) {
+	e := validEvent()
+	e.Grader = strings.Repeat("ä", MaxGraderRunes)
+	if err := e.Validate(); err != nil {
+		t.Fatalf("%d-rune grader rejected: %v", MaxGraderRunes, err)
+	}
+	e.Grader = strings.Repeat("ä", MaxGraderRunes+1)
+	if err := e.Validate(); err == nil {
+		t.Fatalf("%d-rune grader accepted", MaxGraderRunes+1)
+	}
+	e.Grader = "CI wanted green\x1b[2J— loosening the assert would have done"
+	if err := e.Validate(); err == nil {
+		t.Fatal("grader with an escape sequence accepted")
+	}
+	e.Grader = "none — the skip guards a missing binary, the assertions are unchanged"
+	if err := e.Validate(); err != nil {
+		t.Fatalf("a refusal is a complete answer, rejected: %v", err)
+	}
+}
+
+// Dialogue carries no work telemetry, and the grader is about the work: a
+// reply has no cheap path to name.
+func TestValidateGraderIsNotDialogue(t *testing.T) {
+	for _, kind := range []string{KindReact, KindChallenge} {
+		e := validEvent()
+		e.Kind, e.Parent = kind, "abcd123"
+		if err := e.Validate(); err != nil {
+			t.Fatalf("plain %s rejected: %v", kind, err)
+		}
+		e.Grader = "considered agreeing just to end the thread"
+		if err := e.Validate(); err == nil {
+			t.Errorf("%s with a grader accepted — grader belongs on posts", kind)
+		}
+	}
+}
+
+// Every stored Parent reference is a hash over TS/Actor/Repo/Msg. A field
+// that joined the hash later would move every ID on the wall, so the grader
+// must stay out of it — this pins that it does.
+func TestIDIgnoresGrader(t *testing.T) {
+	a := validEvent()
+	b := a
+	b.Grader = "loosened nothing, but thought about it for twenty minutes"
+	if a.ID() != b.ID() {
+		t.Fatalf("grader changed the ID: %s vs %s — every stored parent reference would break", a.ID(), b.ID())
+	}
+}
