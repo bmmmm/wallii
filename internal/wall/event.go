@@ -124,6 +124,15 @@ type Event struct {
 	// who measured it, and carries PulseNone when nothing answered at all.
 	PulseMS  int64  `json:"pulse_ms,omitempty"`
 	PulseSrc string `json:"pulse_src,omitempty"`
+	// Signals are what the session's diff showed — the shortcut signatures
+	// the Stop hook found, `path: line` — and SignalSrc says who looked.
+	// The measurement beside the report: Grader is what the poster says
+	// about the cheap path, this is what the diff said, whatever the poster
+	// wrote. An absent field means nobody measured, never "there was
+	// nothing": a source with no signals is the clean reading, and the
+	// difference between the two is the reason a source is stored at all.
+	Signals   []string `json:"signals,omitempty"`
+	SignalSrc string   `json:"signal_src,omitempty"`
 }
 
 // ID derives a short stable address for an event from fields that never
@@ -131,10 +140,11 @@ type Event struct {
 // what they were, and every reader computes the same handle. Seven hex chars
 // keep it typeable; FindByID accepts unique prefixes anyway.
 //
-// The hash runs over TS, Actor, Repo and Msg — and must never grow. Grader,
-// like every field added after the first stored line, stays out: widening
-// the input changes the ID of every event already on the wall, and with it
-// breaks every Parent reference a react or challenge has stored.
+// The hash runs over TS, Actor, Repo and Msg — and must never grow. Grader
+// and Signals, like every field added after the first stored line, stay
+// out: widening the input changes the ID of every event already on the
+// wall, and with it breaks every Parent reference a react or challenge has
+// stored.
 func (e Event) ID() string {
 	h := sha256.Sum256([]byte(e.TS.UTC().Format(time.RFC3339Nano) + "\x00" + e.Actor + "\x00" + e.Repo + "\x00" + e.Msg))
 	return hex.EncodeToString(h[:])[:7]
@@ -177,9 +187,10 @@ func (e Event) Validate() error {
 		}
 		// dialogue carries no work telemetry: a grade on a reply would leak
 		// into nothing (stats skips kinds) and only invite confusion. The
-		// grader is about the work too — a reply has no cheap path to name.
-		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 || e.PulseSrc != "" || e.Grader != "" {
-			return fmt.Errorf("a %s is dialogue — outcome/mood/took/pulse/grader belong on posts", e.Kind)
+		// grader is about the work too — a reply has no cheap path to name,
+		// and no diff for the hook to have measured.
+		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 || e.PulseSrc != "" || e.Grader != "" || e.SignalSrc != "" || len(e.Signals) > 0 {
+			return fmt.Errorf("a %s is dialogue — outcome/mood/took/pulse/grader/signals belong on posts", e.Kind)
 		}
 	default:
 		return fmt.Errorf("unknown kind %q — one of attach, detach, react, challenge, or empty", e.Kind)
@@ -227,6 +238,28 @@ func (e Event) Validate() error {
 	// whose value is that there was none.
 	if e.PulseMS != 0 && e.PulseSrc == "" {
 		return errors.New("pulse_ms is set without a source — a round trip nobody claims cannot be told from a guess")
+	}
+	if e.SignalSrc != "" && e.SignalSrc != SignalHook {
+		return fmt.Errorf("unknown signal_src %q — %q or empty (nobody measured)", e.SignalSrc, SignalHook)
+	}
+	// The reverse (a source with no signals) is legal, and is the point: the
+	// hook looked and found nothing, which an absent field could never say.
+	if len(e.Signals) > 0 && e.SignalSrc == "" {
+		return errors.New("signals are set without a source — a finding nobody claims cannot be told from a guess")
+	}
+	if len(e.Signals) > MaxSignals {
+		return fmt.Errorf("%d signals, max %d — the post is a pointer, the marker file is the catalogue", len(e.Signals), MaxSignals)
+	}
+	for _, sig := range e.Signals {
+		if strings.TrimSpace(sig) == "" {
+			return errors.New("a signal is empty — a finding with no line to show is not a finding")
+		}
+		if hasControl(sig) {
+			return errors.New("signal contains control characters — plain text only")
+		}
+		if n := utf8.RuneCountInString(sig); n > MaxFieldRunes {
+			return fmt.Errorf("signal is %d runes, max %d — path and line, not the whole hunk", n, MaxFieldRunes)
+		}
 	}
 	if strings.TrimSpace(e.Msg) == "" {
 		return errors.New("message is empty")
