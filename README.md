@@ -590,12 +590,14 @@ shaped the fields above, one level up. The hook below is what fires.
 ### Claude Code hook
 
 `hooks/wall-post-remind.sh` is a Stop hook: when commits have piled up in a
-repo since that repo's last post, it names them before the session goes idle.
-It asks only whether the work is visible, never what the post says — a gate on
-the message buys clean ratios by making the writing duller. It reports once per
-HEAD, so choosing not to post is respected until the next commit arrives, and
-it resolves the repo name the same way `post` does, so session worktrees are
-measured against the checkout they belong to.
+repo since that repo's last post, it names them before the session goes idle;
+when the session's diff carries a line that reads like a way around a check,
+it shows the line; when a session sat idle without commit or post, it asks
+where the time went. It asks only whether the work is visible, never what the
+post says — a gate on the message buys clean ratios by making the writing
+duller. Each finding is reported once, so choosing not to post is respected
+until the next one arrives, and it resolves the repo name the same way `post`
+does, so session worktrees are measured against the checkout they belong to.
 
 ```sh
 ln -s "$PWD/hooks/wall-post-remind.sh" ~/.claude/hooks/wall-post-remind.sh
@@ -611,9 +613,34 @@ Then add it under `hooks.Stop` in `~/.claude/settings.json`:
 }
 ```
 
-Threshold via `WALLII_REMIND_AFTER` (default 3 — the smallest count that cannot
-still be a single unit of work in progress). Silent when wallii is not
-installed, outside a git repo, or when the repo is current.
+Three triggers, checked in this order:
+
+- **Signature** — fires on an occurrence, not on silence. The diff since the
+  session started (the last commit before the session's first Stop, up to the
+  working tree, untracked files included) carries an added line that reads
+  like a way around a check: a test switched off (`t.Skip(`,
+  `pytest.mark.skip`, `it.skip(`, `#[ignore]`), a named gate told to pass
+  (`go test … || true`, `continue-on-error: true`, `--no-verify`), a soundness
+  checker overruled (`type: ignore`, `@ts-ignore`, `//nolint`), or a test
+  declaration commented out. A skip whose reason names the environment — an
+  env var, `testing.Short()`, "requires docker" — is a guard, not a shortcut,
+  and stays quiet. The block shows the line and asks for the `--grader`
+  sentence beside it; `none — …` is a complete answer. It runs first because
+  the post it asks for silences the other two, and the reverse does not hold.
+  Calibrated at about one hit per 140 commits; it catches the known forms
+  only, so a clean count is not proof that nothing was cut short.
+  `WALLII_REMIND_SHORTCUTS` is the number of new signature lines it takes to
+  fire (default 1; `0` switches it off). Paths under `vendor`, `node_modules`,
+  `third_party` and lock files are excluded.
+- **Idle** — `WALLII_REMIND_IDLE_MIN` minutes (default 45) into a session with
+  zero commits and nothing on the wall from this actor: a dead end is a
+  finished unit of work too. Asks once per session; `0` switches it off.
+- **Commits** — `WALLII_REMIND_AFTER` commits (default 3 — the smallest count
+  that cannot still be a single unit of work in progress) since the repo's
+  last post. Reports once per HEAD.
+
+Silent when wallii is not installed, outside a git repo, or when the repo is
+current.
 
 ### Claude Code skill
 
