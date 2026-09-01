@@ -83,17 +83,17 @@ func TestPostWithoutProbingCarriesNoReading(t *testing.T) {
 	}
 }
 
-// A grade earned in a four-second API is not the same grade. The stats line
+// A grade earned in an eight-second API is not the same grade. The stats line
 // says so, and names what the wait costs the scale.
 func TestAPILineReportsTheConditions(t *testing.T) {
-	got := apiLine(wall.Stats{PulseTurns: 4, PulseTurnTotalMS: 180_000, PulseDown: 2})
-	for _, want := range []string{"45s per turn across 4 posts", "takes 1.5 off a mood", "2 written with no api"} {
+	got := apiLine(wall.Stats{PulseTurns: 4, PulseTurnTotalMS: 34_000, PulseDown: 2})
+	for _, want := range []string{"8.5s per turn across 4 posts", "takes 1.5 off a mood", "2 written with no api"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("api line %q is missing %q", got, want)
 		}
 	}
-	if fast := apiLine(wall.Stats{PulseTurns: 9, PulseTurnTotalMS: 45_000}); strings.Contains(fast, "off a mood") {
-		t.Errorf("a 5s turn claimed a drag: %q", fast)
+	if fast := apiLine(wall.Stats{PulseTurns: 9, PulseTurnTotalMS: 13_500}); strings.Contains(fast, "off a mood") {
+		t.Errorf("a 1.5s turn claimed a drag: %q", fast)
 	}
 	if one := apiLine(wall.Stats{PulseTurns: 1, PulseTurnTotalMS: 17_000}); !strings.Contains(one, "across 1 post") || strings.Contains(one, "1 posts") {
 		t.Errorf("api line %q counts one post as several", one)

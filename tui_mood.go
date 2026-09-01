@@ -667,8 +667,29 @@ const (
 	// The second axis on the right: the latency line's own unit, because a
 	// height in mood steps is not a number anybody can read back as seconds.
 	moodAxisW  = 4                 // "≤15s"
-	moodRightW = 1 + 2 + moodAxisW // " ├ 15s"
+	moodRightW = 1 + 2 + moodAxisW // " ├ 15s" — a floor; moodPulseSpanW may widen it
 )
+
+// moodPulseSpanW is the room the api band's range label needs. The band is
+// scaled to the window's own min…max, so the label is two durations and a
+// dash, and the widest either end can print is the widest any measured column
+// prints. It is reserved in the column budget rather than clipped afterwards:
+// a relative shape whose numbers got cut off is a picture of nothing, which is
+// the one thing the band exists not to be. It was clipped — `log 2.` — for as
+// long as the band has existed, because the gutter was sized for the axis
+// label alone and the band sits three characters further right than it fits.
+func moodPulseSpanW(pts []wall.MoodPoint) int {
+	w := 0
+	for _, p := range pts {
+		if p.PulseN > 0 {
+			w = max(w, len(pulseDur(time.Duration(p.PulseMS)*time.Millisecond)))
+		}
+	}
+	if w == 0 {
+		return 0
+	}
+	return 2 + len("log ") + 2*w + 1 // "  log <lo>–<hi>"
+}
 
 // moodVisible picks the stretch of the series the window can show: the newest
 // columns, unless the cursor sits left of them, in which case it anchors the
@@ -676,7 +697,9 @@ const (
 func moodVisible(st moodState, width int) (pts []wall.MoodPoint, start, cols int) {
 	right := 0
 	if st.trail.PulseTurns > 0 {
-		right = moodRightW
+		// one gutter, two labels: the line's seconds axis and the band's
+		// range land in the same column, so it is sized for the wider
+		right = max(moodRightW, moodPulseSpanW(st.drawn))
 	}
 	cols = max(width-moodLeft-right-1, 4)
 	start = max(len(st.drawn)-cols, 0)

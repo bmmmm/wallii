@@ -510,9 +510,14 @@ func TestMoodPanelNeverExceedsTheWidth(t *testing.T) {
 	daily.load(evs)
 	actors := base
 	actors.byActor = true
-	// the latency line adds a second axis on the right, which is the easiest
-	// way to push a row past the window
+	// the latency line adds a second axis on the right and the band adds its
+	// range beside it, which is the easiest way to push a row past the window.
+	// The turns have to spread: one repeated value prints "log 45s" and never
+	// reaches the widest label the gutter has to hold.
 	lined := moodStateOf(turnPosts(45_000, strings.Fields(strings.Repeat("good ", 200))...), 99)
+	for i := range lined.drawn {
+		lined.drawn[i].PulseMS = int64(2_800 + (i%17)*1_150) // 2.8s … 21.2s
+	}
 	lined.pulse = wall.Pulse{At: time.Now(), OK: true, RTT: 90 * time.Second, Src: wall.PulseSession}
 	views := map[string]moodState{"posts": base, "cursor": cursored, "daily": daily, "actors": actors, "lined": lined}
 
@@ -753,14 +758,14 @@ func TestMoodPanelWithoutAPulseSaysNothingAboutTheAPI(t *testing.T) {
 }
 
 // Latency only ever subtracts, and the panel shows the subtraction: a wall of
-// nothing but great, read through a four-second API, is not a great day.
+// nothing but great, read through a twelve-second API, is not a great day.
 // The window's own waiting drags its own grades: both halves of the head come
 // off the same posts, so the arithmetic can be checked against them.
 func TestMoodPanelDragsTheHeadWithTheWindowsWaiting(t *testing.T) {
-	st := pulsed(turnPosts(60_000, "great", "great", "great"),
+	st := pulsed(turnPosts(12_000, "great", "great", "great"),
 		wall.Pulse{At: time.Now(), OK: true, RTT: 2 * time.Second, Src: wall.PulseSession})
 	panel := render(st, 110, 26)
-	for _, want := range []string{"ok · 3.0", "window 5.0", "− 2.0", "api ~1m over 3 posts", "now 2s"} {
+	for _, want := range []string{"ok · 3.0", "window 5.0", "− 2.0", "api ~12s over 3 posts", "now 2s"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("head is missing %q:\n%s", want, panel)
 		}
@@ -787,13 +792,13 @@ func TestMoodPanelLiveReadingDoesNotDragTheWindow(t *testing.T) {
 
 // A fast API is not a compliment: it leaves the grades exactly as posted.
 func TestMoodPanelFastAPILeavesTheGradesAlone(t *testing.T) {
-	st := pulsed(turnPosts(4_000, "good", "good", "ok"),
-		wall.Pulse{At: time.Now(), OK: true, RTT: 4 * time.Second, Src: wall.PulseSession})
+	st := pulsed(turnPosts(1_500, "good", "good", "ok"),
+		wall.Pulse{At: time.Now(), OK: true, RTT: 1500 * time.Millisecond, Src: wall.PulseSession})
 	panel := render(st, 110, 26)
 	if !strings.Contains(panel, "good · 3.7") {
 		t.Errorf("a fast api moved the wall's average:\n%s", panel)
 	}
-	if !strings.Contains(panel, "api ~4s over 3 posts") || strings.Contains(panel, "−") {
+	if !strings.Contains(panel, "api ~1.5s over 3 posts") || strings.Contains(panel, "−") {
 		t.Errorf("receipt = want the turn time and no drag:\n%s", panel)
 	}
 }
@@ -925,10 +930,10 @@ func TestPulseLineSitsAtTheDrag(t *testing.T) {
 		ms   int64
 		want string // the row label the line belongs on
 	}{
-		{4_000, "great"},   // drag 0 → the top of the scale
-		{30_000, "good"},   // drag 1
-		{60_000, "ok"},     // drag 2
-		{120_000, "rough"}, // drag 3
+		{1_500, "great"},  // drag 0 → the top of the scale
+		{5_000, "good"},   // drag 1
+		{12_000, "ok"},    // drag 2
+		{30_000, "rough"}, // drag 3
 	}
 	for _, c := range cases {
 		panel := render(moodStateOf(turnPosts(c.ms, "ok", "ok", "ok"), 99), 100, 30)
@@ -943,7 +948,7 @@ func TestPulseLineSitsAtTheDrag(t *testing.T) {
 // an interpolated stretch would draw a measurement that was never taken.
 func TestPulseLineLeavesGapsWhereNothingWasMeasured(t *testing.T) {
 	evs := moodPosts("ok", "ok", "ok")
-	evs[0].PulseMS, evs[0].PulseSrc = 60_000, wall.PulseSession // drag 2 → the "ok" row
+	evs[0].PulseMS, evs[0].PulseSrc = 12_000, wall.PulseSession // drag 2 → the "ok" row
 	// evs[1] and evs[2] carry nothing
 	panel := render(moodStateOf(evs, 99), 100, 30)
 	row := line(t, panel, "ok")
@@ -987,8 +992,8 @@ func TestPulseLineNamesItsCoverage(t *testing.T) {
 // A day column folds many turns; the line follows the day's mean.
 func TestPulseLineFollowsTheDayFold(t *testing.T) {
 	evs := moodPosts("ok", "ok")
-	evs[0].PulseMS, evs[0].PulseSrc = 30_000, wall.PulseSession
-	evs[1].PulseMS, evs[1].PulseSrc = 90_000, wall.PulseSession // mean 60s → drag 2
+	evs[0].PulseMS, evs[0].PulseSrc = 8_000, wall.PulseSession
+	evs[1].PulseMS, evs[1].PulseSrc = 16_000, wall.PulseSession // mean 12s → drag 2
 	st := moodStateOf(evs, 99)
 	st.daily = true
 	st.refold()
@@ -1000,7 +1005,7 @@ func TestPulseLineFollowsTheDayFold(t *testing.T) {
 
 // The line's height is a continuous quantity laid over discrete rows, so the
 // glyph carries the third of a row the position falls in. Snapping to row
-// centers would put a 16s window and a 29s one in the same place.
+// centers would put a 2.5s window and a 4.9s one in the same place.
 func TestPulseLinePositionIsProportional(t *testing.T) {
 	at := func(ms int64) (int, string) {
 		p := wall.MoodPoint{PulseMS: ms, PulseN: 1}
@@ -1012,10 +1017,10 @@ func TestPulseLinePositionIsProportional(t *testing.T) {
 		t.Fatalf("%dms lands on no row", ms)
 		return 0, ""
 	}
-	// 15s is drag 0 (the top row), 30s is drag 1 (one row down): everything
+	// 2s is drag 0 (the top row), 5s is drag 1 (one row down): everything
 	// between has to appear between them, and in order
 	var last int
-	for i, ms := range []int64{15_000, 20_000, 25_000, 30_000} {
+	for i, ms := range []int64{2_000, 3_000, 4_000, 5_000} {
 		sr, g := at(ms)
 		pos := sr*3 + map[string]int{moodLineTop: 0, moodLine: 1, moodLineBot: 2}[g]
 		if i > 0 && pos <= last {
@@ -1023,12 +1028,12 @@ func TestPulseLinePositionIsProportional(t *testing.T) {
 		}
 		last = pos
 	}
-	// and the anchors land on their own rows: 15s at great, 30s at good,
-	// 60s at ok, 120s at rough
+	// and the anchors land on their own rows: 2s at great, 5s at good,
+	// 12s at ok, 30s at rough
 	for _, c := range []struct {
 		ms  int64
 		row int
-	}{{15_000, 0}, {30_000, 1}, {60_000, 2}, {120_000, 3}} {
+	}{{2_000, 0}, {5_000, 1}, {12_000, 2}, {30_000, 3}} {
 		if sr, g := at(c.ms); sr != c.row || g != moodLine {
 			t.Errorf("%dms sits on row %d as %q, want row %d dead center", c.ms, sr, g, c.row)
 		}
@@ -1038,14 +1043,14 @@ func TestPulseLinePositionIsProportional(t *testing.T) {
 // The second axis names the line's unit. A height in mood steps is not a
 // number anyone can read back as seconds.
 func TestPulseAxisLabelsTheSeconds(t *testing.T) {
-	want := map[int]string{5: "≤15s", 4: "30s", 3: "1m", 2: "2m", 1: ""}
+	want := map[int]string{5: "≤2s", 4: "5s", 3: "12s", 2: "30s", 1: ""}
 	for lvl, w := range want {
 		if got := pulseAxisLabel(lvl); got != w {
 			t.Errorf("axis label at level %d = %q, want %q", lvl, got, w)
 		}
 	}
-	panel := render(moodStateOf(turnPosts(30_000, "ok", "ok"), 99), 100, 30)
-	for _, w := range []string{"├ ≤15s", "├ 30s", "├ 1m", "├ 2m"} {
+	panel := render(moodStateOf(turnPosts(5_000, "ok", "ok"), 99), 100, 30)
+	for _, w := range []string{"├ ≤2s", "├ 5s", "├ 12s", "├ 30s"} {
 		if !strings.Contains(panel, w) {
 			t.Errorf("panel is missing the axis mark %q:\n%s", w, panel)
 		}
@@ -1078,11 +1083,11 @@ func varied(ms ...int64) []wall.Event {
 	return evs
 }
 
-// The drag saturates under 15s on purpose — none of that waiting reaches a
-// grade — so a window that swings five-fold draws a flat line and needs a
-// second mark to show the swing at all.
+// The drag saturates under the first anchor on purpose — none of that waiting
+// reaches a grade — so a window that swings six-fold below it draws a flat
+// line and needs a second mark to show the swing at all.
 func TestPulseBandShowsTheSwingTheLineCannot(t *testing.T) {
-	panel := render(moodStateOf(varied(1800, 9000, 2400, 5500, 2000, 8800), 99), 100, 30)
+	panel := render(moodStateOf(varied(300, 1900, 500, 1200, 400, 1800), 99), 100, 30)
 
 	heights := map[rune]bool{}
 	for _, r := range bandRow(t, panel) {
@@ -1091,10 +1096,10 @@ func TestPulseBandShowsTheSwingTheLineCannot(t *testing.T) {
 		}
 	}
 	if len(heights) < 3 {
-		t.Errorf("a five-fold swing drew %d distinct heights:\n%s", len(heights), panel)
+		t.Errorf("a six-fold swing drew %d distinct heights:\n%s", len(heights), panel)
 	}
 	// the line meanwhile is flat at the top, and says why
-	if !strings.Contains(panel, "all under 15s") {
+	if !strings.Contains(panel, "all under 2s") {
 		t.Errorf("the flat line does not explain itself:\n%s", panel)
 	}
 	for _, lvl := range []string{"good", "ok", "rough", "stuck"} {
@@ -1138,6 +1143,23 @@ func TestPulseBandLabelsItsRange(t *testing.T) {
 	}
 }
 
+// The gutter holds two right-hand labels — the line's seconds axis and the
+// band's range — and it has to be sized for the wider. Sized for the axis
+// alone, as it was for as long as the band existed, a full window cut the
+// range down to "log 2." and left the shape with no numbers at all.
+func TestPulseBandRangeSurvivesAFullWindow(t *testing.T) {
+	ms := make([]int64, 200)
+	for i := range ms {
+		ms[i] = int64(2_800 + (i%17)*1_150) // 2.8s … 21.2s, cycling
+	}
+	for _, w := range []int{60, 80, 100, 140} {
+		panel := render(moodStateOf(varied(ms...), 99), w, 30)
+		if !strings.Contains(panel, "log 2.8s–21.2s") {
+			t.Errorf("width %d: the band's range was clipped:\n%s", w, panel)
+		}
+	}
+}
+
 // Posts nobody timed leave the band empty there, like the line above it.
 func TestPulseBandLeavesGaps(t *testing.T) {
 	evs := varied(2000, 4000, 8000)
@@ -1167,13 +1189,13 @@ func TestPulseBandScaleHoldsThroughTheSweep(t *testing.T) {
 
 // A drag that rounds to zero is not a term. "− 0.0" reads as a bug.
 func TestMoodHeadDropsAZeroDrag(t *testing.T) {
-	// 15.2s: past the first anchor by a whisker, a drag of 0.01
-	panel := render(moodStateOf(varied(15200, 15200), 99), 100, 30)
+	// 2.02s: past the first anchor by a whisker, a drag of 0.007
+	panel := render(moodStateOf(varied(2020, 2020), 99), 100, 30)
 	if strings.Contains(panel, "− 0.0") {
 		t.Errorf("head prints a zero drag:\n%s", panel)
 	}
 	// but a real one still shows
-	if big := render(moodStateOf(varied(45000, 45000), 99), 100, 30); !strings.Contains(big, "− 1.5") {
+	if big := render(moodStateOf(varied(8500, 8500), 99), 100, 30); !strings.Contains(big, "− 1.5") {
 		t.Errorf("head dropped a drag that matters:\n%s", big)
 	}
 }
@@ -1204,23 +1226,23 @@ func TestMoodHeadShowsTheRecentStretch(t *testing.T) {
 // stretch dragged by the whole window's latency would be an average of one
 // thing wearing the arithmetic of another.
 func TestMoodHeadDragsTheTailWithItsOwnWaiting(t *testing.T) {
-	// forty quick posts, then ten slow ones — same grades throughout
-	evs := turnPosts(4_000, strings.Fields(strings.Repeat("great ", 50))...)
-	for i := 40; i < 50; i++ {
-		evs[i].PulseMS = 60_000 // a minute a turn: two steps off
+	// a hundred and ninety quick posts, then ten slow ones — same grades throughout
+	evs := turnPosts(1_000, strings.Fields(strings.Repeat("great ", 200))...)
+	for i := 190; i < 200; i++ {
+		evs[i].PulseMS = 12_000 // twelve seconds a turn: two steps off
 	}
 	panel := render(moodStateOf(evs, 99), 120, 30)
 	if !strings.Contains(panel, "last 10: ok · 3.0 ↓") {
 		t.Errorf("the tail was not dragged by its own waiting:\n%s", panel)
 	}
-	// and the waiting it names is the tail's own: the window's mean is 15.2s,
+	// and the waiting it names is the tail's own: the window's mean is 1.6s,
 	// which drags nothing and would leave the 3.0 unreconstructable
-	if !strings.Contains(panel, "api ~1m over 10") || strings.Contains(panel, "15.2s") {
+	if !strings.Contains(panel, "api ~12s over 10") || strings.Contains(panel, "1.6s") {
 		t.Errorf("the head names a different window's waiting than the one it subtracted:\n%s", panel)
 	}
-	// meanwhile the window barely moved — 40 quick turns against 10 slow ones
-	// average 15.2s, a drag of 0.01 — which is exactly why the tail is the
-	// headline: the whole window cannot report a bad afternoon
+	// meanwhile the window barely moved — 190 quick turns against 10 slow ones
+	// average 1.6s, under the first anchor — which is exactly why the tail is
+	// the headline: the whole window cannot report a bad afternoon
 	if !strings.Contains(panel, "window great · 5.0") || strings.Contains(panel, "window 5.0 −") {
 		t.Errorf("the window claimed a drag it does not have:\n%s", panel)
 	}
@@ -1263,8 +1285,8 @@ func TestMoodWindowTermCarriesItsArithmetic(t *testing.T) {
 	if strings.Contains(plain, "−") {
 		t.Errorf("a window nobody kept waiting claimed a drag:\n%s", plain)
 	}
-	dragged := render(pulsed(turnPosts(60_000, "great", "great", "great"),
-		wall.Pulse{At: time.Now(), OK: true, RTT: time.Minute, Src: wall.PulseSession}), 110, 30)
+	dragged := render(pulsed(turnPosts(12_000, "great", "great", "great"),
+		wall.Pulse{At: time.Now(), OK: true, RTT: 12 * time.Second, Src: wall.PulseSession}), 110, 30)
 	if !strings.Contains(dragged, "window 5.0 − 2.0") {
 		t.Errorf("head hides the arithmetic behind a drag:\n%s", dragged)
 	}

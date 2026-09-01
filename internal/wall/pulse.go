@@ -107,10 +107,12 @@ func probe(ctx context.Context, c *http.Client, url string) Pulse {
 }
 
 // PostPulseTimeout is how long a post waits for the API before writing the
-// reading down as a crashout. Shorter than the panel's, because the panel is
-// watching and a post is in someone's way: at three seconds the drag is
-// already two of three steps, so the difference between "very slow" and "not
-// answering" has stopped mattering to the day being graded.
+// reading down as a crashout. It caps a probe, not a turn — an unauthenticated
+// GET that answers in under 200ms when the wire is there. Three seconds of
+// silence from that is not a slow day, it is no answer at all, and a post is
+// in someone's way: waiting longer to establish it would cost the writer more
+// than the finding is worth. Deliberately off the anchor scale below, which
+// grades turns and would read three seconds as barely a third of a step.
 const PostPulseTimeout = 3 * time.Second
 
 // PulseMSEnv is the session's own number — what a turn actually costs this
@@ -283,26 +285,40 @@ func pulseErr(err error) string {
 // pulseAnchors say how many steps of the five-value scale a turn's API time
 // takes off the wall's own grade.
 //
-// The first version of these anchors was wrong, and wrong in the way that
-// matters: they were calibrated on a probe's round trip — 170ms to open a
-// socket and read one HTTP answer — while the number anybody actually feels is
-// what a turn costs, seventeen seconds of it. A ping says the door is open, not
-// how long the room takes. So the scale is the one the statusline already
-// draws in colors, because that is the scale being lived: under 15s the tool
-// keeps up, to 30s you notice, to a minute you are waiting, past that you are
-// doing something else.
+// Twice miscalibrated, each time by borrowing a scale that was answering a
+// different question. First on a probe's round trip — 170ms to open a socket
+// and read one HTTP answer — while the number anybody feels is what a turn
+// costs, seconds of it. A ping says the door is open, not how long the room
+// takes. Then on the statusline's colors, 15s white / 30s yellow / 60s red:
+// the right quantity at last, but that is an alarm, and an alarm's first
+// threshold sits far past the point where waiting starts costing the day.
+//
+// The wall settled it. Of the 43 turns it had timed by 2026-09-01, the fastest
+// was 2.8s, the median 5.0s and the slowest 22.4s — and under the alarm scale
+// 40 of the 43 cost exactly nothing. The line drew flat along the top of the
+// band across every measured column and the head reported no drag at all, on a
+// window that never once answered in under two and a half seconds. A scale
+// whose first step the data cannot reach is not measuring anything.
+//
+// So the base moves to where the waiting is actually felt: past two seconds a
+// turn is already in the way. The spacing stays log — roughly two and a half
+// times per step — because that is how waiting is experienced: a doubling from
+// 2s to 4s and one from 30s to 60s are the same event to whoever sat through
+// it. The floor lands on 30s, where the statusline turns yellow: past there
+// the exact number has stopped mattering to the day being graded.
+//
 // The anchors are landmarks, and the drag runs continuously between them:
 // waiting does not happen in steps, and a stepped drag draws a line that only
-// ever takes four positions — no shape, and the difference between a 31s day
-// and a 59s one disappears.
+// ever takes four positions — no shape, and the difference between a 6s day
+// and an 11s one disappears.
 var pulseAnchors = []struct {
 	upTo time.Duration
 	drag float64
 }{
-	{15 * time.Second, 0},
-	{30 * time.Second, 1},
-	{60 * time.Second, 2},
-	{120 * time.Second, 3},
+	{2 * time.Second, 0},
+	{5 * time.Second, 1},
+	{12 * time.Second, 2},
+	{30 * time.Second, 3},
 }
 
 const pulseMaxDrag = 3

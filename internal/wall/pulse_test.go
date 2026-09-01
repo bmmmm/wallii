@@ -20,16 +20,16 @@ func TestPulseDragRisesWithLatency(t *testing.T) {
 		want float64
 	}{
 		{170 * time.Millisecond, 0},
-		{5 * time.Second, 0},
-		{15 * time.Second, 0}, // anchor: quick enough to stay out of the way
-		{22500 * time.Millisecond, 0.5},
-		{30 * time.Second, 1}, // anchor
-		{45 * time.Second, 1.5},
-		{60 * time.Second, 2}, // anchor
-		{90 * time.Second, 2.5},
-		{120 * time.Second, 3}, // anchor
-		{10 * time.Minute, 3},  // the drag has a floor: it cannot fall off the scale
-		{100 * time.Hour, 3},   // and the floor holds at any absurdity
+		{1 * time.Second, 0},
+		{2 * time.Second, 0}, // anchor: quick enough to stay out of the way
+		{3500 * time.Millisecond, 0.5},
+		{5 * time.Second, 1}, // anchor
+		{8500 * time.Millisecond, 1.5},
+		{12 * time.Second, 2}, // anchor
+		{21 * time.Second, 2.5},
+		{30 * time.Second, 3}, // anchor
+		{10 * time.Minute, 3}, // the drag has a floor: it cannot fall off the scale
+		{100 * time.Hour, 3},  // and the floor holds at any absurdity
 	}
 	last := -1.0
 	for _, c := range cases {
@@ -59,19 +59,19 @@ func turnEvents(moods []string, ms []int64) []Event {
 // The window's own waiting is what drags it: both terms then describe the same
 // posts, and a month of grades cannot be moved by one second's reading.
 func TestMoodNowDragsWithTheWindowsOwnWaiting(t *testing.T) {
-	quick := MoodTrail(turnEvents([]string{"great", "great", "good"}, []int64{4_000, 6_000, 5_000}))
+	quick := MoodTrail(turnEvents([]string{"great", "great", "good"}, []int64{1_200, 1_800, 1_500}))
 	if n := quick.Now(Pulse{}); n.Avg != quick.Avg || n.Drag != 0 {
 		t.Errorf("a quick window = %.2f (drag %.1f), want its own %.2f untouched", n.Avg, n.Drag, quick.Avg)
 	}
 
-	slow := MoodTrail(turnEvents([]string{"great", "great", "good"}, []int64{30_000, 60_000, 30_000})) // mean 40s
+	slow := MoodTrail(turnEvents([]string{"great", "great", "good"}, []int64{8_000, 16_000, 12_000})) // mean 12s
 	n := slow.Now(Pulse{})
-	if slow.PulseMS != 40_000 || slow.PulseTurns != 3 {
-		t.Fatalf("window measured %dms over %d turns, want 40000 over 3", slow.PulseMS, slow.PulseTurns)
+	if slow.PulseMS != 12_000 || slow.PulseTurns != 3 {
+		t.Fatalf("window measured %dms over %d turns, want 12000 over 3", slow.PulseMS, slow.PulseTurns)
 	}
-	wantDrag := PulseDrag(40 * time.Second)
+	wantDrag := PulseDrag(12 * time.Second)
 	if n.Drag != wantDrag || n.Avg != slow.Avg-wantDrag {
-		t.Errorf("a 40s window = %.2f (drag %.2f), want %.2f (drag %.2f)", n.Avg, n.Drag, slow.Avg-wantDrag, wantDrag)
+		t.Errorf("a 12s window = %.2f (drag %.2f), want %.2f (drag %.2f)", n.Avg, n.Drag, slow.Avg-wantDrag, wantDrag)
 	}
 	if !n.Known || n.Crash {
 		t.Errorf("slow window = known %v, crash %v, want known and no crash — it answered", n.Known, n.Crash)
@@ -443,9 +443,10 @@ func TestSessionPulseReadsTheStatuslineCache(t *testing.T) {
 	if !p.Turn() || p.RTT != 17431*time.Millisecond || p.Src != PulseSession {
 		t.Fatalf("pulse = %s from %q (turn %v), want a 17.4s turn from the session", p.RTT, p.Src, p.Turn())
 	}
-	// and it is past the first anchor, so it costs the mood something
-	if drag := PulseDrag(p.RTT); drag <= 0 || drag >= 1 {
-		t.Errorf("a 17.4s turn drags %.2f, want somewhere between the 15s and 30s anchors", drag)
+	// and it costs the mood most of the scale: this is the number that was on
+	// the user's statusline while the old anchors reported no drag at all
+	if drag := PulseDrag(p.RTT); drag <= 2 || drag >= 3 {
+		t.Errorf("a 17.4s turn drags %.2f, want somewhere between the 12s and 30s anchors", drag)
 	}
 }
 

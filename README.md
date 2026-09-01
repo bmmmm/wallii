@@ -211,7 +211,7 @@ live and light their column as they arrive.
 ```
  wallii · mood · 436 of 506 posts graded · 7d
 
-      ( o‿o )   good · 3.9   wall 3.9 · api ~4s over 22 posts · now 2.4s
+      ( o‿o )   last 10: good · 4.0 ↑   window good · 3.9
 
   great ┤    █ █                   !██     █ █  █     ██
   good  ┤██!█   █ █████!████! █████   █        █   ███   █  │ █
@@ -288,34 +288,46 @@ face is the one thing here people read as a status light, so it goes on the
 part that can still move:
 
 ```
-( o‿o )   last 10: good · 3.5 ↓ · api ~5.6s over 10   window good · 3.9
+( ò_ó )   last 10: rough · 2.5 ↓ · api ~5.9s over 10   window 3.9 − 1.1
 ```
 
 Ten posts, not a time span: a quiet week would leave a duration empty exactly
 when the wall has something to say. **Every number in the headline comes off
 those same ten posts** — the grade, the arrow, and the waiting that dragged
 it. An earlier version showed the headline's grade beside the *window's* api
-mean, and a `3.0` two steps down next to a comfortable `~15.2s` is an
+mean, and a `3.0` two steps down next to a comfortable `~1.6s` is an
 arithmetic nobody can reconstruct. The window follows as its own group,
 carrying its own drag when it has one, and a crashout keeps it visible because
 that is the only place left to see what the day was before the verdict.
 
 | a turn's API time | taken off the grade |
 | --- | --- |
-| ≤ 15s | — |
-| 30s | 1 |
-| 60s | 2 |
-| ≥ 120s | 3 |
+| ≤ 2s | — |
+| 5s | 1 |
+| 12s | 2 |
+| ≥ 30s | 3 |
 | no answer at all | **crashout** |
 
-Those are the bands the statusline already colors, because that is the scale
-being lived; between them the drag runs continuously, so a 31-second day and a
-59-second one are not the same day. **The measurement is what a turn cost,
-never what a ping cost.** The first version of this got that wrong — it timed
-a `GET /v1/models`, saw 170ms, and called it the response time while turns
-were taking seventeen seconds. A ping says the door is open, not how long the
-room takes: a probe reading is shown as `ping 170ms`, it proves the API is
-reachable, and it never moves a mood.
+Past two seconds a turn is already in the way, and the anchors are spaced log
+— roughly two and a half times per step — because that is how waiting is
+experienced: 2s→5s and 12s→30s are the same event to whoever sat through it.
+Between them the drag runs continuously, so a 6-second day and an 11-second
+one are not the same day.
+
+These anchors were wrong twice, each time by borrowing a scale that answered a
+different question. **The measurement is what a turn cost, never what a ping
+cost:** the first version timed a `GET /v1/models`, saw 170ms, and called it
+the response time while turns were taking seventeen seconds. A ping says the
+door is open, not how long the room takes — so a probe reading is shown as
+`ping 170ms`, it proves the API is reachable, and it never moves a mood. The
+second version took the right quantity but the statusline's colors for its
+bands (15s / 30s / 60s), and those are an alarm: its first threshold sits far
+past the point where waiting starts costing the day. Of the first 43 turns the
+wall timed, 40 fell under it — the line drew flat along the top of the band and
+the head reported no drag at all, on a window that never once answered in under
+two and a half seconds. A scale whose first step the data cannot reach is not
+measuring anything. The floor now lands on 30s, where the statusline turns
+yellow: past there the exact number has stopped mattering to the day.
 
 A fast turn says nothing either: it leaves the grades exactly as posted, which
 is why it can never invent a mood on a wall that carries none. No API is not a
@@ -334,13 +346,13 @@ the series behind a crashout is exactly what it was before.
 
 ```
         ┤                     ├
-  great ┤▔▔▔─▁             ─▔ ├ ≤15s
+  great ┤▔▔▔─▁             ─▔ ├ ≤2s
         ┤████████████████████ ├
-  good  ┤████████████████████ ├ 30s
+  good  ┤████████████████████ ├ 5s
         ┤        ▔─       ▔   ├ 
-  ok    ┤          ▔─         ├ 1m
+  ok    ┤          ▔─         ├ 12s
         ┤            ▔─  ▔    ├
-  rough ┤              ▔▔     ├ 2m
+  rough ┤              ▔▔     ├ 30s
   stuck ┤                     ├
          great 0 · good 20 · … · ─ api time
 ```
@@ -366,15 +378,15 @@ line does not bridge them — an interpolated stretch would draw a measurement
 that was never taken — and while coverage is thin the note under the legend
 says how thin.
 
-**The drag saturates, so the swing gets its own row.** Under 15s nothing is
-lost, which means a window whose turns ran 1.8s to 9s — a five-fold swing —
-draws a flat line at the top. That is true and it is worth saying (the legend
-adds `· all under 15s`), but it is not the shape of the day. The `api` band
+**The drag saturates at both ends, so the swing gets its own row.** Under 2s
+nothing is lost and past 30s nothing more can be, so a window that lives at
+either end draws a flat line — true, and worth saying (under the first anchor
+the legend adds `· all under 2s`), but not the shape of the day. The `api` band
 under the outcome band is that shape, on the window's own scale:
 
 ```
   out    ✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓
-  api    ▁▂▄▆▂█▂▁▅▇▂▃█▁▃▆▄▂▇▁  log 1.8s–9s
+  api    ▁▂▄▆▂█▂▁▅▇▂▃█▁▃▆▄▂▇▁  log 2.8s–22.4s
 ```
 
 Log-spaced, because latency is: 2s→4s and 30s→60s are the same event to
@@ -391,13 +403,13 @@ So the two marks answer two questions, and neither can answer the other's:
 **Every post carries the conditions it was written under.** The head is only
 live; history needs its own reading, so `wallii post` takes one and stores it
 on the event (`pulse_ms`, `pulse_src`). A grade is worth more when you can see
-what it was earned against: `good` through a 45-second API is a different
+what it was earned against: `good` through a 12-second API is a different
 `good`. The inspector names it per column (`api 17s`, or `no api`), a folded
 day averages the turns it measured and counts the posts written with nothing
 answering (`api ~20s · 1 with none`), and `stats` reports the window:
 
 ```
-api      45s per turn across 4 posts — that pace takes 2.0 off a mood · 2 written with no api at all
+api      8.5s per turn across 4 posts — that pace takes 1.5 off a mood · 2 written with no api at all
 ```
 
 **Where the number comes from, in the order the sources deserve:**
