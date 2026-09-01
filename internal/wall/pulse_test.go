@@ -421,14 +421,18 @@ func TestStatsKeepsTurnsPingsAndOutagesApart(t *testing.T) {
 	}
 }
 
-// The number the terminal already shows: the statusline renders every turn and
-// caches what it cost, so wallii reads that rather than inventing a second
-// measurement of a different thing.
+// The number the terminal already keeps: the statusline renders every turn and
+// caches what the API cost, so wallii reads that rather than inventing a second
+// measurement of a different thing. The file it writes carries both — the call
+// that just finished, and the mean over the last few minutes — and the mean is
+// the one a post wants, because a post is written from inside a tool call and
+// the last call is therefore always the cheap gap between two tools.
 func TestSessionPulseReadsTheStatuslineCache(t *testing.T) {
 	dir := t.TempDir()
 	sid := "24d0857f-2f6f-454b-a846-9bfcb956de82"
 	if err := os.WriteFile(filepath.Join(dir, "session-"+sid[:8]),
-		[]byte("model=Opus 5\nlast_api_duration_ms=1604071\nlast_api_delta=17431\ncompactions=0\n"), 0o600); err != nil {
+		[]byte("model=Opus 5\nlast_api_duration_ms=1604071\nlast_api_delta=4012\n"+
+			"api_mean_ms=17431\napi_mean_n=23\ncompactions=0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("WALLII_PULSE", "")
@@ -441,12 +445,16 @@ func TestSessionPulseReadsTheStatuslineCache(t *testing.T) {
 		t.Errorf("note = %q, want none", note)
 	}
 	if !p.Turn() || p.RTT != 17431*time.Millisecond || p.Src != PulseSession {
-		t.Fatalf("pulse = %s from %q (turn %v), want a 17.4s turn from the session", p.RTT, p.Src, p.Turn())
+		t.Fatalf("pulse = %s from %q (turn %v), want the 17.4s window mean, not the 4s last call", p.RTT, p.Src, p.Turn())
 	}
 	// and it costs the mood most of the scale: this is the number that was on
 	// the user's statusline while the old anchors reported no drag at all
 	if drag := PulseDrag(p.RTT); drag <= 2 || drag >= 3 {
 		t.Errorf("a 17.4s turn drags %.2f, want somewhere between the 12s and 30s anchors", drag)
+	}
+	// the last call on its own would have been a third of that
+	if drag := PulseDrag(4012 * time.Millisecond); drag >= 1 {
+		t.Errorf("the single last call drags %.2f — the test no longer separates the two readings", drag)
 	}
 }
 
@@ -484,6 +492,42 @@ func TestPulseFileAcceptsBothShapes(t *testing.T) {
 		t.Errorf("key=value file = %d/%v, want 17431", ms, ok)
 	}
 	for _, junk := range []string{"", "last_api_delta=\n", "last_api_delta=soon\n", "other=17431\n", "last_api_delta=-5\n"} {
+		if _, ok := pulseFileValue(junk); ok {
+			t.Errorf("%q was read as a reading", junk)
+		}
+	}
+}
+
+// The window mean outranks the single last call, and it does so whichever
+// order the file lists them in. A post is written from inside a tool call, so
+// the last call is always the cheap stretch between two tools — reading it
+// when a mean is right there is picking the one sample that cannot be
+// representative.
+func TestPulseFilePrefersTheWindowMean(t *testing.T) {
+	for _, file := range []string{
+		"last_api_delta=4000\napi_mean_ms=13000\napi_mean_n=27\n",
+		"api_mean_ms=13000\nlast_api_delta=4000\n",
+	} {
+		if ms, ok := pulseFileValue(file); !ok || ms != 13000 {
+			t.Errorf("%q = %d/%v, want the window mean 13000", file, ms, ok)
+		}
+	}
+	// but an empty or unusable mean must not cost the reading its fallback:
+	// a statusline that has not learned the key is not an outage
+	for _, file := range []string{
+		"api_mean_ms=\nlast_api_delta=4000\n",
+		"api_mean_ms=soon\nlast_api_delta=4000\n",
+		"last_api_delta=4000\n",
+	} {
+		if ms, ok := pulseFileValue(file); !ok || ms != 4000 {
+			t.Errorf("%q = %d/%v, want the last call 4000", file, ms, ok)
+		}
+	}
+	// and a mean on its own is a reading
+	if ms, ok := pulseFileValue("api_mean_ms=13000\n"); !ok || ms != 13000 {
+		t.Errorf("a lone mean = %d/%v, want 13000", ms, ok)
+	}
+	for _, junk := range []string{"api_mean_ms=\n", "api_mean_ms=-5\n", "api_mean_n=27\n"} {
 		if _, ok := pulseFileValue(junk); ok {
 			t.Errorf("%q was read as a reading", junk)
 		}

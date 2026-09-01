@@ -417,13 +417,26 @@ api      8.5s per turn across 4 posts — that pace takes 1.5 off a mood · 2 wr
 1. `WALLII_PULSE_MS` — what this session was told to report (`none` is legal:
    a session that knows the API is gone says so without waiting for a timeout).
 2. `WALLII_PULSE_FILE`, or the statusline's own per-session cache when Claude
-   Code exports `CLAUDE_CODE_SESSION_ID` — a bare number of milliseconds, or a
-   `last_api_delta=` line. **This is the number that matters**, because the
-   statusline renders every turn and already holds what that turn cost. No
-   configuration: the value the terminal shows and the value the wall stores
-   are one measurement instead of two guesses at it. Older than 15 minutes and
-   it is dropped — that is what an idle session's last turn cost, not now.
+   Code exports `CLAUDE_CODE_SESSION_ID` — a bare number of milliseconds, or an
+   `api_mean_ms=` line, falling back to `last_api_delta=`. **This is the number
+   that matters**, because the statusline renders every turn and already holds
+   what those turns cost. No configuration: the value the terminal shows and
+   the value the wall stores are one measurement instead of two guesses at it.
+   Older than 15 minutes and it is dropped — that is what an idle session cost,
+   not now.
 3. A probe, which can only ever answer *there* or *not there*.
+
+**Why the mean and not the last call.** `last_api_delta` is one API call, and
+a post is written from inside a tool call — so the call it picks up is always
+the one between two tools, which is the cheapest stretch of a turn. Measured
+against a full day of transcripts: that gap runs a median of **4.0s**, while
+the answer to a freshly typed prompt runs a median of **15.0s** and a mean of
+19.3s. The wall was storing 4.9s for days spent waiting four times that, and
+no test could catch it — the reading was fresh, correct, and taken at the one
+moment it could not be representative. `api_mean_ms` is every call in the
+session's last five minutes, tail included, so there is no lucky moment left
+to sample. The wall's stored values before 2026-09-01 are the old single
+draws: real numbers, of a smaller thing.
 
 The source is stored with the number, so nothing has to be inferred later:
 `session` is a measured turn (it drags), `probe` is reachability (it does

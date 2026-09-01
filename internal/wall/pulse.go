@@ -148,14 +148,27 @@ func SessionPulse(ctx context.Context) (Pulse, string) {
 	return probeNow(ctx), ""
 }
 
-// PulseFileEnv names a file holding what the last turn cost, either as bare
-// milliseconds or as a `key=value` line under PulseFileKey. Unset, wallii looks
-// where the number already is: the statusline renders on every turn and caches
-// it per session, so the value the terminal shows and the value the wall stores
-// are the same measurement rather than two guesses at it.
+// PulseFileEnv names a file holding what turns cost, either as bare
+// milliseconds or as `key=value` lines. Unset, wallii looks where the number
+// already is: the statusline renders on every turn and caches it per session,
+// so the value the terminal shows and the value the wall stores are the same
+// measurement rather than two guesses at it.
+//
+// Two keys, and the order between them is the whole point. PulseFileMeanKey is
+// the mean call over the session's recent window; PulseFileKey is the single
+// call that just finished. The single call was what wallii read first, and it
+// was measured at the worst possible moment: a post is written from inside a
+// tool call, so the reading it picks up is always the API call between two
+// tools. Measured against the transcripts of one day, that stretch has a
+// median of 4.0s while the answer to a freshly typed prompt has a median of
+// 15.0s — the same variable, sampled where it is smallest, and the wall stored
+// 4.9s for a day the user was waiting four times that. The window mean cannot
+// be sampled at a lucky moment: it is every call in the last few minutes,
+// tail included.
 const (
-	PulseFileEnv = "WALLII_PULSE_FILE"
-	PulseFileKey = "last_api_delta"
+	PulseFileEnv     = "WALLII_PULSE_FILE"
+	PulseFileMeanKey = "api_mean_ms"
+	PulseFileKey     = "last_api_delta"
 	// PulseFileMaxAge keeps a stale file out of a live reading. The statusline
 	// rewrites it every turn, so an old file means an idle session — and the
 	// cost of a turn from an hour ago is not what things are like now.
@@ -190,9 +203,11 @@ func filePulse(now time.Time) (Pulse, bool) {
 	return Pulse{At: fi.ModTime(), RTT: time.Duration(ms) * time.Millisecond, OK: true, Src: PulseSession}, true
 }
 
-// pulseFileValue accepts a bare number of milliseconds or a key=value file
-// carrying PulseFileKey — one format for a file written for wallii, one for a
-// file that already existed.
+// pulseFileValue accepts a bare number of milliseconds or a key=value file —
+// one format for a file written for wallii, one for a file that already
+// existed. The window mean wins over the last single call wherever both are
+// there; a file carrying only the old key still reads, because a statusline
+// that has not learned the new one is not a reason to store nothing.
 func pulseFileValue(s string) (int64, bool) {
 	parse := func(v string) (int64, bool) {
 		ms, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
@@ -204,12 +219,26 @@ func pulseFileValue(s string) (int64, bool) {
 	if ms, ok := parse(s); ok {
 		return ms, true
 	}
+	var last int64
+	haveLast := false
 	for _, line := range strings.Split(s, "\n") {
-		if k, v, found := strings.Cut(line, "="); found && strings.TrimSpace(k) == PulseFileKey {
-			return parse(v)
+		k, v, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		switch strings.TrimSpace(k) {
+		case PulseFileMeanKey:
+			if ms, ok := parse(v); ok {
+				return ms, true
+			}
+		case PulseFileKey:
+			last, haveLast = 0, false
+			if ms, ok := parse(v); ok {
+				last, haveLast = ms, true
+			}
 		}
 	}
-	return 0, false
+	return last, haveLast
 }
 
 // statuslineCache is where claudii's statusline keeps the current session's
