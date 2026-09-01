@@ -26,6 +26,14 @@ type Stats struct {
 	TookTotalS int64 `json:"took_total_s"`
 	TookAuto   int   `json:"took_auto"` // of TookCount, derived rather than measured
 
+	// Pulse: the conditions the grades were earned under. Answered and Down
+	// split the coverage the way the field does — a post with no pulse at all
+	// is neither, because nobody measured, and that must not read as an
+	// outage.
+	PulseAnswered int   `json:"pulse_answered,omitempty"`
+	PulseTotalMS  int64 `json:"pulse_total_ms,omitempty"`
+	PulseDown     int   `json:"pulse_down,omitempty"`
+
 	WithRefs int `json:"with_refs"`
 	// Contradicting counts posts whose grade disagrees with their own
 	// message. Nothing stops those from being posted — this is where they
@@ -140,6 +148,14 @@ func Compute(evs []Event) Stats {
 			if e.TookSrc == TookAuto {
 				s.TookAuto++
 			}
+		}
+		switch e.PulseSrc {
+		case "": // nobody measured
+		case PulseNone:
+			s.PulseDown++
+		default:
+			s.PulseAnswered++
+			s.PulseTotalMS += e.PulseMS
 		}
 		if len(e.Refs) > 0 {
 			s.WithRefs++

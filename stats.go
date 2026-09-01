@@ -65,6 +65,9 @@ func cmdStats(args []string) error {
 	if s.MoodCount > 0 {
 		fmt.Printf("mood     %s (%.1f) from %d posts — %s\n", moodWord(s.MoodAvg), s.MoodAvg, s.MoodCount, moodSpread(s.ByMood))
 	}
+	if line := apiLine(s); line != "" {
+		fmt.Println(line)
+	}
 	if calib := calibLine(s, *sinceS); calib != "" {
 		fmt.Println(calib)
 	}
@@ -130,6 +133,32 @@ func cmdStats(args []string) error {
 		fmt.Printf("%-24s %s %d\n", r.Name, bar(r.Count, s.ByRepo[0].Count, 20), r.Count)
 	}
 	return nil
+}
+
+// apiLine reports the conditions the grades in this window were earned under:
+// what the API typically answered in, how much that takes off the scale, and
+// how many posts were written while it answered nothing at all. Silent when
+// no post in the window carries a reading — most of the wall predates the
+// field, and a coverage of zero is not a fast API.
+func apiLine(s wall.Stats) string {
+	seen := s.PulseAnswered + s.PulseDown
+	if seen == 0 {
+		return ""
+	}
+	line := "api      "
+	if s.PulseAnswered > 0 {
+		avg := time.Duration(s.PulseTotalMS/int64(s.PulseAnswered)) * time.Millisecond
+		line += fmt.Sprintf("%s average over %s", pulseDur(avg), plural(s.PulseAnswered, "post"))
+		if drag := wall.PulseDrag(avg); drag > 0 {
+			line += fmt.Sprintf(" — that speed takes %.1f off a mood", drag)
+		}
+	} else {
+		line += fmt.Sprintf("nothing answered across %s", plural(seen, "post"))
+	}
+	if s.PulseDown > 0 && s.PulseAnswered > 0 {
+		line += fmt.Sprintf(" · %d written with no api at all", s.PulseDown)
+	}
+	return line
 }
 
 // moodSpread lists the mood distribution in scale order. The average alone

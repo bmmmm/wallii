@@ -555,6 +555,9 @@ func (m *tuiModel) line(e wall.Event, sel bool) string {
 		if e.TookS > 0 {
 			fmt.Fprintf(&sb, " · %s", fmtTook(e.TookS))
 		}
+		if t := eventPulseTerm(e); t != "" {
+			fmt.Fprintf(&sb, " · %s", t)
+		}
 		for i, u := range e.Refs {
 			if i == 3 {
 				fmt.Fprintf(&sb, "\n   … +%d more refs", len(e.Refs)-3)
@@ -617,6 +620,12 @@ func (m *tuiModel) viewDetail() string {
 	field("mood", e.Mood)
 	if e.TookS > 0 {
 		field("took", fmtTook(e.TookS))
+	}
+	if t := eventPulseTerm(e); t != "" {
+		// the source belongs in the detail view and nowhere else: a number
+		// the session measured and one wallii probed are worth different
+		// amounts, and this is the one place with room to say which it was
+		field("api", strings.TrimPrefix(t, "api ")+" ("+e.PulseSrc+")")
 	}
 	b.WriteString("\n  " + lipgloss.NewStyle().Width(max(20, m.width-4)).Render(e.Msg) + "\n")
 	if len(e.Refs) > 0 {

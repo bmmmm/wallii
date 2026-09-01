@@ -432,6 +432,39 @@ func moodAPITerm(p wall.Pulse) string {
 	return "api " + pulseDur(p.RTT)
 }
 
+// eventPulseTerm names the conditions one post was written under. Empty when
+// the post carries no reading — most of the wall predates the field, and a
+// silent row is the honest rendering of "nobody measured".
+func eventPulseTerm(e wall.Event) string {
+	switch e.PulseSrc {
+	case "":
+		return ""
+	case wall.PulseNone:
+		return "no api"
+	}
+	return "api " + pulseDur(time.Duration(e.PulseMS)*time.Millisecond)
+}
+
+// pointPulseTerm is the same for a curve column, which may fold a whole day:
+// a mean over the posts that carry a reading, and the count of the ones
+// written while nothing answered.
+func pointPulseTerm(p wall.MoodPoint) string {
+	switch {
+	case p.PulseN == 0 && p.PulseDown == 0:
+		return ""
+	case p.PulseN == 0:
+		return "no api"
+	}
+	term := "api " + pulseDur(time.Duration(p.PulseMS)*time.Millisecond)
+	if p.N > 1 {
+		term = "api ~" + pulseDur(time.Duration(p.PulseMS)*time.Millisecond)
+	}
+	if p.PulseDown > 0 {
+		term += fmt.Sprintf(" · %d with none", p.PulseDown)
+	}
+	return term
+}
+
 // pulseDur rounds a round trip to what the eye can tell apart: milliseconds
 // below a second, a tenth of one above it. The extra digits are real and
 // meaningless — nobody feels the difference between 241ms and 247ms.
@@ -654,13 +687,17 @@ func moodInspect(st moodState, width int) string {
 			mark = fmt.Sprintf(" %s %d of %d", moodContra, p.ContraN, p.N)
 		}
 	}
+	api := ""
+	if t := pointPulseTerm(p); t != "" {
+		api = " · " + t
+	}
 	var line string
 	if p.N > 1 {
-		line = fmt.Sprintf(" › %s · %s · %s %.1f · worst %s · %s%s", p.TS.Format("01-02"),
-			plural(p.N, "post"), moodWord(p.Avg), p.Avg, orDash(strings.TrimSpace(glyph)), orDash(p.Repo), mark)
+		line = fmt.Sprintf(" › %s · %s · %s %.1f · worst %s · %s%s%s", p.TS.Format("01-02"),
+			plural(p.N, "post"), moodWord(p.Avg), p.Avg, orDash(strings.TrimSpace(glyph)), orDash(p.Repo), api, mark)
 	} else {
-		line = fmt.Sprintf(" › %s · %s · %s · %s %s%s — %s", p.TS.Local().Format("01-02 15:04"),
-			orDash(p.Repo), orDash(p.Topic), orDash(strings.TrimSpace(glyph)), p.Mood, mark, p.Msg)
+		line = fmt.Sprintf(" › %s · %s · %s · %s %s%s%s — %s", p.TS.Local().Format("01-02 15:04"),
+			orDash(p.Repo), orDash(p.Topic), orDash(strings.TrimSpace(glyph)), p.Mood, api, mark, p.Msg)
 	}
 	return lipgloss.NewStyle().MaxWidth(width).Render(line)
 }

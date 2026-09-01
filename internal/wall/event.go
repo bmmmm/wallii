@@ -50,6 +50,22 @@ const (
 // nobody can check.
 const TookAuto = "auto"
 
+// Pulse sources: where a post's API round trip came from. PulseProbe is
+// wallii's own measurement at post time, PulseSession a number the harness
+// handed over — it knows what its turns actually cost, which an unauthenticated
+// GET can only approximate — and PulseNone says the API was asked and did not
+// answer. The last one is the point of storing a source at all: an absent
+// field means nobody measured, and that must never read as an outage.
+const (
+	PulseProbe   = "probe"
+	PulseSession = "session"
+	PulseNone    = "none"
+)
+
+// MaxPulseMS bounds a stored round trip at an hour. Past that it is a typo or
+// a stopped clock, not a wait anybody sat through.
+const MaxPulseMS = 3600_000
+
 // Mood values, best → worst. MoodScore maps them onto 5..1 so trends can be
 // averaged; unknown or absent moods score 0 (excluded from averages).
 var Moods = []string{"great", "good", "ok", "rough", "stuck"}
@@ -77,6 +93,11 @@ type Event struct {
 	TookS   int64     `json:"took_s,omitempty"`  // wall-clock duration of the work, seconds
 	TookSrc string    `json:"took_src,omitempty"`
 	Mood    string    `json:"mood,omitempty"` // great | good | ok | rough | stuck
+	// PulseMS is what the API answered in while this post was written — the
+	// working conditions the grade above it was earned under. PulseSrc says
+	// who measured it, and carries PulseNone when nothing answered at all.
+	PulseMS  int64  `json:"pulse_ms,omitempty"`
+	PulseSrc string `json:"pulse_src,omitempty"`
 }
 
 // ID derives a short stable address for an event from fields that never
@@ -125,8 +146,8 @@ func (e Event) Validate() error {
 		}
 		// dialogue carries no work telemetry: a grade on a reply would leak
 		// into nothing (stats skips kinds) and only invite confusion
-		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 {
-			return fmt.Errorf("a %s is dialogue — outcome/mood/took belong on posts", e.Kind)
+		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 || e.PulseSrc != "" {
+			return fmt.Errorf("a %s is dialogue — outcome/mood/took/pulse belong on posts", e.Kind)
 		}
 	default:
 		return fmt.Errorf("unknown kind %q — one of attach, detach, react, challenge, or empty", e.Kind)
@@ -150,6 +171,22 @@ func (e Event) Validate() error {
 	}
 	if e.TookSrc != "" && e.TookS == 0 {
 		return errors.New("took_src is set without a duration — a source without a value says nothing")
+	}
+	switch e.PulseSrc {
+	case "", PulseProbe, PulseSession, PulseNone:
+	default:
+		return fmt.Errorf("unknown pulse_src %q — one of %s, %s, %s, or empty (nobody measured)", e.PulseSrc, PulseProbe, PulseSession, PulseNone)
+	}
+	if e.PulseMS < 0 {
+		return fmt.Errorf("pulse is negative (%dms) — round trips only", e.PulseMS)
+	}
+	if e.PulseMS > MaxPulseMS {
+		return fmt.Errorf("pulse is %dms, over an hour — that is a stopped clock, not a wait", e.PulseMS)
+	}
+	// The reverse (a source with no value) is legal: PulseNone is a reading
+	// whose value is that there was none.
+	if e.PulseMS != 0 && e.PulseSrc == "" {
+		return errors.New("pulse_ms is set without a source — a round trip nobody claims cannot be told from a guess")
 	}
 	if strings.TrimSpace(e.Msg) == "" {
 		return errors.New("message is empty")

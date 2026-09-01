@@ -23,6 +23,12 @@ type MoodPoint struct {
 	// posts are visible in the picture and not only in a number.
 	ContraN int
 	N       int // posts folded here: 1 for a post, more for a day
+	// The conditions the grade was earned under: what the API answered in
+	// (the mean over the posts of a folded day that carry a reading), how
+	// many carry one, and how many were written while nothing answered.
+	PulseMS   int64
+	PulseN    int
+	PulseDown int
 }
 
 // Contradicts reports whether this column should be drawn as a doubted one.
@@ -108,6 +114,13 @@ func MoodTrail(evs []Event) MoodSummary {
 		s.Counts[len(Moods)-sc]++
 		p := MoodPoint{TS: e.TS, Score: sc, Avg: float64(sc), Mood: e.Mood, Repo: e.Repo,
 			Actor: e.Actor, Topic: e.Topic, Msg: e.Msg, Outcome: e.Outcome, N: 1}
+		switch e.PulseSrc {
+		case "": // nobody measured — not the same as nothing answering
+		case PulseNone:
+			p.PulseDown = 1
+		default:
+			p.PulseMS, p.PulseN = e.PulseMS, 1
+		}
 		// regex work, once per post per refold — the trail is rebuilt on
 		// ingest, not per frame, so this stays off the render path
 		if len(Contradictions(e)) > 0 {
@@ -129,6 +142,7 @@ func MoodTrail(evs []Event) MoodSummary {
 func MoodDays(pts []MoodPoint) []MoodPoint {
 	var out []MoodPoint
 	sum := make(map[int]float64)
+	psum := make(map[int]int64)
 	for _, p := range pts {
 		d := p.TS.Local()
 		day := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, d.Location())
@@ -140,6 +154,9 @@ func MoodDays(pts []MoodPoint) []MoodPoint {
 		out[i].N += p.N
 		sum[i] += p.Avg * float64(p.N)
 		out[i].ContraN += p.ContraN
+		psum[i] += p.PulseMS * int64(p.PulseN)
+		out[i].PulseN += p.PulseN
+		out[i].PulseDown += p.PulseDown
 		if outcomeRank(p.Outcome) > outcomeRank(out[i].Outcome) {
 			out[i].Outcome = p.Outcome
 		}
@@ -148,6 +165,9 @@ func MoodDays(pts []MoodPoint) []MoodPoint {
 	for i := range out {
 		out[i].Avg = sum[i] / float64(out[i].N)
 		out[i].Score = MoodLevel(out[i].Avg)
+		if out[i].PulseN > 0 {
+			out[i].PulseMS = psum[i] / int64(out[i].PulseN)
+		}
 	}
 	return out
 }

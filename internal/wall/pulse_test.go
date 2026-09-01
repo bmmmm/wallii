@@ -208,3 +208,151 @@ func TestPulseFreshness(t *testing.T) {
 		t.Error("a two-minute-old reading counted as fresh")
 	}
 }
+
+// The reading a post carries: the session's own number where there is one,
+// wallii's measurement otherwise, and nothing at all when nobody looked.
+
+func TestSessionPulseTakesTheSessionsNumber(t *testing.T) {
+	t.Setenv("WALLII_PULSE", "")
+	t.Setenv(PulseMSEnv, "1830")
+	p, note := SessionPulse(context.Background())
+	if note != "" {
+		t.Errorf("note = %q, want none — the value parsed", note)
+	}
+	if !p.OK || p.RTT != 1830*time.Millisecond || p.Src != PulseSession {
+		t.Fatalf("pulse = ok %v, %s, src %q; want a 1.83s session reading", p.OK, p.RTT, p.Src)
+	}
+	if ms, src := p.Fields(); ms != 1830 || src != PulseSession {
+		t.Errorf("fields = %dms, %q; want 1830, %q", ms, src, PulseSession)
+	}
+}
+
+func TestSessionPulseTakesTheSessionsOutage(t *testing.T) {
+	t.Setenv("WALLII_PULSE", "")
+	t.Setenv(PulseMSEnv, "NONE") // a shell exports what it exports
+	p, _ := SessionPulse(context.Background())
+	ms, src := p.Fields()
+	if src != PulseNone || ms != 0 {
+		t.Errorf("fields = %dms, %q; want an outage the session reported without a probe", ms, src)
+	}
+}
+
+func TestSessionPulseOffRecordsNothing(t *testing.T) {
+	t.Setenv("WALLII_PULSE", "off")
+	t.Setenv(PulseMSEnv, "1830")
+	p, _ := SessionPulse(context.Background())
+	if p.Known() {
+		t.Error("probing is off and a reading came back anyway")
+	}
+	if ms, src := p.Fields(); ms != 0 || src != "" {
+		t.Errorf("fields = %dms, %q; want nothing stored — nobody measured", ms, src)
+	}
+}
+
+// A value nobody can parse is said out loud and then ignored: wallii measures
+// for itself rather than writing down a number it does not understand.
+func TestSessionPulseFallsBackToMeasuring(t *testing.T) {
+	t.Setenv("WALLII_PULSE", "")
+	t.Setenv(PulseMSEnv, "soon")
+	t.Setenv("WALLII_PULSE_URL", "http://127.0.0.1:9/v1/models") // nothing listens on discard
+	p, note := SessionPulse(context.Background())
+	if !strings.Contains(note, PulseMSEnv) || !strings.Contains(note, "measuring instead") {
+		t.Errorf("note = %q, want it to name the variable and what happened next", note)
+	}
+	if p.Src != PulseProbe {
+		t.Errorf("src = %q, want the fallback to be wallii's own measurement", p.Src)
+	}
+	if _, src := p.Fields(); src != PulseNone {
+		t.Errorf("fields src = %q, want %q — the probe reached nothing", src, PulseNone)
+	}
+}
+
+func TestPulseFieldsNeverInventAnOutage(t *testing.T) {
+	if ms, src := (Pulse{}).Fields(); ms != 0 || src != "" {
+		t.Errorf("an unmeasured pulse stores %dms/%q, want nothing — absence is not an outage", ms, src)
+	}
+}
+
+func TestValidatePulse(t *testing.T) {
+	ok := func(ms int64, src string) Event {
+		e := validEvent()
+		e.PulseMS, e.PulseSrc = ms, src
+		return e
+	}
+	for _, e := range []Event{ok(0, ""), ok(185, PulseProbe), ok(1830, PulseSession), ok(0, PulseNone), ok(2999, PulseNone)} {
+		if err := e.Validate(); err != nil {
+			t.Errorf("valid pulse (%dms, %q) rejected: %v", e.PulseMS, e.PulseSrc, err)
+		}
+	}
+	bad := map[string]Event{
+		"unknown source":       ok(185, "guess"),
+		"negative round trip":  ok(-1, PulseProbe),
+		"over an hour":         ok(MaxPulseMS+1, PulseProbe),
+		"value with no source": ok(185, ""),
+	}
+	for name, e := range bad {
+		if err := e.Validate(); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// Dialogue carries no telemetry, and the pulse is telemetry.
+func TestValidateRejectsPulseOnAReply(t *testing.T) {
+	e := validEvent()
+	e.Kind, e.Parent = KindReact, "abc1234"
+	e.PulseMS, e.PulseSrc = 185, PulseProbe
+	if err := e.Validate(); err == nil {
+		t.Fatal("a react carrying a pulse was accepted")
+	}
+}
+
+// The conditions travel with the points the curve is drawn from, so a column
+// can say what the work behind it was up against.
+func TestMoodTrailCarriesTheConditions(t *testing.T) {
+	evs := moodEvents("good", "rough", "ok")
+	evs[0].PulseMS, evs[0].PulseSrc = 200, PulseProbe
+	evs[1].PulseSrc = PulseNone
+	// evs[2] predates the field: no reading at all
+
+	pts := MoodTrail(evs).Points
+	if pts[0].PulseMS != 200 || pts[0].PulseN != 1 || pts[0].PulseDown != 0 {
+		t.Errorf("measured post = %dms/%d/%d, want 200/1/0", pts[0].PulseMS, pts[0].PulseN, pts[0].PulseDown)
+	}
+	if pts[1].PulseN != 0 || pts[1].PulseDown != 1 {
+		t.Errorf("outage post = %d readings, %d down; want 0 and 1", pts[1].PulseN, pts[1].PulseDown)
+	}
+	if pts[2].PulseN != 0 || pts[2].PulseDown != 0 {
+		t.Errorf("unmeasured post = %d readings, %d down; want neither", pts[2].PulseN, pts[2].PulseDown)
+	}
+}
+
+func TestMoodDaysAveragesTheConditions(t *testing.T) {
+	evs := moodEvents("good", "good", "ok", "rough")
+	evs[0].PulseMS, evs[0].PulseSrc = 100, PulseProbe
+	evs[1].PulseMS, evs[1].PulseSrc = 300, PulseProbe
+	evs[2].PulseSrc = PulseNone
+	// evs[3] carries nothing, and must not drag the mean toward zero
+
+	days := MoodDays(MoodTrail(evs).Points)
+	if len(days) != 1 {
+		t.Fatalf("folded into %d days, want 1", len(days))
+	}
+	d := days[0]
+	if d.PulseMS != 200 || d.PulseN != 2 || d.PulseDown != 1 {
+		t.Errorf("day = %dms over %d readings, %d down; want 200ms over 2, 1 down", d.PulseMS, d.PulseN, d.PulseDown)
+	}
+}
+
+func TestStatsSplitsMeasuredFromMissing(t *testing.T) {
+	evs := moodEvents("good", "good", "ok", "rough")
+	evs[0].PulseMS, evs[0].PulseSrc = 100, PulseProbe
+	evs[1].PulseMS, evs[1].PulseSrc = 300, PulseSession
+	evs[2].PulseSrc = PulseNone
+
+	s := Compute(evs)
+	if s.PulseAnswered != 2 || s.PulseTotalMS != 400 || s.PulseDown != 1 {
+		t.Errorf("stats = %d answered / %dms / %d down; want 2 / 400 / 1 (the unmeasured post is neither)",
+			s.PulseAnswered, s.PulseTotalMS, s.PulseDown)
+	}
+}

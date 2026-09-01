@@ -4,8 +4,10 @@ package wall
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -38,6 +40,7 @@ type Pulse struct {
 	RTT time.Duration
 	OK  bool   // an answer arrived, whatever its status code
 	Err string // why none did, when none did
+	Src string // PulseProbe or PulseSession — who took the reading
 }
 
 // Known reports whether this Pulse is a reading at all.
@@ -90,10 +93,64 @@ func probe(ctx context.Context, c *http.Client, url string) Pulse {
 	resp, err := c.Do(req)
 	rtt := time.Since(start)
 	if err != nil {
-		return Pulse{At: time.Now(), RTT: rtt, Err: pulseErr(err)}
+		return Pulse{At: time.Now(), RTT: rtt, Err: pulseErr(err), Src: PulseProbe}
 	}
 	resp.Body.Close()
-	return Pulse{At: time.Now(), RTT: rtt, OK: true}
+	return Pulse{At: time.Now(), RTT: rtt, OK: true, Src: PulseProbe}
+}
+
+// PostPulseTimeout is how long a post waits for the API before writing the
+// reading down as a crashout. Shorter than the panel's, because the panel is
+// watching and a post is in someone's way: at three seconds the drag is
+// already two of three steps, so the difference between "very slow" and "not
+// answering" has stopped mattering to the day being graded.
+const PostPulseTimeout = 3 * time.Second
+
+// PulseMSEnv is the session's own number — what a turn actually costs this
+// harness, which is the thing an unauthenticated GET can only stand in for.
+// `none` is a legal value: a session that knows the API is gone says so
+// without wallii spending three seconds finding out.
+const PulseMSEnv = "WALLII_PULSE_MS"
+
+// SessionPulse takes the reading a post carries. The session's own number
+// wins where there is one; otherwise wallii times the API itself. The second
+// return is a note for stderr — a value nobody can parse is worth saying out
+// loud, and worth nothing else: the post is written either way.
+func SessionPulse(ctx context.Context) (Pulse, string) {
+	if !PulseEnabled() {
+		return Pulse{}, ""
+	}
+	switch v := strings.TrimSpace(os.Getenv(PulseMSEnv)); {
+	case v == "":
+	case strings.EqualFold(v, PulseNone):
+		return Pulse{At: time.Now(), Src: PulseSession, Err: "the session reported no api"}, ""
+	default:
+		ms, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || ms < 0 || ms > MaxPulseMS {
+			return probeNow(ctx), fmt.Sprintf("%s=%q is neither milliseconds nor %q — measuring instead", PulseMSEnv, v, PulseNone)
+		}
+		return Pulse{At: time.Now(), RTT: time.Duration(ms) * time.Millisecond, OK: true, Src: PulseSession}, ""
+	}
+	return probeNow(ctx), ""
+}
+
+func probeNow(ctx context.Context) Pulse {
+	ctx, cancel := context.WithTimeout(ctx, PostPulseTimeout)
+	defer cancel()
+	return ProbePulse(ctx, PulseURL())
+}
+
+// Fields are what a post stores: the round trip in milliseconds, and who
+// measured it. A pulse that never happened stores nothing at all — an absent
+// field means nobody looked, and it must never read as an outage.
+func (p Pulse) Fields() (ms int64, src string) {
+	if !p.Known() {
+		return 0, ""
+	}
+	if !p.OK {
+		return p.RTT.Milliseconds(), PulseNone
+	}
+	return p.RTT.Milliseconds(), p.Src
 }
 
 // PulseErrRunes caps the reason at what one panel line can hold beside the

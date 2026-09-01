@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -71,6 +72,15 @@ func cmdPost(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Every post carries the conditions it was written under: what the API
+	// answered in, right now. Taken before the timestamp, so a slow API does
+	// not also make the post late — and never fatal, because a grade is worth
+	// more than the telemetry around it.
+	pulse, pnote := wall.SessionPulse(context.Background())
+	if pnote != "" {
+		fmt.Fprintln(os.Stderr, "wallii:", pnote)
+	}
+	pulseMS, pulseSrc := pulse.Fields()
 	now := time.Now()
 
 	// one read serves both post-time lints: the actor's own history is the
@@ -89,7 +99,8 @@ func cmdPost(args []string) error {
 	}
 
 	e := wall.Event{TS: now.UTC(), Repo: *repo, Actor: who, Topic: *topic, Msg: msg, Refs: refs,
-		Outcome: *outcome, TookS: tookS, TookSrc: tookSrc, Mood: *mood}
+		Outcome: *outcome, TookS: tookS, TookSrc: tookSrc, Mood: *mood,
+		PulseMS: pulseMS, PulseSrc: pulseSrc}
 	if err := wall.Append(dir, e); err != nil {
 		return err
 	}
