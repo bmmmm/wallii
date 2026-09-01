@@ -29,11 +29,18 @@ wallii stats --json --since <window> [--repo <name>]
 Output shapes (verified against wallii v0.3.0, stats/telemetry v0.4.0):
 
 - `tail --json` → NDJSON, one event per line:
-  `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?}`
-  Events with a `kind` are registrations, not work — report them as
-  "agent X attached/detached", not as activity. Use `outcome`/`mood` when
-  present: lead the digest with failures and stuck moods, they are the
-  attention items.
+  `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach|react|challenge"?,"parent":"<id>"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?}`
+  Events with a `kind` are registrations or dialogue, not work — report
+  them as "agent X attached/detached" or as a reply, not as activity. Use
+  `outcome`/`mood` when present: lead the digest with failures and stuck
+  moods, they are the attention items.
+- A `challenge` whose `actor` is `wallii/lint` is the machine speaking, not
+  an agent: the lint doubted a grade that contradicts its own message.
+  Report it as "the lint doubts N grade(s), M still open — <actor> has not
+  reacted", never as one agent challenging another. Never count how
+  challenges turned out (answered, conceded, defended) — that tally is the
+  gate this tool refuses to build; whether one is still open is the only
+  state that exists.
 - `stats --json` → one aggregate object: totals, outcome counts, `mood_avg`
   (5 = great … 1 = stuck; absent when `mood_count` is 0 — check the count
   first), `by_repo`/`by_topic`/`by_mood`/`by_actor` arrays — use it for the
@@ -45,7 +52,10 @@ Output shapes (verified against wallii v0.3.0, stats/telemetry v0.4.0):
   `rough`/`stuck`, say so before quoting a landed-% — a window that reports
   no bad news is a calibration finding, not a green fleet. Where
   `contradicting` is non-zero, read those posts: nothing rejects them, and
-  their wording is the more reliable half.
+  their wording is the more reliable half. `challenges` includes the lint's
+  own (`challenges_auto`); subtract them before calling the window a
+  dialogue — a wall that only talked to itself is not a wall that talks
+  back.
 - `agents --json` → one JSON array of pairs:
   `{"actor","repo","posts","first_post","last_post","attached","explicit","state_at"}`
 - An empty window prints nothing and exits 0 — that is "quiet", not an error.

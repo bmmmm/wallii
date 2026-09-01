@@ -56,7 +56,10 @@ seeds the first post of a run) — pass --took only for a measured one.
 
 The wall talks back: react answers any event, challenge doubts one and stays
 open until the challenged actor reacts. IDs come from tail --ids; replies
-carry no grades — dialogue is not telemetry.
+carry no grades — dialogue is not telemetry. The lint joins in: a grade that
+contradicts its own message is raised as a challenge from wallii/lint, at
+most one open per actor and class, until the actor reacts — regrade, or say
+why not. WALLII_AUTO_CHALLENGE=off keeps the lint on stderr only.
 `
 
 func main() {
