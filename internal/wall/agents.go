@@ -24,6 +24,13 @@ type PairState struct {
 // drift. Any post implicitly attaches its pair; attach/detach events set
 // the state explicitly; a post after a detach re-attaches (whoever posts
 // is back). Events must be chronological, as ReadLast returns them.
+//
+// Dialogue is neither: a react or challenge answers a post, it is not work
+// on the repo, and it must not put the replier on the wall for it. Before
+// this was said out loud every reply fell through to the post branch — a
+// bystander's "nice" counted as a post and attached them, and once the lint
+// started raising challenges the registry would have listed wallii/lint
+// against every repo it ever doubted a grade in.
 func Attachments(evs []Event) []PairState {
 	type key struct{ actor, repo string }
 	m := map[key]*PairState{}
@@ -37,6 +44,9 @@ func Attachments(evs []Event) []PairState {
 		return p
 	}
 	for _, e := range evs {
+		if e.Kind != "" && e.Kind != KindAttach && e.Kind != KindDetach {
+			continue
+		}
 		p := get(e.Actor, e.Repo)
 		switch e.Kind {
 		case KindAttach:

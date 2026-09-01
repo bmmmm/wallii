@@ -55,6 +55,34 @@ func TestAttachmentsDetachAndReattachByPosting(t *testing.T) {
 	}
 }
 
+// Dialogue is not work and not a registration: a challenge from a critic
+// must not put the critic on the wall, a react must not count as a post or
+// move the last-post clock, and a react after a detach does not re-attach.
+// Nothing asserted this before, and every reply quietly fell through to
+// the post branch.
+func TestAttachmentsIgnoreDialogue(t *testing.T) {
+	post := Event{TS: at(1), Actor: "bot", Repo: "example-repo", Msg: "work"}
+	evs := []Event{
+		post,
+		{TS: at(2), Actor: "critic", Repo: "example-repo", Kind: KindChallenge, Parent: post.ID(), Msg: "which gate ran?"},
+		{TS: at(3), Actor: "bot", Repo: "example-repo", Kind: KindReact, Parent: post.ID(), Msg: "gate 3"},
+	}
+	got := Attachments(evs)
+	if len(got) != 1 || got[0].Actor != "bot" {
+		t.Fatalf("a challenge must not attach the critic, got %+v", got)
+	}
+	if p := got[0]; p.Posts != 1 || !p.LastPost.Equal(at(1)) {
+		t.Fatalf("a react must not count as a post or move the clock: %+v", p)
+	}
+	evs = append(evs,
+		Event{TS: at(4), Actor: "bot", Repo: "example-repo", Kind: KindDetach, Msg: "detached"},
+		Event{TS: at(5), Actor: "bot", Repo: "example-repo", Kind: KindReact, Parent: post.ID(), Msg: "one more word"},
+	)
+	if p := Attachments(evs)[0]; p.Attached || !p.StateAt.Equal(at(4)) {
+		t.Fatalf("a react after a detach must not re-attach: %+v", p)
+	}
+}
+
 func TestAttachmentsSortedPairs(t *testing.T) {
 	evs := []Event{
 		{TS: at(1), Actor: "z-bot", Repo: "a-repo", Msg: "x"},
