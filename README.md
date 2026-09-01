@@ -274,23 +274,31 @@ that is not about these posts. It never moves the grades: a month of work
 cannot turn rough because one answer just took a minute. The exception is an
 outage, which is a fact about the present and overrides everything.
 
-**`last 10` is there because an average over hundreds of posts cannot be
-contradicted.** With 470 graded posts behind it, a rough afternoon moves the
-headline by a thousandth — so the panel would smile through a bad day and be
-arithmetically right about it. The last ten graded posts are the term that can
-disagree, with an arrow when they do, and when the gap passes a third of a
-step the note under the legend says it in words:
+**A ping prints no number anywhere.** When the panel runs outside a session it
+has no turn time of its own to read, so its live reading is a probe — and
+`ping 126ms` beside `api ~5.4s` invites exactly the comparison this scale
+exists to prevent: 126ms does not mean the API is fast, it means the door
+opened. Reachable and silent is the honest rendering; only an outage speaks.
+
+**The headline is the last ten posts, not the window.** An average over
+hundreds of posts cannot be contradicted: with 470 graded posts behind it a
+rough afternoon moves the number by a thousandth, so a face hung on it would
+blink cheerfully through a bad day and be arithmetically right about it. The
+face is the one thing here people read as a status light, so it goes on the
+part that can still move:
 
 ```
-( o‿o )   good · 3.9   last 10 · 3.5 ↓ · api ~4.1s over 10 posts · now 3.6s
- the last 10 average 3.5, not the 3.9 above — that one spans all 476 graded posts
+( o‿o )   last 10: good · 3.5 ↓ · api ~5.6s over 10   window good · 3.9
 ```
 
 Ten posts, not a time span: a quiet week would leave a duration empty exactly
-when the wall has something to say. The face and the word stay with the
-window's own average, so they never disagree with the number beside them —
-and `wall 3.9` only appears as its own term when something moved it (a drag,
-or a crashout), because otherwise it is the headline number printed twice.
+when the wall has something to say. **Every number in the headline comes off
+those same ten posts** — the grade, the arrow, and the waiting that dragged
+it. An earlier version showed the headline's grade beside the *window's* api
+mean, and a `3.0` two steps down next to a comfortable `~15.2s` is an
+arithmetic nobody can reconstruct. The window follows as its own group,
+carrying its own drag when it has one, and a crashout keeps it visible because
+that is the only place left to see what the day was before the verdict.
 
 | a turn's API time | taken off the grade |
 | --- | --- |

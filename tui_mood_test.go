@@ -760,7 +760,7 @@ func TestMoodPanelDragsTheHeadWithTheWindowsWaiting(t *testing.T) {
 	st := pulsed(turnPosts(60_000, "great", "great", "great"),
 		wall.Pulse{At: time.Now(), OK: true, RTT: 2 * time.Second, Src: wall.PulseSession})
 	panel := render(st, 110, 26)
-	for _, want := range []string{"ok · 3.0", "wall 5.0", "− 2.0", "api ~1m over 3 posts", "now 2s"} {
+	for _, want := range []string{"ok · 3.0", "window 5.0", "− 2.0", "api ~1m over 3 posts", "now 2s"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("head is missing %q:\n%s", want, panel)
 		}
@@ -798,21 +798,26 @@ func TestMoodPanelFastAPILeavesTheGradesAlone(t *testing.T) {
 	}
 }
 
-// The head says which measurement it is holding. A probe that answered in
-// 240ms proves the API is reachable and nothing else — reading it as a fast
-// day is the mistake this wording exists to prevent.
-func TestMoodPanelCallsAPingAPing(t *testing.T) {
+// A probe that answered in 240ms proves the API is reachable and nothing
+// else. Printing that number beside turn times invites the one comparison the
+// whole scale exists to prevent — so a healthy ping prints nothing at all,
+// and only an outage has something to say.
+func TestMoodPanelPrintsNoNumberForAPing(t *testing.T) {
 	st := pulsed(moodPosts("great", "great", "great"),
 		wall.Pulse{At: time.Now(), OK: true, RTT: 240 * time.Millisecond, Src: wall.PulseProbe})
 	panel := render(st, 100, 26)
-	if !strings.Contains(panel, "ping 240ms") {
-		t.Errorf("a probe reading is not named as one:\n%s", panel)
-	}
-	if strings.Contains(panel, "api 240ms") || strings.Contains(panel, "−") {
-		t.Errorf("a ping was rendered as api time or claimed a drag:\n%s", panel)
+	for _, unwanted := range []string{"240ms", "ping", "−"} {
+		if strings.Contains(panel, unwanted) {
+			t.Errorf("a healthy ping put %q in the head:\n%s", unwanted, panel)
+		}
 	}
 	if !strings.Contains(panel, "great · 5.0") {
 		t.Errorf("a ping moved the wall's average:\n%s", panel)
+	}
+	// an outage still speaks, because that one is not a number about speed
+	down := pulsed(moodPosts("great"), wall.Pulse{At: time.Now(), Err: "connection refused"})
+	if got := render(down, 100, 26); !strings.Contains(got, "no api — connection refused") {
+		t.Errorf("an outage went unmentioned:\n%s", got)
 	}
 }
 
@@ -821,7 +826,7 @@ func TestMoodPanelCallsAPingAPing(t *testing.T) {
 func TestMoodPanelCrashesWithoutAPI(t *testing.T) {
 	st := pulsed(moodPosts("great", "great"), wall.Pulse{At: time.Now(), Err: "connection refused"})
 	panel := render(st, 100, 26)
-	for _, want := range []string{moodFaceCrash, moodCrashWord, "no api", "connection refused", "wall 5.0"} {
+	for _, want := range []string{moodFaceCrash, moodCrashWord, "no api", "connection refused", "window great · 5.0"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("crashout head is missing %q:\n%s", want, panel)
 		}
@@ -1182,16 +1187,42 @@ func TestMoodHeadShowsTheRecentStretch(t *testing.T) {
 	st := moodStateOf(moodPosts(moods...), 99)
 	panel := render(st, 110, 30)
 
-	if !strings.Contains(panel, "last 10 · 2.0 ↓") {
-		t.Errorf("head does not carry the recent stretch:\n%s", panel)
+	// the headline is the part that can still move, and the face moves with it
+	if !strings.Contains(panel, "last 10: rough · 2.0 ↓") {
+		t.Errorf("the headline is not the recent stretch:\n%s", panel)
 	}
-	// the headline number stays what it is — an average over the window, and
-	// the face beside it stays consistent with it
-	if !strings.Contains(panel, "good · 4.4") {
-		t.Errorf("head stopped reporting the window's own average:\n%s", panel)
+	if !strings.Contains(panel, moodFaces[3].open) && !strings.Contains(panel, moodFaces[3].blink) {
+		t.Errorf("the face kept smiling through ten rough posts:\n%s", panel)
 	}
-	if !strings.Contains(panel, "the last 10 average 2.0, not the 4.4 above") {
-		t.Errorf("the note does not name the divergence:\n%s", panel)
+	// and the window it sits in is named beside it, never replaced by it
+	if !strings.Contains(panel, "window good · 4.4") {
+		t.Errorf("head dropped the window it is a tail of:\n%s", panel)
+	}
+}
+
+// The headline's grade and its waiting must come off the same posts: a recent
+// stretch dragged by the whole window's latency would be an average of one
+// thing wearing the arithmetic of another.
+func TestMoodHeadDragsTheTailWithItsOwnWaiting(t *testing.T) {
+	// forty quick posts, then ten slow ones — same grades throughout
+	evs := turnPosts(4_000, strings.Fields(strings.Repeat("great ", 50))...)
+	for i := 40; i < 50; i++ {
+		evs[i].PulseMS = 60_000 // a minute a turn: two steps off
+	}
+	panel := render(moodStateOf(evs, 99), 120, 30)
+	if !strings.Contains(panel, "last 10: ok · 3.0 ↓") {
+		t.Errorf("the tail was not dragged by its own waiting:\n%s", panel)
+	}
+	// and the waiting it names is the tail's own: the window's mean is 15.2s,
+	// which drags nothing and would leave the 3.0 unreconstructable
+	if !strings.Contains(panel, "api ~1m over 10") || strings.Contains(panel, "15.2s") {
+		t.Errorf("the head names a different window's waiting than the one it subtracted:\n%s", panel)
+	}
+	// meanwhile the window barely moved — 40 quick turns against 10 slow ones
+	// average 15.2s, a drag of 0.01 — which is exactly why the tail is the
+	// headline: the whole window cannot report a bad afternoon
+	if !strings.Contains(panel, "window great · 5.0") || strings.Contains(panel, "window 5.0 −") {
+		t.Errorf("the window claimed a drag it does not have:\n%s", panel)
 	}
 }
 
@@ -1222,21 +1253,24 @@ func TestMoodRecentSilentOnAShortWall(t *testing.T) {
 	}
 }
 
-// The wall's own average earns a term only when something moved it. Without a
-// drag it is the number already in the head, and twice is not clearer.
-func TestMoodHeadDropsTheRedundantWallTerm(t *testing.T) {
+// The window term carries arithmetic only where there is some. Its job is to
+// say what the headline is a tail of, not to repeat it in longer words.
+func TestMoodWindowTermCarriesItsArithmetic(t *testing.T) {
 	plain := render(moodStateOf(moodPosts("good", "good", "ok"), 99), 110, 30)
-	if strings.Contains(plain, "wall 3.7") {
-		t.Errorf("head prints its own number twice:\n%s", plain)
+	if !strings.Contains(plain, "window good · 3.7") {
+		t.Errorf("head does not name the window:\n%s", plain)
+	}
+	if strings.Contains(plain, "−") {
+		t.Errorf("a window nobody kept waiting claimed a drag:\n%s", plain)
 	}
 	dragged := render(pulsed(turnPosts(60_000, "great", "great", "great"),
 		wall.Pulse{At: time.Now(), OK: true, RTT: time.Minute, Src: wall.PulseSession}), 110, 30)
-	if !strings.Contains(dragged, "wall 5.0 − 2.0") {
+	if !strings.Contains(dragged, "window 5.0 − 2.0") {
 		t.Errorf("head hides the arithmetic behind a drag:\n%s", dragged)
 	}
 	crashed := render(pulsed(moodPosts("great", "great"),
 		wall.Pulse{At: time.Now(), Err: "connection refused"}), 110, 30)
-	if !strings.Contains(crashed, "wall 5.0") {
+	if !strings.Contains(crashed, "window great · 5.0") {
 		t.Errorf("a crashout hid what the wall was before it:\n%s", crashed)
 	}
 }

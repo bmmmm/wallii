@@ -621,11 +621,16 @@ func (m *tuiModel) viewDetail() string {
 	if e.TookS > 0 {
 		field("took", fmtTook(e.TookS))
 	}
-	if t := eventPulseTerm(e); t != "" {
-		// the source belongs in the detail view and nowhere else: a number
-		// the session measured and one wallii probed are worth different
-		// amounts, and this is the one place with room to say which it was
-		field("api", strings.TrimPrefix(t, "api ")+" ("+e.PulseSrc+")")
+	// the detail view is the one place with room to say in words which
+	// measurement this is — everywhere else it has to be inferred from a
+	// prefix, and a bare number invites reading a ping as a turn
+	switch e.PulseSrc {
+	case wall.PulseSession:
+		field("api", pulseDur(time.Duration(e.PulseMS)*time.Millisecond)+" for that turn")
+	case wall.PulseProbe:
+		field("api", pulseDur(time.Duration(e.PulseMS)*time.Millisecond)+" ping — reachable, not a turn time")
+	case wall.PulseNone:
+		field("api", "no answer at all")
 	}
 	b.WriteString("\n  " + lipgloss.NewStyle().Width(max(20, m.width-4)).Render(e.Msg) + "\n")
 	if len(e.Refs) > 0 {

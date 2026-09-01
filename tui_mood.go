@@ -413,22 +413,44 @@ func fit(body string, height int) string {
 // on the same line on purpose — the panel spends its rows on the curve, and a
 // number nobody can check is worth less than the row it would cost.
 func moodVerdict(st moodState, now wall.MoodNow, blink bool, width int) string {
-	line := styleHeader.Render(moodHead(now, blink))
+	line := styleHeader.Render(moodHead(st, now, blink))
 	if r := moodReceipt(st, now); r != "" {
 		line += styleDim.Render("   " + r)
 	}
 	return center(lipgloss.NewStyle().MaxWidth(width).Render(line), width)
 }
 
-// moodHead names the state in a face and a word: the crashout and the ungraded
-// wall are the two the average cannot carry, because one is measured off the
-// API and the other was never posted at all.
-func moodHead(now wall.MoodNow, blink bool) string {
+// moodHead names the state in a face and a word.
+//
+// It reads the tail of the window rather than all of it, because the face is
+// the one thing here that people read as a status light: hung on an average
+// over hundreds of posts it can never change, and a panel that blinks
+// cheerfully through a bad afternoon is worse than one that shows no face at
+// all. Everything in the headline — grade, waiting, word — comes off those
+// same last posts, so it cannot be an average of one thing wearing the
+// arithmetic of another. The window's own figures follow in the receipt.
+//
+// The crashout and the ungraded wall are the two states no average can carry:
+// one is measured off the API, the other was never posted.
+func moodHead(st moodState, now wall.MoodNow, blink bool) string {
 	switch {
 	case now.Crash:
 		return fmt.Sprintf("%s   %s · no api", moodFaceCrash, moodCrashWord)
 	case !now.Known:
 		return moodFaceNone
+	}
+	if tail, ok := st.trail.Tail(moodRecentN); ok {
+		t := tail.Now(st.pulse)
+		head := fmt.Sprintf("%s   last %d: %s · %.1f%s", faceFor(t.Avg, blink), moodRecentN,
+			moodWord(t.Avg), t.Avg, trendMark(t.Avg-now.Avg))
+		// the waiting that dragged this number, not the window's: a headline
+		// two steps down beside the whole window's comfortable mean is an
+		// arithmetic nobody can reconstruct, and that mismatch is the exact
+		// thing the reader would have to trust instead of check
+		if tail.PulseTurns > 0 {
+			head += fmt.Sprintf(" · api ~%s over %d", pulseDur(time.Duration(tail.PulseMS)*time.Millisecond), tail.PulseTurns)
+		}
+		return head
 	}
 	return fmt.Sprintf("%s   %s · %.1f", faceFor(now.Avg, blink), moodWord(now.Avg), now.Avg)
 }
@@ -441,24 +463,21 @@ func moodHead(now wall.MoodNow, blink bool) string {
 func moodReceipt(st moodState, now wall.MoodNow) string {
 	var parts []string
 	if st.trail.Count > 0 {
-		// the wall's own average only earns a term when the waiting moved it:
-		// with no drag it is the number already printed in the head, and
-		// printing it twice fills the line without adding a fact
-		switch {
-		case now.Crash:
-			// the crashout replaces the head's number, so the wall's own is
-			// the only place left to see what the day was before the verdict
-			parts = append(parts, fmt.Sprintf("wall %.1f", st.trail.Avg))
-		case now.Drag >= 0.05:
-			parts = append(parts, fmt.Sprintf("wall %.1f − %.1f", st.trail.Avg, now.Drag))
+		// the window behind the headline, named so the two numbers can never
+		// be taken for one — carrying its own arithmetic only where there is
+		// some, which is a drag that moved it or the crash that replaced it
+		w := fmt.Sprintf("window %s · %.1f", moodWord(st.trail.Avg), st.trail.Avg)
+		if now.Drag >= 0.05 && !now.Crash {
+			w = fmt.Sprintf("window %.1f − %.1f", st.trail.Avg, now.Drag)
 		}
-		if r, ok := st.trail.Recent(moodRecentN); ok {
-			parts = append(parts, fmt.Sprintf("last %d · %.1f%s", moodRecentN, r, trendMark(r-st.trail.Avg)))
-		}
+		parts = append(parts, w)
 	} else if st.pulse.Known() || st.pulsing {
 		parts = append(parts, "no grades")
 	}
-	if st.trail.PulseTurns > 0 {
+	// the window's own waiting, but only where the head is not already showing
+	// the tail's: two api means side by side is the mismatch again, wearing
+	// labels this time
+	if _, hasTail := st.trail.Tail(moodRecentN); !hasTail && st.trail.PulseTurns > 0 {
 		parts = append(parts, fmt.Sprintf("api ~%s over %s",
 			pulseDur(time.Duration(st.trail.PulseMS)*time.Millisecond), plural(st.trail.PulseTurns, "post")))
 	}
@@ -466,7 +485,9 @@ func moodReceipt(st moodState, now wall.MoodNow) string {
 		parts = append(parts, fmt.Sprintf("%d with none", st.trail.PulseDown))
 	}
 	if st.pulse.Known() || st.pulsing {
-		parts = append(parts, moodNowTerm(st.pulse))
+		if t := moodNowTerm(st.pulse); t != "" {
+			parts = append(parts, t)
+		}
 	}
 	return strings.Join(parts, " · ")
 }
@@ -476,10 +497,6 @@ func moodReceipt(st moodState, now wall.MoodNow) string {
 // a duration, because a quiet week would leave a duration empty exactly when
 // the wall has something to say.
 const moodRecentN = 10
-
-// moodTrendGap is when the divergence stops being noise and becomes a finding
-// worth the note line: a third of a step is three of ten posts having moved.
-const moodTrendGap = 0.3
 
 // trendMark says which way the recent stretch sits against the whole. Nothing
 // when they agree: an arrow on a difference of 0.02 is a claim about noise.
@@ -493,9 +510,14 @@ func trendMark(diff float64) string {
 	return ""
 }
 
-// moodNowTerm is the live half in one word-pair. It says `now` for a measured
-// turn because that is what separates it from the window's mean beside it; a
-// probe stays a ping, and an outage keeps its reason.
+// moodNowTerm is the live half in one word-pair: `now` for a measured turn,
+// because that is what separates it from the window's mean printed beside it.
+//
+// A ping prints no number at all. Its milliseconds are a socket handshake, and
+// next to `api ~5.4s` — turn times — they invite the one comparison this whole
+// scale exists to prevent: 126ms does not mean the API is fast, it means the
+// door opened. Reachable and silent is the honest rendering; only an outage
+// has something to say.
 func moodNowTerm(p wall.Pulse) string {
 	switch {
 	case !p.Known():
@@ -503,7 +525,7 @@ func moodNowTerm(p wall.Pulse) string {
 	case !p.OK:
 		return "no api — " + p.Err
 	case !p.Turn():
-		return "ping " + pulseDur(p.RTT)
+		return ""
 	}
 	return "now " + pulseDur(p.RTT)
 }
@@ -1005,14 +1027,6 @@ func moodLegend(s wall.MoodSummary, width int) string {
 // value is a habit, not a reading. Same finding the stats calibration line
 // reports, at the moment you are looking at the curve.
 func moodNote(s wall.MoodSummary) string {
-	// The one note that is about now rather than about the scale: a headline
-	// average over hundreds of posts cannot be moved by a bad afternoon, so
-	// when the end of the curve has left the middle of it, the panel says so
-	// instead of letting the big number speak for the small one.
-	if r, ok := s.Recent(moodRecentN); ok && math.Abs(r-s.Avg) >= moodTrendGap {
-		return fmt.Sprintf("the last %d average %.1f, not the %.1f above — that one spans all %d graded posts",
-			moodRecentN, r, s.Avg, s.Count)
-	}
 	switch {
 	// the line's own coverage comes first while it is thin: a pink line drawn
 	// from four posts out of four hundred is a sample, and it sits in the

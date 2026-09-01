@@ -84,27 +84,48 @@ func MoodLevel(avg float64) int {
 	return l
 }
 
-// Recent averages the last n graded posts — the end of the curve rather than
-// all of it.
+// Tail is the last n graded posts as a window of their own — grades and
+// conditions both, so every number drawn from it describes the same posts.
 //
 // An average over an unbounded history cannot be contradicted: with four
-// hundred posts behind it, a rough afternoon moves the number by a
-// thousandth, so a panel showing only that number is a museum label, not a
-// reading of now. This is the term that can disagree with it, and the
-// disagreement is the finding.
+// hundred posts behind it a rough afternoon moves the number by a thousandth,
+// so a panel that shows only that number is a museum label, not a reading of
+// now. This is the part that can still move.
 //
-// Reports false when the window holds no more than n posts: there the recent
-// stretch IS the window, and printing the same number twice says nothing.
-func (s MoodSummary) Recent(n int) (float64, bool) {
+// Reports false when the window holds no more than n posts: there the tail IS
+// the window, and the same number under two names says nothing twice.
+func (s MoodSummary) Tail(n int) (MoodSummary, bool) {
 	if n <= 0 || s.Count <= n {
-		return 0, false
+		return MoodSummary{}, false
 	}
 	pts := s.Points[len(s.Points)-n:]
-	sum := 0.0
+	t := MoodSummary{Points: pts, Count: len(pts), Total: len(pts), Counts: make([]int, len(Moods))}
+	sum, pulseSum := 0.0, int64(0)
 	for _, p := range pts {
 		sum += p.Avg
+		if sc := MoodScore(p.Mood); sc > 0 {
+			t.Counts[len(Moods)-sc]++
+		}
+		if p.ContraN > 0 {
+			t.Contradicting += p.ContraN
+		}
+		t.PulseDown += p.PulseDown
+		if p.PulseN > 0 {
+			t.PulseTurns += p.PulseN
+			pulseSum += p.PulseMS * int64(p.PulseN)
+			if t.PulseMinMS == 0 || p.PulseMS < t.PulseMinMS {
+				t.PulseMinMS = p.PulseMS
+			}
+			if p.PulseMS > t.PulseMaxMS {
+				t.PulseMaxMS = p.PulseMS
+			}
+		}
 	}
-	return sum / float64(len(pts)), true
+	t.Avg = sum / float64(len(pts))
+	if t.PulseTurns > 0 {
+		t.PulseMS = pulseSum / int64(t.PulseTurns)
+	}
+	return t, true
 }
 
 // Used counts how many of the five values ever appear. One value over
