@@ -187,6 +187,21 @@ out="$(run s14 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
 if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok "14 prose file stays quiet"; else bad "14 prose file: $out"; fi
 rm -f NOTES.md
 
+# 14b THE PROSE FILTER ON ITS OWN. Case 14 above proves the outcome, not the
+#     mechanism: every signature in its fixture sits in backticks, so the
+#     quote rule holds the line and the extractor's `prose` flag never has to
+#     — set it to 0 and the suite still passed 21/21 (measured 2026-09-02,
+#     while wiring the suite into CI). A filter no case can turn red is not
+#     covered. This line carries the signature in plain prose: no backtick or
+#     quote before the anchor, no comment marker, no guard word, no
+#     upper-case token — the file suffix is the only thing left that can keep
+#     it quiet.
+newsid s14b
+printf 'Every t.Skip( written down here is documentation, and the scanner has to read it as prose.\n' > NOTES.md
+out="$(run s14b WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
+if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok "14b prose filter: an unquoted signature in Markdown stays quiet"; else bad "14b prose filter: $out"; fi
+rm -f NOTES.md
+
 # 15 THE QUOTE RULE MUST NOT SWALLOW REAL FINDINGS — a skip reason is quoted,
 #    the skip itself is not, and a gate with `|| true` after a quoted argument
 #    is still a gate. This is the case the rule above is most likely to break.
