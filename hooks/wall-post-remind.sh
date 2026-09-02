@@ -227,7 +227,7 @@ if [ -n "$base" ]; then
     #     sandbox) is a guard; one that names the test itself is a dodge.
     sig_a="(t\.Skip(f|Now)?\(|pytest\.(mark\.)?(skip|xfail)|unittest\.skip|(it|test|describe)\.(skip|only)\(|(^|[^A-Za-z0-9_])x(it|test|describe)\(|#\[ignore)$last"
     guard_env="([A-Z][A-Z0-9_]{2,}|testing\.Short\(\)|-short)$last"
-    guard_words="(requires|needs|missing|not installed|unavailable|no network|offline|not available|no docker|no browser|in CI|on CI|sandbox)$last"
+    guard_words="(needs|missing|not installed|unavailable|no network|offline|not available|no docker|no browser|in CI|on CI|sandbox)$last"
     # B · a gate told to pass: a NAMED build/test/lint command with || true
     #     on the same line (bare || true is idiom under set -u), a CI step
     #     allowed to fail, a hook bypassed.
