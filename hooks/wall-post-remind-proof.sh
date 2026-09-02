@@ -4,8 +4,9 @@
 # $TMPDIR, so the real marker dir and the real wall are never touched. Each
 # case is one line changed against the red case: dedup, environment guard,
 # off switch, out-of-span commit, tracked edit, classes B and C, no HOME,
-# the fold past three findings, comment lines, a Rust attribute — and the
-# regression that the commit trigger still fires. macOS only (`date -v`);
+# the fold past three findings, comment lines, a Rust attribute, a signature
+# inside quotes, a prose file, the real findings that must survive both —
+# and the regression that the commit trigger still fires. macOS only (`date -v`);
 # not part of CI, run it by hand after touching the hook:
 #
 #   go build . && bash hooks/wall-post-remind-proof.sh
@@ -138,6 +139,40 @@ printf '#[ignore]\nfn parses_empty_cart() {}\n' > lib.rs
 out="$(run s12 WALLII_REMIND_IDLE_MIN=0)"; rc=$?
 if printf '%s' "$out" | grep -q 'lib.rs:1'; then ok "12 rust #[ignore] still fires"; else bad "12 rust attribute: $out"; fi
 rm -f lib.rs
+
+# 13 QUOTED SIGNATURE — a line that DEFINES or PRINTS a signature is not one.
+#    Three shapes, all seen on the live wall on 2026-09-02: a shell variable
+#    holding the scanner's own pattern, a printf that names a bypass in its
+#    help text, and a config key quoted inside a message.
+newsid s13
+{
+    printf 'bypass_re="(npm test[^\t]*\\|\\| *true|continue-on-error: *true|--no-verify)$"\n'
+    printf "printf 'push-gate: refusing git push --no-verify to %%s\\n' \"\$remote\" >&2\n"
+    printf 'log_warn "a step with continue-on-error: true hides its own failure"\n'
+} > gate.sh
+out="$(run s13 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
+if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok "13 quoted signatures stay quiet"; else bad "13 quoted signatures: $out"; fi
+rm -f gate.sh
+
+# 14 PROSE FILE — a signature in Markdown is documentation, never a shortcut.
+#    Reproduced against this repo's own README on 2026-09-02.
+newsid s14
+printf 'The scanner reads `go test ./... || true` and `continue-on-error: true`\nas ways around a check, and `t.Skip(` as a switched-off test.\n' > NOTES.md
+out="$(run s14 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
+if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok "14 prose file stays quiet"; else bad "14 prose file: $out"; fi
+rm -f NOTES.md
+
+# 15 THE QUOTE RULE MUST NOT SWALLOW REAL FINDINGS — a skip reason is quoted,
+#    the skip itself is not, and a gate with `|| true` after a quoted argument
+#    is still a gate. This is the case the rule above is most likely to break.
+newsid s15
+{
+    printf 'func TestCheckout(t *testing.T){ t.Skip("flaky under load") }\n'
+    printf 'go test -run "TestCheckout" ./... || true\n'
+} > run_test.go
+out="$(run s15 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
+if printf '%s' "$out" | grep -q 'run_test.go:1' && printf '%s' "$out" | grep -q 'run_test.go:2'; then ok "15 real findings survive the quote rule"; else bad "15 real findings: $out"; fi
+rm -f run_test.go
 
 echo "=== $pass passed, $fail failed (tmp: $T)"
 [ "$fail" -eq 0 ]

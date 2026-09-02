@@ -185,12 +185,20 @@ if [ -n "$base" ]; then
               done
     } | awk '
         /^diff --git / { inhunk = 0; next }
-        !inhunk && /^\+\+\+ / { path = substr($0, 5); next }
+        !inhunk && /^\+\+\+ / {
+            path = substr($0, 5)
+            # Prose names signatures for a living. A `t.Skip(` in a README
+            # is documentation, and the first firing inside the harness
+            # proved it twice: this repo README and the hook mirrored into
+            # dotfiles. Line numbers keep counting, only the finding drops.
+            prose = (path ~ /\.(md|markdown|txt|rst|adoc)$/)
+            next
+        }
         /^@@ / { split($3, a, ","); n = substr(a[1], 2) + 0; inhunk = 1; next }
         inhunk && /^\+/ {
             line = substr($0, 2)
             gsub(/\t/, " ", line); sub(/^ +/, "", line); sub(/[ \r]+$/, "", line)
-            if (line != "") print path "\t" n "\t" line
+            if (line != "" && !prose) print path "\t" n "\t" line
             n++; next
         }
         inhunk && /^ / { n++ }
@@ -227,12 +235,44 @@ if [ -n "$base" ]; then
     # class D is exempt by definition — a commented-out test IS the finding.
     comment="$tab(#([^[!]|\$)|//|/\\*|\\*( |\$))[^$tab]*\$"
 
-    found="$( export LC_ALL=C; {
+    # A signature INSIDE a quote or a backtick is a line that NAMES one, not
+    # one that runs it: this scanner's own pattern definitions, a push gate
+    # printing `--no-verify` in its refusal, a log line about a step with
+    # continue-on-error. All three sat on the live wall on 2026-09-02, and
+    # all three are classes B and C — short tokens that any text about
+    # checks repeats. Class A stays exempt: `t.Skip(` carries its reason in
+    # quotes and its anchor outside them, so the same rule would blind it.
+    # The price is a gate hidden in a quoted value (`run: "npm test || true"`),
+    # which now goes unseen — cheaper than a finding that cannot be taken
+    # back off a post. The class travels as a prefix field and is stripped
+    # again before the dedup, which compares path and content only.
+    found="$( export LC_ALL=C SIG_B="$sig_b" SIG_C="$sig_c"; {
         printf '%s\n' "$added" | grep -E "$sig_a" | grep -Ev "$comment" | grep -Ev "$guard_env" | grep -iEv "$guard_words"
-        printf '%s\n' "$added" | grep -E "$sig_b" | grep -Ev "$comment"
-        printf '%s\n' "$added" | grep -E "$sig_c" | grep -Ev "$comment"
+        printf '%s\n' "$added" | grep -E "$sig_b" | grep -Ev "$comment" | sed "s/^/B$tab/"
+        printf '%s\n' "$added" | grep -E "$sig_c" | grep -Ev "$comment" | sed "s/^/C$tab/"
         printf '%s\n' "$added" | grep -E "$sig_d"
-    } 2>/dev/null | awk '!seen[$0]++')"
+    } 2>/dev/null | awk -F"$tab" '
+        # \047 \042 \140 are the quote, the double quote and the backtick —
+        # spelled in octal so this stays inside single quotes in the shell.
+        function quoted(s, p,   i, ch, sq, dq, bt) {
+            for (i = 1; i < p; i++) {
+                ch = substr(s, i, 1)
+                if (ch == "\047") { if (!dq && !bt) sq = !sq }
+                else if (ch == "\042") { if (!sq && !bt) dq = !dq }
+                else if (ch == "\140") { if (!sq && !dq) bt = !bt }
+            }
+            return (sq || dq || bt)
+        }
+        NF == 4 && ($1 == "B" || $1 == "C") {
+            re = ($1 == "B") ? ENVIRON["SIG_B"] : ENVIRON["SIG_C"]
+            # no match here means awk read the pattern differently than grep
+            # did — keep the finding, the scanner is not the place to guess
+            if (match($4, re) && quoted($4, RSTART)) next
+            print $2 "\t" $3 "\t" $4
+            next
+        }
+        { print }
+    ' | awk '!seen[$0]++')"
 
     marker="$marker_dir/${sid:-nosession}-${repo}.shortcut"
     new=""
