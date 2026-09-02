@@ -741,6 +741,16 @@ is visible in `stats` as a measured shortcut nobody named rather than gone
 with the session. The file is read, never consumed: the hook's own dedup
 lives in it, and a line already answered stays quiet either way.
 
+The session clock behind "since this session started" ages. A session id
+outlives a pause — Claude Code keeps it across `--resume` and across a night
+— so a zero point older than 8h is renewed at the next Stop, the same bound
+`post` uses to discard a derived `took`. Without it, a session taken up the
+next day takes its diff base from before everything that happened in
+between, and reports work it never touched as its own. Markers older than 30
+days are swept at Stop by the hook that writes them; a session left open
+longer than that loses its zero point and its dedup and is given a fresh
+pair.
+
 ### Claude Code skill
 
 `skills/wallii/` ships a read-only digest skill: "what did my agents do?"
