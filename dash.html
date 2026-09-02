@@ -118,6 +118,7 @@
   .feed .topic { color: var(--muted); white-space: nowrap; }
   .feed .msg { flex: 1; min-width: 200px; }
   .feed .grader { color: var(--muted); margin-top: 3px; }
+  .feed .signal { color: var(--ink-2); margin-top: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; overflow-wrap: anywhere; }
   .feed a { color: var(--accent); text-decoration: none; }
   .badge { font-size: 10.5px; border-radius: 5px; padding: 1px 6px; white-space: nowrap; border: 1px solid var(--border); color: var(--ink-2); }
   .badge.ok { color: var(--good); }
@@ -586,6 +587,9 @@ function renderFeed(agg) {
     const msg = el("span", { class: "msg", text: e.msg });
     // the poster's own words on the cheap path, under the message — quoted as written, never counted
     if (e.grader) msg.append(el("div", { class: "grader", text: "↷ " + e.grader }));
+    // and beside them what the session's diff showed, the measurement the
+    // poster did not write: same restraint, no count, no comparison drawn
+    for (const s of e.signals || []) msg.append(el("div", { class: "signal", text: "⌇ " + s }));
     const row = el("div", { class: "row" },
       el("span", { class: "when", text: `${fmtDay(e.t)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` }),
       el("span", { class: "repo", text: e.repo }),

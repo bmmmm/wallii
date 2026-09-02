@@ -36,6 +36,13 @@ type dashEvent struct {
 	// Grader is quoted under the message, never aggregated: the browser
 	// gets the words, not a count of them.
 	Grader string `json:"grader,omitempty"`
+	// Signals are what the session's diff showed, quoted beside the poster's
+	// own words for the same reason and with the same restraint: the
+	// dashboard shows them, it does not count them. stats already counts
+	// distinct shortcuts, and a second aggregation in the browser is a
+	// second chance to count the wrong thing — which is exactly what
+	// happened when that count went by posts.
+	Signals []string `json:"signals,omitempty"`
 }
 
 func cmdDash(args []string) error {
@@ -70,7 +77,7 @@ func cmdDash(args []string) error {
 		out = append(out, dashEvent{
 			T: e.TS.UnixMilli(), Repo: e.Repo, Actor: e.Actor, Topic: e.Topic,
 			Out: e.Outcome, Mood: e.Mood, Took: e.TookS, Src: e.TookSrc, Vs: vs, Refs: e.Refs, Msg: e.Msg,
-			Grader: e.Grader,
+			Grader: e.Grader, Signals: e.Signals,
 		})
 	}
 	// json.Marshal HTML-escapes < > & — safe to inline in a <script> block
