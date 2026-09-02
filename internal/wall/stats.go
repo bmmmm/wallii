@@ -79,11 +79,17 @@ type Stats struct {
 	// ChallengesAuto is how many of Challenges the lint raised (LintActor):
 	// a wall that only ever talked to itself must not read as a wall that
 	// talks back, so consumers subtract it before crediting any dialogue.
-	Reactions      int         `json:"reactions,omitempty"`
-	Challenges     int         `json:"challenges,omitempty"`
-	ChallengesAuto int         `json:"challenges_auto,omitempty"`
-	ChallengesOpen int         `json:"challenges_open,omitempty"`
-	ByChallenged   []NameCount `json:"by_challenged,omitempty"`
+	// ChallengesOpenAuto splits the open ones the same way, because the
+	// digest is told to report "the lint doubts N grades, M still open" and
+	// M is otherwise not derivable: ChallengesOpen mixes both kinds, and
+	// the difference between a machine waiting for an answer and a
+	// colleague waiting for one is the whole point of keeping them apart.
+	Reactions          int         `json:"reactions,omitempty"`
+	Challenges         int         `json:"challenges,omitempty"`
+	ChallengesAuto     int         `json:"challenges_auto,omitempty"`
+	ChallengesOpen     int         `json:"challenges_open,omitempty"`
+	ChallengesOpenAuto int         `json:"challenges_open_auto,omitempty"`
+	ByChallenged       []NameCount `json:"by_challenged,omitempty"`
 
 	// Voice: per-actor style fingerprints — the population's mirror against
 	// monoculture. Only actors with enough posts to have a style appear.
@@ -241,7 +247,13 @@ func Compute(evs []Event) Stats {
 	}
 
 	if s.Challenges > 0 {
-		s.ChallengesOpen = len(OpenChallenges(evs))
+		open := OpenChallenges(evs)
+		s.ChallengesOpen = len(open)
+		for _, oc := range open {
+			if oc.Challenge.Actor == LintActor {
+				s.ChallengesOpenAuto++
+			}
+		}
 		s.ByChallenged = sortedCounts(challenged)
 	}
 	s.Voice = Voices(evs)

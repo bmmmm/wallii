@@ -71,7 +71,9 @@ Output shapes (verified against wallii v0.5.x, 2026-09-02 — grader, signals an
   their wording is the more reliable half. `challenges` includes the lint's
   own (`challenges_auto`); subtract them before calling the window a
   dialogue — a wall that only talked to itself is not a wall that talks
-  back. `with_grader` and `grader_distinct` say how many posts name a cheap
+  back. `challenges_open_auto` is the same split on the open ones, and it
+  is the M in "the lint doubts N, M still open": `challenges_open` counts
+  both kinds together. `with_grader` and `grader_distinct` say how many posts name a cheap
   path and in how many wordings — report both as they are, never as a
   percentage or a ranking. `signals_measured`, `signals_shown` and
   `signals_named` put the measurement beside the report: posts the hook

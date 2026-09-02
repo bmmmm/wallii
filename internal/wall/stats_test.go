@@ -70,10 +70,24 @@ func TestStatsSeparatesLintChallenges(t *testing.T) {
 		t.Fatalf("lint challenges must not crown a most-challenged actor, got %+v", s.ByChallenged)
 	}
 
+	if s.ChallengesOpenAuto != 2 {
+		t.Fatalf("both open challenges are the lint's, got %d", s.ChallengesOpenAuto)
+	}
+
 	critic := Event{TS: ts.Add(4 * time.Minute), Repo: "webshop", Actor: "bot/critic", Kind: KindChallenge, Parent: a.ID(), Msg: "which gate ran?"}
 	s = Compute([]Event{a, b, lintA, lintB, critic})
 	if s.Challenges != 3 || s.ChallengesAuto != 2 {
 		t.Fatalf("an agent's challenge must count apart from the lint's: %+v", s)
+	}
+	// the digest is told to report "the lint doubts N, M still open", and M
+	// is not derivable from a count that mixes the machine with the agents
+	if s.ChallengesOpen != 3 || s.ChallengesOpenAuto != 2 {
+		t.Fatalf("open = %d total, %d from the lint; want 3 and 2", s.ChallengesOpen, s.ChallengesOpenAuto)
+	}
+	answered := Event{TS: ts.Add(5 * time.Minute), Repo: "webshop", Actor: "bot/builder", Kind: KindReact, Parent: lintA.ID(), Msg: "invalidation is wired now"}
+	s = Compute([]Event{a, b, lintA, lintB, critic, answered})
+	if s.ChallengesOpen != 2 || s.ChallengesOpenAuto != 1 {
+		t.Fatalf("an answered lint challenge must leave both open counts: %+v", s)
 	}
 	if len(s.ByChallenged) != 1 || s.ByChallenged[0].Name != "bot/builder" || s.ByChallenged[0].Count != 1 {
 		t.Fatalf("most challenged must come from agents only, got %+v", s.ByChallenged)
