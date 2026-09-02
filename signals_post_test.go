@@ -119,12 +119,16 @@ func TestAuditMarksMeasuredShortcutsAndCountsNamedOksThatHeld(t *testing.T) {
 	t.Setenv("WALLII_DIR", dir)
 	now := time.Now().UTC()
 	sig := `cart_test.go: t.Skip("flaky under load")`
+	// old enough that the oks have outlived hauntProximity — "held" is a
+	// claim about a window that has run out, and a fixture posted an hour
+	// ago cannot make it
+	old := -10 * 24 * time.Hour
 	seed := []wall.Event{
-		{TS: now.Add(-4 * time.Hour), Repo: "webshop", Actor: "bot/builder", Topic: "feature", Outcome: wall.OutcomeOK,
+		{TS: now.Add(old - time.Hour), Repo: "webshop", Actor: "bot/builder", Topic: "feature", Outcome: wall.OutcomeOK,
 			Msg: "cart totals stable across discount rounds", Signals: []string{sig}, SignalSrc: wall.SignalHook},
-		{TS: now.Add(-3 * time.Hour), Repo: "webshop", Actor: "bot/builder", Topic: "fix",
+		{TS: now.Add(old), Repo: "webshop", Actor: "bot/builder", Topic: "fix",
 			Msg: "cart totals drifted on discount rounds once more"},
-		{TS: now.Add(-2 * time.Hour), Repo: "webshop", Actor: "bot/reviewer", Topic: "feature", Outcome: wall.OutcomeOK,
+		{TS: now.Add(old + time.Hour), Repo: "webshop", Actor: "bot/reviewer", Topic: "feature", Outcome: wall.OutcomeOK,
 			Msg: "checkout survives an expired voucher", Grader: "none — the timeout guards a missing sandbox binary"},
 	}
 	for _, e := range seed {
@@ -132,20 +136,26 @@ func TestAuditMarksMeasuredShortcutsAndCountsNamedOksThatHeld(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out := captureStdout(t, func() error { return cmdAudit([]string{"--since", "1d"}) })
+	out := captureStdout(t, func() error { return cmdAudit([]string{"--since", "30d"}) })
 	for _, want := range []string{
 		"· measured shortcut",
 		"    signal " + sig,
 		"1 of 2 ok posts drew a fix",
-		"1 of them carried a measured shortcut — the skipped check was the gap it came back through.",
+		"1 of them came out of a session the hook had measured a shortcut in",
 		"1 ok post named a grader moment and drew no fix — naming the cheap path costs nothing; leaving it out costs later.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("audit is missing %q in:\n%s", want, out)
 		}
 	}
+	// the mark names what was measured — the session carried a shortcut —
+	// and never which of the two the fix answered: signals hang on every
+	// post of a session, so the line may sit in a file this post never saw
+	if strings.Contains(out, "the skipped check was the gap") {
+		t.Errorf("the audit claims a cause nobody measured:\n%s", out)
+	}
 	// the JSON shape carries the mark under its own key, and only when set
-	out = captureStdout(t, func() error { return cmdAudit([]string{"--since", "1d", "--json"}) })
+	out = captureStdout(t, func() error { return cmdAudit([]string{"--since", "30d", "--json"}) })
 	if !strings.Contains(out, `"measured":true`) {
 		t.Errorf("audit --json must carry the mark, got:\n%s", out)
 	}
@@ -156,9 +166,43 @@ func TestAuditMarksMeasuredShortcutsAndCountsNamedOksThatHeld(t *testing.T) {
 	if err := wall.Append(dir, seed[2]); err != nil {
 		t.Fatal(err)
 	}
-	out = captureStdout(t, func() error { return cmdAudit([]string{"--since", "1d"}) })
+	out = captureStdout(t, func() error { return cmdAudit([]string{"--since", "30d"}) })
 	if !strings.Contains(out, "no haunted oks") || !strings.Contains(out, "1 ok post named a grader moment and drew no fix") {
 		t.Errorf("a held window must still count the named oks, got:\n%s", out)
+	}
+	// but an ok posted this morning has held nothing yet, and the line that
+	// would claim it does stays away entirely rather than printing a zero
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	fresh := seed[2]
+	fresh.TS = now.Add(-2 * time.Hour)
+	if err := wall.Append(dir, fresh); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStdout(t, func() error { return cmdAudit([]string{"--since", "30d"}) })
+	if strings.Contains(out, "named a grader moment and drew no fix") {
+		t.Errorf("a two-hour-old ok was counted as having held:\n%s", out)
+	}
+	if strings.Contains(out, "0 ok post") {
+		t.Errorf("a zero was printed as if it were a finding:\n%s", out)
+	}
+	// and the same at the other end of the audit: a window WITH a haunting
+	// but with nothing that held reads the zero line as a grading finding
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range seed[:2] {
+		if err := wall.Append(dir, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out = captureStdout(t, func() error { return cmdAudit([]string{"--since", "30d"}) })
+	if !strings.Contains(out, "1 of 1 ok posts drew a fix") {
+		t.Fatalf("the fixture must still haunt, got:\n%s", out)
+	}
+	if strings.Contains(out, "named a grader moment and drew no fix") {
+		t.Errorf("nothing held here, and the audit said something about it:\n%s", out)
 	}
 }
 

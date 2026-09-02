@@ -113,11 +113,19 @@ func TestSummarizeCountsBothDirections(t *testing.T) {
 	if len(haunted) != 2 {
 		t.Fatalf("fixture must haunt exactly two oks, got %+v", haunted)
 	}
-	s := Summarize(evs, haunted)
+	// long after the fixture, so every ok in it has outlived hauntProximity
+	later := ts.Add(30 * 24 * time.Hour)
+	s := Summarize(evs, haunted, later)
 	if s.OKs != 4 || s.Haunted != 2 || s.Measured != 1 || s.NamedHeld != 1 {
 		t.Fatalf("summary = %+v, want 4 oks, 2 haunted, 1 measured, 1 named and held", s)
 	}
-	if s := Summarize(nil, nil); s != (AuditSummary{}) {
+	// "held" is a claim about a window that has run out: read on the day
+	// the oks were posted, nothing has held anything yet — the oks still
+	// count, only the survival claim waits
+	if fresh := Summarize(evs, haunted, ts.Add(time.Hour)); fresh.NamedHeld != 0 || fresh.OKs != 4 {
+		t.Fatalf("a window younger than hauntProximity summed to %+v, want 4 oks and 0 held", fresh)
+	}
+	if s := Summarize(nil, nil, later); s != (AuditSummary{}) {
 		t.Fatalf("an empty window sums to %+v", s)
 	}
 }

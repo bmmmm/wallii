@@ -24,10 +24,12 @@ const hauntMinShared = 2
 
 // Haunting pairs an ok-graded post with a later fix on the same ground.
 // Measured says the ok carried a shortcut signature the Stop hook found in
-// the session's diff (Signals). That pairing is the one place on the wall
-// where a shortcut is proven rather than suspected: the skipped check was
-// the gap the fix came back through, and neither half of the proof was
-// asked of anyone — the hook read the diff, the audit read the record.
+// the session's diff (Signals). It is the strongest pairing the wall has,
+// and it is still not proof that THIS skip was the gap: signals attach to
+// every post of a session, so the line the diff showed may sit in a file
+// this post never touched. What is measured is that the session behind this
+// ok carried a shortcut and the ok did not hold — two records, neither
+// asked of anyone, and no claim about which caused which.
 type Haunting struct {
 	OK       Event    `json:"ok"`
 	Fix      Event    `json:"fix"`
@@ -36,12 +38,14 @@ type Haunting struct {
 }
 
 // AuditSummary is what the window's oks add up to once Hauntings has paired
-// them. Measured is the honeypot reading — haunted oks that carried a
-// measured shortcut. NamedHeld is the other direction: oks whose poster
+// them. Measured is the honeypot reading — haunted oks whose session carried
+// a measured shortcut. NamedHeld is the other direction: oks whose poster
 // named the cheap path (Grader) and that no fix came back for, the evidence
-// that naming it costs nothing and leaving it out costs later. Both are
-// counts over the window and never per actor: a leaderboard on either is
-// won by not posting the ok at all.
+// that naming it costs nothing and leaving it out costs later. It counts
+// only oks old enough to have survived hauntProximity — a post from this
+// morning has not held anything yet. Both are counts over the window and
+// never per actor: a leaderboard on either is won by not posting the ok at
+// all.
 type AuditSummary struct {
 	OKs       int `json:"oks"`
 	Haunted   int `json:"haunted"`
@@ -52,7 +56,7 @@ type AuditSummary struct {
 // Summarize counts the window behind a Hauntings result. haunted must come
 // from the same evs, which is why both are passed rather than recomputed:
 // the audit prints the pairs and the sums from one pass over one record.
-func Summarize(evs []Event, haunted []Haunting) AuditSummary {
+func Summarize(evs []Event, haunted []Haunting, now time.Time) AuditSummary {
 	var s AuditSummary
 	byID := map[string]struct{}{}
 	for _, h := range haunted {
@@ -67,6 +71,13 @@ func Summarize(evs []Event, haunted []Haunting) AuditSummary {
 			continue
 		}
 		s.OKs++
+		// "held" is a claim about a window that has run out. An ok posted
+		// an hour ago has not held anything yet — its 7 days have barely
+		// started, and counting it says the fix will not come. Only oks
+		// past hauntProximity can be counted as having survived it.
+		if now.Sub(e.TS) < hauntProximity {
+			continue
+		}
 		if _, was := byID[e.ID()]; !was && strings.TrimSpace(e.Grader) != "" {
 			s.NamedHeld++
 		}
