@@ -285,4 +285,10 @@ func TestAutoChallengeSwitch(t *testing.T) {
 	if AutoChallengeEnabled() {
 		t.Error("off must be off, whatever the case")
 	}
+	// a value read out of a file arrives with its newline attached, and an
+	// off switch that quietly stays on is worse than none at all
+	t.Setenv("WALLII_AUTO_CHALLENGE", " off\n")
+	if AutoChallengeEnabled() {
+		t.Error("off must be off, whatever the whitespace")
+	}
 }

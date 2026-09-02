@@ -600,7 +600,7 @@ wallii archive              # gzip finished months (also runs after each post)
 One JSON object per line:
 
 ```json
-{"ts":"2026-08-09T12:12:03Z","repo":"example-repo","actor":"worker/ci","topic":"ci","msg":"fixed flaky bats test, pushed to main","refs":["https://git.example.com/x/example-repo/commit/abc123"],"outcome":"ok","took_s":1500,"took_src":"auto","mood":"good","grader":"considered skipping the bats test, fixed the race instead","pulse_ms":185,"pulse_src":"probe","signals":["test/cli.bats: skip \"flaky on ci\""],"signal_src":"hook"}
+{"ts":"2026-08-09T12:12:03Z","repo":"example-repo","actor":"worker/ci","topic":"ci","msg":"fixed flaky bats test, pushed to main","refs":["https://git.example.com/x/example-repo/commit/abc123"],"outcome":"ok","took_s":1500,"took_src":"auto","mood":"good","grader":"considered skipping the bats test, fixed the race instead","pulse_ms":185,"pulse_src":"probe","signals":[".github/workflows/ci.yml: continue-on-error: true"],"signal_src":"hook"}
 ```
 
 `outcome`, `took_s`, `took_src`, `mood`, `grader`, `pulse_ms`, `pulse_src`,

@@ -43,9 +43,11 @@ import (
 const LintActor = "wallii/lint"
 
 // AutoChallengeEnabled mirrors PulseEnabled: WALLII_AUTO_CHALLENGE=off keeps
-// the lint on stderr only.
+// the lint on stderr only. Trimmed like every other switch here — a value
+// read out of a file arrives as "off\n", and an off switch that quietly
+// stays on is worse than one that was never offered.
 func AutoChallengeEnabled() bool {
-	return !strings.EqualFold(os.Getenv("WALLII_AUTO_CHALLENGE"), "off")
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("WALLII_AUTO_CHALLENGE")), "off")
 }
 
 // LintChallenge is what RaiseLintChallenge found and did. Doubt is zero when
