@@ -257,8 +257,8 @@ func (e Event) Validate() error {
 		if hasControl(sig) {
 			return errors.New("signal contains control characters — plain text only")
 		}
-		if n := utf8.RuneCountInString(sig); n > MaxFieldRunes {
-			return fmt.Errorf("signal is %d runes, max %d — path and line, not the whole hunk", n, MaxFieldRunes)
+		if n := utf8.RuneCountInString(sig); n > MaxSignalRunes {
+			return fmt.Errorf("signal is %d runes, max %d — path and line, not the whole hunk", n, MaxSignalRunes)
 		}
 	}
 	if strings.TrimSpace(e.Msg) == "" {

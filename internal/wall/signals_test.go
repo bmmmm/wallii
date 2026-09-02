@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // markerFile points HOME at a temp dir, names a session, and returns the
@@ -110,7 +111,7 @@ func TestSessionSignalsUnreadableMarkerIsNobodyMeasured(t *testing.T) {
 }
 
 // The post is a pointer, not a catalogue: the first MaxSignals lines land,
-// the rest stays in the file. And every value fits the field cap, with an
+// the rest stays in the file. And every value fits the signal cap, with an
 // ellipsis where the line was longer.
 func TestSessionSignalsCapsCountAndLength(t *testing.T) {
 	path := markerFile(t, "webshop")
@@ -133,8 +134,47 @@ func TestSessionSignalsCapsCountAndLength(t *testing.T) {
 
 	writeMarker(t, path, "e_test.go\t"+long+"\n")
 	values, _ = SessionSignals("webshop")
-	if n := len([]rune(values[0])); n > MaxFieldRunes || !strings.HasSuffix(values[0], "…") {
-		t.Errorf("long line renders as %d runes %q, want ≤ %d ending in …", n, values[0], MaxFieldRunes)
+	if n := len([]rune(values[0])); n > MaxSignalRunes || !strings.Contains(values[0], "…") {
+		t.Errorf("long line renders as %d runes %q, want ≤ %d with an …", n, values[0], MaxSignalRunes)
+	}
+	e := Event{TS: time.Now(), Repo: "webshop", Msg: "x", Signals: values, SignalSrc: SignalHook}
+	if err := e.Validate(); err != nil {
+		t.Fatalf("a cut signal must still validate: %v", err)
+	}
+}
+
+// Cutting the tail off a signal drops the reason, and the reason is what
+// tells a guard from a shortcut: `t.Skip("flaky under load")` is one,
+// `t.Skip("no ffmpeg — run: brew install ffmpeg")` is the other, and they
+// differ only in the words at the end. So an over-long line loses its
+// middle — the function signature nobody reads — and keeps both ends.
+func TestSignalCutKeepsThePathAndTheReason(t *testing.T) {
+	path := markerFile(t, "webshop")
+	reason := `t.Skip("flaky under load")`
+	line := "cart_test.go\tfunc TestCartCheckoutAppliesEveryDiscountInTheOrderTheBasketListsThem(t *testing.T) { " + reason
+	writeMarker(t, path, line+"\n")
+
+	values, _ := SessionSignals("webshop")
+	if len(values) != 1 {
+		t.Fatalf("got %d signals, want 1", len(values))
+	}
+	got := values[0]
+	if n := utf8.RuneCountInString(got); n > MaxSignalRunes {
+		t.Fatalf("cut signal is %d runes, max %d: %q", n, MaxSignalRunes, got)
+	}
+	if !strings.HasPrefix(got, "cart_test.go: ") {
+		t.Errorf("the path must open the line, got %q", got)
+	}
+	if !strings.HasSuffix(got, reason) {
+		t.Errorf("the reason must survive the cut, got %q", got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Errorf("a cut line must say it was cut, got %q", got)
+	}
+	// and the same line at 64 runes would have ended mid-reason — the bug
+	// this cut exists to prevent
+	if utf8.RuneCountInString(line) <= MaxFieldRunes {
+		t.Fatalf("the fixture must be longer than the old cap to prove anything")
 	}
 	e := Event{TS: time.Now(), Repo: "webshop", Msg: "x", Signals: values, SignalSrc: SignalHook}
 	if err := e.Validate(); err != nil {

@@ -195,7 +195,7 @@ func TestValidateSignalsBounds(t *testing.T) {
 		"too many": {"a: x", "b: x", "c: x", "d: x"},
 		"empty":    {"   "},
 		"control":  {"a_test.go: t.Skip(\x1b[2J)"},
-		"over cap": {strings.Repeat("ä", MaxFieldRunes+1)},
+		"over cap": {strings.Repeat("ä", MaxSignalRunes+1)},
 	}
 	for name, sigs := range cases {
 		e := validEvent()
@@ -205,7 +205,7 @@ func TestValidateSignalsBounds(t *testing.T) {
 		}
 	}
 	e := validEvent()
-	e.Signals, e.SignalSrc = []string{"a: x", "b: x", strings.Repeat("ä", MaxFieldRunes)}, SignalHook
+	e.Signals, e.SignalSrc = []string{"a: x", "b: x", strings.Repeat("ä", MaxSignalRunes)}, SignalHook
 	if err := e.Validate(); err != nil {
 		t.Errorf("%d signals at the cap rejected: %v", MaxSignals, err)
 	}

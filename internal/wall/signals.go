@@ -45,6 +45,14 @@ const SignalHook = "hook"
 // the post is a pointer, not a catalogue.
 const MaxSignals = 3
 
+// MaxSignalRunes caps one signal line, and is deliberately not
+// MaxFieldRunes: a signal is `path: line`, and at 64 runes
+// `cart_test.go: func TestCart(t *testing.T){ t.Skip("flaky under…` loses
+// exactly the words that tell a guard from a shortcut. A repo, a topic or
+// an actor is a name and gets a name's budget; this is evidence, and the
+// end of it carries the reason.
+const MaxSignalRunes = 120
+
 // signalsDir is where the Stop hook keeps its markers, under the home
 // directory rather than a configurable path: the hook has no config file
 // either, and one more environment variable would be one more way for the
@@ -118,9 +126,21 @@ func signalText(line string) string {
 		}
 		return r
 	}, s)
-	if utf8.RuneCountInString(s) > MaxFieldRunes {
-		r := []rune(s)
-		s = strings.TrimSpace(string(r[:MaxFieldRunes-1])) + "…"
+	return cutSignal(s)
+}
+
+// cutSignal shortens an over-long signal from the middle, keeping both
+// ends. Cutting the tail is what a name deserves and what evidence cannot
+// afford: the path opens the line and the reason closes it — `t.Skip("flaky
+// under load")` — so dropping the end drops the half that decides whether
+// the line is a guard or a way around one. What sits between them, the
+// signature of the function the line lives in, is the part nobody reads.
+func cutSignal(s string) string {
+	if utf8.RuneCountInString(s) <= MaxSignalRunes {
+		return s
 	}
-	return s
+	r := []rune(s)
+	head := MaxSignalRunes * 2 / 3
+	tail := MaxSignalRunes - head - 1
+	return strings.TrimSpace(string(r[:head])) + "…" + strings.TrimSpace(string(r[len(r)-tail:]))
 }
