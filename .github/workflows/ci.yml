@@ -21,3 +21,31 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: go build .
+
+  # The Stop hook is the measuring half of the self-report: what it finds gets
+  # written onto posts and cannot be overwritten afterwards, so a bug there is
+  # more expensive than one in `stats`. macos-latest, not ubuntu: the hook runs
+  # nowhere but the author's Mac and its traps are BSD ones — a GNU runner would
+  # be green while the real hook breaks.
+  hook:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 'stable'
+      - run: go build .
+      - run: bash hooks/wall-post-remind-proof.sh
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./hooks
+          severity: warning
+      - uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./scripts
+          severity: warning

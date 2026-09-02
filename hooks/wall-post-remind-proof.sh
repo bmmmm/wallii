@@ -8,8 +8,13 @@
 # inside quotes, a prose file, the real findings that must survive both, a
 # threshold above the findings, an unreadable threshold, a fixture that
 # writes a skip — and the regression that the commit trigger still fires.
-# macOS only (`date -v`);
-# not part of CI, run it by hand after touching the hook:
+# macOS only, and deliberately so: the hook's traps are BSD ones — no `\b` in
+# the patterns (a GNU extension), BSD awk's position logic instead of a greedy
+# substitution, LC_ALL=C against its abort on non-UTF-8 bytes — and the hook
+# runs on nothing but this Mac. A GNU runner would stay green while the real
+# hook breaks, so the CI job (`hook` in ci.yml) is macos-latest and the two
+# `date -v` calls below stay as they are. Runs there on every push, and here
+# after every change to the hook:
 #
 #   go build . && bash hooks/wall-post-remind-proof.sh
 #
@@ -48,7 +53,25 @@ pass=0; fail=0
 ok()   { pass=$((pass+1)); echo "PASS $1"; }
 bad()  { fail=$((fail+1)); echo "FAIL $1"; }
 
-echo "jq: $(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v jq || echo missing)"
+# Preflight. The hook exits 0 in silence when jq or the wallii binary is
+# missing from its PATH, and eleven of the cases below assert silence — on a
+# machine without either they pass having tested nothing, and the ten red cases
+# fail with output that names the symptom instead of the cause. Check against
+# the PATH the hook builds for itself (its own widening on top of run()'s
+# /usr/bin:/bin), not the caller's, or the assurance covers a different lookup
+# than the test run performs. The substitution keeps PATH inside a subshell.
+hook_path="$H/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+jq_bin="$(PATH="$hook_path" command -v jq || true)"
+if [ -z "$jq_bin" ]; then
+    echo "preflight: no jq on the hook's PATH ($hook_path) — install it: brew install jq" >&2
+    exit 1
+fi
+if [ ! -x "$BIN" ]; then
+    echo "preflight: no wallii binary at $BIN — build it: go build ." >&2
+    exit 1
+fi
+echo "jq: $jq_bin"
+echo "binary: $BIN"
 echo "hook: $HOOK"
 
 # 1 RED — untracked test file with a bare skip
