@@ -80,6 +80,9 @@ func cmdStats(args []string) error {
 	}
 	fmt.Printf("refs     %d/%d posts carry a ref (%d%%)\n", s.WithRefs, s.Posts, pct(s.WithRefs, s.Posts))
 	fmt.Println(graderLine(s))
+	if line := signalsLine(s); line != "" {
+		fmt.Println(line)
+	}
 	for _, line := range dialogLines(s) {
 		fmt.Println(line)
 	}
@@ -196,6 +199,30 @@ func graderLine(s wall.Stats) string {
 		return `grader   none — no post names the cheap path it saw; wallii post --grader "<the cheap path, taken or not>" …`
 	}
 	return fmt.Sprintf("grader   %d/%d posts name a grader moment · %d distinct", s.WithGrader, s.Posts, s.GraderDistinct)
+}
+
+// signalsLine puts the measurement beside the report: of the posts whose
+// session the hook scanned, how many carried a shortcut the diff showed,
+// and of those how many also named a grader moment — and how many did not.
+// That last number is the whole reason the line exists, and it is reported,
+// not computed with: no percentage, no per-actor split, no challenge raised
+// from it. A measured shortcut without a grader is often entirely fine —
+// the hook's environment-guard filter is good, not perfect — and nobody
+// owes a counter an explanation. Silent when no post carries a source: most
+// of the wall predates the hook, and zero coverage is not a clean diff.
+func signalsLine(s wall.Stats) string {
+	if s.SignalsMeasured == 0 {
+		return ""
+	}
+	if s.WithSignals == 0 {
+		return fmt.Sprintf("signals  measured on %s, none carried a shortcut", plural(s.SignalsMeasured, "post"))
+	}
+	unit := "posts"
+	if s.SignalsMeasured == 1 {
+		unit = "post"
+	}
+	return fmt.Sprintf("signals  %d of %d measured %s carried a shortcut · %d of them named a grader moment, %d did not",
+		s.WithSignals, s.SignalsMeasured, unit, s.SignalsNamed, s.WithSignals-s.SignalsNamed)
 }
 
 // moodSpread lists the mood distribution in scale order. The average alone

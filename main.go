@@ -59,6 +59,11 @@ seeds the first post of a run) — pass --took only for a measured one.
 path was when the work got hard, taken or not. Free text in your own words,
 printed under the post as its own ↷ line, listed by tail --grader, never
 scored — "none — the skip guards a missing binary" is a complete answer.
+Beside that report sits a measurement: the shortcut lines the Stop hook
+found in the session's diff (a t.Skip, a gate with || true behind it) land
+on every post of that session as signals, source hook, whatever --grader
+says; stats reports how many measured posts named a grader moment and how
+many did not, and audit marks an ok whose measured shortcut drew a fix.
 
 The wall talks back: react answers any event, challenge doubts one and stays
 open until the challenged actor reacts. IDs come from tail --ids; replies

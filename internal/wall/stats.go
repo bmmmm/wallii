@@ -55,6 +55,19 @@ type Stats struct {
 	WithGrader     int `json:"with_grader"`
 	GraderDistinct int `json:"grader_distinct"`
 
+	// Signals: the measurement beside the report. SignalsMeasured counts the
+	// posts whose session the Stop hook scanned at all, WithSignals those
+	// where the diff showed a shortcut signature, SignalsNamed the ones among
+	// those whose poster also wrote a grader. The difference is the finding
+	// — measurement against self-report, the same idiom as mood against the
+	// message one level down — and it is reported, never computed with: no
+	// percentage, no per-actor split, no challenge raised from it. A signal
+	// without a grader is often entirely fine (the hook's environment-guard
+	// filter is good, not perfect), and nobody owes a counter an explanation.
+	SignalsMeasured int `json:"signals_measured,omitempty"`
+	WithSignals     int `json:"with_signals,omitempty"`
+	SignalsNamed    int `json:"signals_named,omitempty"`
+
 	// Dialogue: reactions and challenges are replies, not work, so they stay
 	// out of Posts — but a wall where they are zero is a wall nobody reads.
 	// ChallengesAuto is how many of Challenges the lint raised (LintActor):
@@ -197,6 +210,15 @@ func Compute(evs []Event) Stats {
 		if g := strings.TrimSpace(e.Grader); g != "" {
 			s.WithGrader++
 			graders[strings.ToLower(g)] = struct{}{}
+		}
+		if e.SignalSrc != "" {
+			s.SignalsMeasured++
+			if len(e.Signals) > 0 {
+				s.WithSignals++
+				if strings.TrimSpace(e.Grader) != "" {
+					s.SignalsNamed++
+				}
+			}
 		}
 	}
 	s.GraderDistinct = len(graders)

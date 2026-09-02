@@ -103,6 +103,13 @@ func cmdPost(args []string) error {
 		fmt.Fprintln(os.Stderr, "wallii:", pnote)
 	}
 	pulseMS, pulseSrc := pulse.Fields()
+	// And what the session's diff showed: the shortcut signatures the Stop
+	// hook already found, read from its marker rather than derived again.
+	// The measurement beside the report — --grader is what the poster says
+	// about the cheap path, this is what the diff said. Non-fatal by
+	// construction: there is no error to return, and a marker that cannot be
+	// read is a marker nobody measured with.
+	signals, signalSrc := wall.SessionSignals(*repo)
 	now := time.Now()
 
 	// one read serves both post-time lints: the actor's own history is the
@@ -122,7 +129,7 @@ func cmdPost(args []string) error {
 
 	e := wall.Event{TS: now.UTC(), Repo: *repo, Actor: who, Topic: *topic, Msg: msg, Refs: refs,
 		Outcome: *outcome, TookS: tookS, TookSrc: tookSrc, Mood: *mood, Grader: *grader,
-		PulseMS: pulseMS, PulseSrc: pulseSrc}
+		PulseMS: pulseMS, PulseSrc: pulseSrc, Signals: signals, SignalSrc: signalSrc}
 	if err := wall.Append(dir, e); err != nil {
 		return err
 	}

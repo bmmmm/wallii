@@ -47,3 +47,36 @@ func TestTUIShowsGraderOnSelectedRowAndInDetail(t *testing.T) {
 		}
 	}
 }
+
+// The detail view shows what the diff showed, one line per finding, and
+// the row keeps its shape: the signals are for whoever opens the post, not
+// a badge on the list.
+func TestTUIDetailListsEachSignal(t *testing.T) {
+	sigs := []string{`cart_test.go: t.Skip("flaky under load")`, ".github/workflows/ci.yml: continue-on-error: true"}
+	evs := []wall.Event{{
+		TS: time.Now(), Repo: "webshop", Topic: "fix", Actor: "bot/builder", Msg: "cart totals fixed",
+		Signals: sigs, SignalSrc: wall.SignalHook,
+	}}
+	m := newTUI(t.TempDir(), evs)
+	m.width, m.height = 100, 24
+
+	detail := m.viewDetail()
+	if got := strings.Count(detail, "signal"); got != len(sigs) {
+		t.Errorf("detail names %d signal lines, want %d:\n%s", got, len(sigs), detail)
+	}
+	for _, s := range sigs {
+		if !strings.Contains(detail, s) {
+			t.Errorf("detail is missing %q:\n%s", s, detail)
+		}
+	}
+	if row := m.line(evs[0], true); strings.Contains(row, "signal") || strings.Contains(row, "t.Skip") {
+		t.Errorf("the selected row must stay as it was, got:\n%s", row)
+	}
+	// measured and clean: nothing to list, and nothing invented
+	evs[0].Signals = nil
+	m = newTUI(t.TempDir(), evs)
+	m.width, m.height = 100, 24
+	if detail := m.viewDetail(); strings.Contains(detail, "signal") {
+		t.Errorf("a clean scan has no signal line, got:\n%s", detail)
+	}
+}

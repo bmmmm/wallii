@@ -164,3 +164,76 @@ func TestIDIgnoresGrader(t *testing.T) {
 		t.Fatalf("grader changed the ID: %s vs %s — every stored parent reference would break", a.ID(), b.ID())
 	}
 }
+
+// A signal is a measurement, and a measurement nobody claims is a guess: the
+// source is mandatory beside the values, and legal on its own — the hook
+// looked, found nothing, and an absent field could never say so.
+func TestValidateSignalsNeedASourceButASourceNeedsNoSignals(t *testing.T) {
+	e := validEvent()
+	e.Signals = []string{`cart_test.go: t.Skip("flaky under load")`}
+	if err := e.Validate(); err == nil {
+		t.Error("signals without a source accepted")
+	}
+	e.SignalSrc = SignalHook
+	if err := e.Validate(); err != nil {
+		t.Errorf("signals from the hook rejected: %v", err)
+	}
+	e.Signals = nil
+	if err := e.Validate(); err != nil {
+		t.Errorf("a source without signals — measured, nothing found — rejected: %v", err)
+	}
+	e.SignalSrc = "diff"
+	if err := e.Validate(); err == nil {
+		t.Error("unknown signal source accepted")
+	}
+}
+
+// Form only: a bounded count of bounded one-line strings, nothing about
+// what they say.
+func TestValidateSignalsBounds(t *testing.T) {
+	cases := map[string][]string{
+		"too many": {"a: x", "b: x", "c: x", "d: x"},
+		"empty":    {"   "},
+		"control":  {"a_test.go: t.Skip(\x1b[2J)"},
+		"over cap": {strings.Repeat("ä", MaxFieldRunes+1)},
+	}
+	for name, sigs := range cases {
+		e := validEvent()
+		e.Signals, e.SignalSrc = sigs, SignalHook
+		if err := e.Validate(); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	e := validEvent()
+	e.Signals, e.SignalSrc = []string{"a: x", "b: x", strings.Repeat("ä", MaxFieldRunes)}, SignalHook
+	if err := e.Validate(); err != nil {
+		t.Errorf("%d signals at the cap rejected: %v", MaxSignals, err)
+	}
+}
+
+// Dialogue has no diff for the hook to have measured.
+func TestValidateSignalsAreNotDialogue(t *testing.T) {
+	for _, kind := range []string{KindReact, KindChallenge} {
+		e := validEvent()
+		e.Kind, e.Parent = kind, "abcd123"
+		e.SignalSrc = SignalHook
+		if err := e.Validate(); err == nil {
+			t.Errorf("%s with a signal source accepted — signals belong on posts", kind)
+		}
+		e.Signals = []string{"a_test.go: t.Skip(\"x\")"}
+		if err := e.Validate(); err == nil {
+			t.Errorf("%s with signals accepted — signals belong on posts", kind)
+		}
+	}
+}
+
+// Same pin as for the grader: the hash must not grow, or every stored
+// parent reference breaks.
+func TestIDIgnoresSignals(t *testing.T) {
+	a := validEvent()
+	b := a
+	b.Signals, b.SignalSrc = []string{"a_test.go: t.Skip(\"x\")"}, SignalHook
+	if a.ID() != b.ID() {
+		t.Fatalf("signals changed the ID: %s vs %s — every stored parent reference would break", a.ID(), b.ID())
+	}
+}
