@@ -7,12 +7,13 @@
 # the fold past three findings, comment lines, a Rust attribute, a signature
 # inside quotes, a prose file, the real findings that must survive both, a
 # threshold above the findings, an unreadable threshold, a fixture that
-# writes a skip — and the regression that the commit trigger still fires.
+# writes a skip, an aged session clock in both directions — and the
+# regression that the commit trigger still fires.
 # macOS only, and deliberately so: the hook's traps are BSD ones — no `\b` in
 # the patterns (a GNU extension), BSD awk's position logic instead of a greedy
 # substitution, LC_ALL=C against its abort on non-UTF-8 bytes — and the hook
 # runs on nothing but this Mac. A GNU runner would stay green while the real
-# hook breaks, so the CI job (`hook` in ci.yml) is macos-latest and the two
+# hook breaks, so the CI job (`hook` in ci.yml) is macos-latest and the
 # `date -v` calls below stay as they are. Runs there on every push, and here
 # after every change to the hook:
 #
@@ -258,6 +259,75 @@ newsid s18
 out="$(run s18 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
 if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok "18 a fixture writing a skip stays quiet"; else bad "18 fixture skip: $out"; fi
 rm -f make_fixture.sh
+
+# 19 THE SESSION CLOCK AGES. A session id outlives a pause — Claude Code
+#    keeps it across --resume and across a night — and a zero point written
+#    exactly once would keep measuring from it. The diff base then sits
+#    before work this session never touched, and every signature committed
+#    since reads as a finding of this one. Measured on 2026-09-02 over the
+#    live markers: 13 of 68 pairs more than 8h apart, the worst 20h.
+#
+#    Its own repo, because both directions turn on WHICH commit the base
+#    lands on, and that needs a history in chronological order rather than
+#    the fixture above, whose commits all sit within the last two hours and
+#    would send both cases through the empty-tree fallback instead. An
+#    anchor at -12h, a committed skip at -6h, working tree clean.
+R2="$T/r2"
+git init -q "$R2"
+cd "$R2" || exit 1
+git config user.email t@t
+git config user.name t
+anchor_date="$(date -u -v-12H +%Y-%m-%dT%H:%M:%SZ)"
+skip_date="$(date -u -v-6H +%Y-%m-%dT%H:%M:%SZ)"
+printf 'package r2\n' > base.go
+git add base.go
+GIT_COMMITTER_DATE="$anchor_date" git commit -qm anchor --date="$anchor_date"
+printf 'func TestPay(t *testing.T){ t.Skip("flaky") }\n' > pay_test.go
+git add pay_test.go
+GIT_COMMITTER_DATE="$skip_date" git commit -qm "skip committed 6h ago" --date="$skip_date"
+# aged <sid> <hours> — a session clock that already carries age
+aged() { printf '%s %s' "$(( $(date +%s) - $2 * 3600 ))" "$(date -u -v-"$2"H +%Y-%m-%dT%H:%M:%SZ)" > "$MD/$1.start"; }
+
+# 19a A STALE CLOCK IS RENEWED — 9h is past the 8h bound, so the zero point
+#     moves to now, the base lands on the -6h commit, and the skip below it
+#     is not this session's business. Turns red the moment the renewal is
+#     taken out: the base falls back to the -12h anchor and the hook reports
+#     a skip committed before the session it is measuring.
+aged s19 9
+before="$(cut -d' ' -f1 "$MD/s19.start")"
+out="$(run s19 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
+after="$(cut -d' ' -f1 "$MD/s19.start")"
+if [ -z "$out" ] && [ "$rc" -eq 0 ] && [ "$after" -gt "$before" ]; then
+    ok "19a stale clock: 9h zero point renewed, the pre-session skip stays quiet"
+else
+    bad "19a stale clock (rc=$rc, $before -> $after): $out"
+fi
+
+# 19b A CLOCK INSIDE THE WINDOW IS KEPT — 7h is below the bound, the zero
+#     point stands, the base stays at the -12h anchor and the skip is inside
+#     the span it measures. This is the direction 19a cannot cover: it turns
+#     red if the renewal is made unconditional, which would silence every
+#     finding a real session ever makes.
+aged s19b 7
+before="$(cut -d' ' -f1 "$MD/s19b.start")"
+out="$(run s19b WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
+after="$(cut -d' ' -f1 "$MD/s19b.start")"
+if printf '%s' "$out" | grep -q 'pay_test.go:1' && [ "$after" = "$before" ]; then
+    ok "19b clock inside the window: 7h zero point kept, the skip in its span fires"
+else
+    bad "19b clock inside the window ($before -> $after): $out"
+fi
+
+# 19c AN UNREADABLE CLOCK IS NOT A FROZEN ONE — the same failure mode as the
+#     unreadable threshold in 17: a value no comparison can read must not
+#     leave the base wherever it was. It counts as absent and is rewritten.
+printf 'not-a-number x\n' > "$MD/s19c.start"
+out="$(run s19c WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
+now_epoch="$(cut -d' ' -f1 "$MD/s19c.start")"
+case "${now_epoch:-x}" in
+    ''|*[!0-9]*) bad "19c unreadable clock: still unreadable ($now_epoch)" ;;
+    *) if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok "19c unreadable clock: rewritten, hook quiet"; else bad "19c unreadable clock (rc=$rc): $out"; fi ;;
+esac
 
 echo "=== $pass passed, $fail failed (tmp: $T)"
 [ "$fail" -eq 0 ]

@@ -111,12 +111,47 @@ fi
 # zero point, written at the first Stop, which is the earliest moment this
 # hook exists: the idle trigger measures elapsed time from it, the signature
 # trigger takes the last commit before it as the diff base.
+#
+# The zero point has to age, or it stops measuring this session. A session id
+# outlives a pause — Claude Code keeps it across --resume and across a night
+# — and the first version wrote .start exactly once, so a session taken up
+# again measured from a zero point hours or days old. Two consequences, and
+# the first is the expensive one: the signature trigger would take the last
+# commit before that ancient point as its diff base and report every
+# signature committed in between, work this session never touched, written
+# into the marker `wallii post` reads for its signals field. A wrong
+# measurement that can no longer be subtracted from the post — the class the
+# P0 of 2026-09-02 was fixed against. The idle trigger merely fires on its
+# first Stop with an inflated duration.
+#
+# Measured over 101 live session markers on 2026-09-02: 13 pairs of .start
+# and a later marker of the SAME session more than 8h apart, the worst 20h
+# (zero point 00:11, hook still writing at 20:13), and 7 sessions with a
+# pause over 8h in their transcript that kept firing afterwards.
+#
+# 8h is a decision, not a derivation: the bound `wallii post` already uses to
+# discard a derived took (maxAutoTook, post.go) — above it a night sits in
+# the gap, so it is no longer one stretch of work. An unreadable value counts
+# as absent and is rewritten; the alternative is a clock nobody can read
+# silently freezing the base. Deliberately NOT renewed with it: the -idle.done
+# and .shortcut markers. Both mean "already asked, and the answer was
+# respected", and renewing them would ask again for an answer already given —
+# silence is the safe direction here, a wrong number is not.
 sid="$(field .session_id)"
 case "${sid:-x}" in *[/\\]*) exit 0 ;; esac
 marker_dir="${HOME:-}/.claude/wall-post-reminders"
 mkdir -p "$marker_dir" 2>/dev/null || true
 startfile="$marker_dir/${sid:-nosession}.start"
-if [ ! -f "$startfile" ]; then
+start_max=$((8 * 3600))
+fresh=""
+if [ -f "$startfile" ]; then
+    prev="$(cut -d' ' -f1 "$startfile" 2>/dev/null || true)"
+    case "${prev:-x}" in
+        ''|*[!0-9]*) ;;
+        *) [ $(( $(date +%s) - prev )) -lt "$start_max" ] && fresh=1 ;;
+    esac
+fi
+if [ -z "$fresh" ]; then
     printf '%s %s' "$(date +%s)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$startfile" 2>/dev/null || true
 fi
 
