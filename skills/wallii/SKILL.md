@@ -26,7 +26,7 @@ wallii agents --json
 wallii stats --json --since <window> [--repo <name>]
 ```
 
-Output shapes (verified against wallii v0.3.0, stats/telemetry v0.4.0):
+Output shapes (verified against wallii v0.5.x, 2026-09-02 — grader, signals and lint challenges included):
 
 - `tail --json` → NDJSON, one event per line:
   `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach|react|challenge"?,"parent":"<id>"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?,"grader":"…"?,"signals":["<path>: <line>"]?,"signal_src":"hook"?}`
