@@ -5,8 +5,9 @@
 # case is one line changed against the red case: dedup, environment guard,
 # off switch, out-of-span commit, tracked edit, classes B and C, no HOME,
 # the fold past three findings, comment lines, a Rust attribute, a signature
-# inside quotes, a prose file, the real findings that must survive both —
-# and the regression that the commit trigger still fires. macOS only (`date -v`);
+# inside quotes, a prose file, the real findings that must survive both, a
+# threshold above the findings, an unreadable threshold — and the regression
+# that the commit trigger still fires. macOS only (`date -v`);
 # not part of CI, run it by hand after touching the hook:
 #
 #   go build . && bash hooks/wall-post-remind-proof.sh
@@ -173,6 +174,36 @@ newsid s15
 out="$(run s15 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
 if printf '%s' "$out" | grep -q 'run_test.go:1' && printf '%s' "$out" | grep -q 'run_test.go:2'; then ok "15 real findings survive the quote rule"; else bad "15 real findings: $out"; fi
 rm -f run_test.go
+
+# 16 THRESHOLD SPLITS ASKING FROM MEASURING — with the threshold above the
+#    number of findings the hook must stay quiet, and still record what the
+#    diff showed. An empty marker means "scanned, nothing found"; writing
+#    that while holding back a finding is the one lie signal_src exists to
+#    prevent.
+newsid s16
+printf 'func TestOne(t *testing.T){ t.Skip("flaky") }\n' > one_test.go
+out="$(run s16 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99 WALLII_REMIND_SHORTCUTS=2)"; rc=$?
+if [ -n "$out" ]; then bad "16 threshold: hook asked below its threshold: $out"; else
+    if LC_ALL=C grep -Fq 't.Skip("flaky")' "$MD/s16-r.shortcut" 2>/dev/null; then
+        ok "16 threshold: quiet, and the finding is still recorded"
+    else
+        bad "16 threshold: marker says nothing was found ($(wc -c < "$MD/s16-r.shortcut" 2>/dev/null || echo no-file) bytes)"
+    fi
+fi
+rm -f one_test.go
+
+# 17 UNREADABLE THRESHOLD IS NOT AN OFF SWITCH — a non-numeric value made
+#    `[ -gt ]` fail and took the whole trigger down without a word. It must
+#    say so and fall back to the default instead.
+newsid s17
+printf 'func TestTwo(t *testing.T){ t.Skip("flaky") }\n' > two_test.go
+out="$(run s17 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99 WALLII_REMIND_SHORTCUTS=on 2>&1)"; rc=$?
+if printf '%s' "$out" | grep -q 'WALLII_REMIND_SHORTCUTS' && printf '%s' "$out" | grep -q 'two_test.go:1'; then
+    ok "17 unreadable threshold: says so and still fires"
+else
+    bad "17 unreadable threshold: $out"
+fi
+rm -f two_test.go
 
 echo "=== $pass passed, $fail failed (tmp: $T)"
 [ "$fail" -eq 0 ]

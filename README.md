@@ -708,9 +708,15 @@ Three triggers, checked in this order:
   the post it asks for silences the other two, and the reverse does not hold.
   Calibrated at about one hit per 140 commits; it catches the known forms
   only, so a clean count is not proof that nothing was cut short.
-  `WALLII_REMIND_SHORTCUTS` is the number of new signature lines it takes to
-  fire (default 1; `0` switches it off). Paths under `vendor`, `node_modules`,
-  `third_party` and lock files are excluded.
+  `WALLII_REMIND_SHORTCUTS` is how many signature lines the diff must hold
+  before it asks (default 1; `0` switches it off) — it gates the asking, not
+  the measuring, so the marker records what the diff showed at any threshold.
+  A value that is not a number says so and falls back to 1 rather than
+  switching the trigger off in silence. Paths under `vendor`, `node_modules`,
+  `third_party` and lock files are excluded, and so are prose files (`.md`,
+  `.txt`, `.rst`, `.adoc`): a `t.Skip(` in a README is documentation. For the
+  same reason a signature inside a quote or backtick does not count for the
+  gate and checker classes — a line that names one is not one.
 - **Idle** — `WALLII_REMIND_IDLE_MIN` minutes (default 45) into a session with
   zero commits and nothing on the wall from this actor: a dead end is a
   finished unit of work too. Asks once per session; `0` switches it off.

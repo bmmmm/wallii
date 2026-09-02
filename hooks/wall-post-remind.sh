@@ -154,13 +154,25 @@ fi
 # completion, findings or not: "exists, empty" later reads as measured and
 # nothing found, "no file" as nobody measured.
 #
-# WALLII_REMIND_SHORTCUTS is the number of new signature lines it takes to
-# fire (default 1); 0 switches the trigger off.
+# WALLII_REMIND_SHORTCUTS is how many signature lines the diff must hold
+# before the hook asks (default 1); 0 switches the trigger off. It gates the
+# asking, never the measuring: findings are recorded at any threshold.
 shortcuts="${WALLII_REMIND_SHORTCUTS:-1}"
+# An unreadable value used to take the whole trigger down without a word:
+# `[ on -gt 0 ]` fails, base stays empty, nothing is scanned and no marker
+# is written, so every post of that session reads as "nobody measured". A
+# gate that switches itself off in silence is the failure mode this repo
+# has already been bitten by — say it and fall back, 0 is the off switch.
+case "$shortcuts" in
+    ''|*[!0-9]*)
+        printf 'wall-post-remind: WALLII_REMIND_SHORTCUTS=%s is not a number — using 1. Set it to 0 to switch the signature trigger off.\n' "$shortcuts" >&2
+        shortcuts=1
+        ;;
+esac
 top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 start_iso="$(cut -d' ' -f2 "$startfile" 2>/dev/null || true)"
 base=""
-if [ "$shortcuts" -gt 0 ] 2>/dev/null && [ -n "$top" ] && [ -n "$start_iso" ]; then
+if [ "$shortcuts" -gt 0 ] && [ -n "$top" ] && [ -n "$start_iso" ]; then
     base="$(git rev-list -1 --before="$start_iso" HEAD 2>/dev/null || true)"
     # a repo born in this session has no such commit: everything in it is new
     [ -n "$base" ] || base="$(git hash-object -t tree /dev/null 2>/dev/null || true)"
@@ -277,8 +289,10 @@ if [ -n "$base" ]; then
     marker="$marker_dir/${sid:-nosession}-${repo}.shortcut"
     new=""
     n_new=0
+    n_found=0
     while IFS="$tab" read -r p n c; do
         [ -n "$p" ] || continue
+        n_found=$((n_found + 1))
         if [ -s "$marker" ] && LC_ALL=C grep -Fxq -e "$p$tab$c" "$marker" 2>/dev/null; then
             continue
         fi
@@ -288,8 +302,22 @@ if [ -n "$base" ]; then
     done <<< "$found"
     touch "$marker" 2>/dev/null || true
 
-    if [ "$n_new" -ge "$shortcuts" ]; then
+    # The measurement is not the question. What the diff showed goes into the
+    # marker whatever the threshold does: an existing empty marker says
+    # "scanned, found nothing", and writing that while holding a finding back
+    # is exactly the lie signal_src exists to prevent — the post would carry
+    # a clean scan over a diff that was not clean.
+    if [ "$n_new" -gt 0 ]; then
         printf '%s' "$new" | awk -F"$tab" '{ print $1 "\t" $3 }' >> "$marker" 2>/dev/null || true
+    fi
+
+    # The threshold governs the asking alone, and it counts what the diff
+    # holds rather than what is still unanswered — otherwise recording a
+    # finding would deduplicate it out of its own count, and a threshold
+    # above 1 could never be reached. The cost at >1: a finding recorded
+    # while the hook stayed quiet is not repeated in the block that a later
+    # one triggers. It is measured either way; only the asking is once.
+    if [ "$n_new" -gt 0 ] && [ "$n_found" -ge "$shortcuts" ]; then
         list="$(printf '%s' "$new" | awk -F"$tab" 'NR <= 3 { printf "  %s:%s\n      %s\n", $1, $2, $3 }')"
         more=""
         [ "$n_new" -gt 3 ] && more="
