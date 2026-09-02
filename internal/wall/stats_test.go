@@ -111,30 +111,50 @@ func TestComputeGraderDistinctFoldsRepeats(t *testing.T) {
 	}
 }
 
-// Measurement against self-report, counted by presence alone: a post the
-// hook scanned, a post where the diff showed something, a post where the
-// poster also said something. Nothing reads what either of them says.
-func TestComputeSignalsCountMeasurementAgainstReport(t *testing.T) {
+// Measurement against self-report, counted by presence alone: posts the
+// hook scanned, distinct shortcuts their diffs showed, and how many of
+// those someone answered. Nothing reads what either of them says.
+//
+// The shortcut count is distinct because signals hang on every post of a
+// session: the fixture below is the shape that was measured in production
+// on 2026-09-02 — one skip, three posts, named once — and counting posts
+// reported it as one named and two unnamed, an unanswered shortcut that
+// never existed.
+func TestComputeSignalsCountDistinctShortcutsNotPosts(t *testing.T) {
 	ts := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	sig := []string{`cart_test.go: t.Skip("flaky under load")`}
+	cart := []string{`cart_test.go: t.Skip("flaky under load")`}
+	auth := []string{`auth_test.go: t.Skip("needs a live token")`}
 	evs := []Event{
-		{TS: ts, Repo: "webshop", Actor: "a", Msg: "one", Signals: sig, SignalSrc: SignalHook, Grader: "skipped the flaky cart test instead of fixing the race"},
-		{TS: ts, Repo: "webshop", Actor: "a", Msg: "two", Signals: sig, SignalSrc: SignalHook, Grader: "none — the skip guards a missing binary"},
-		{TS: ts, Repo: "webshop", Actor: "b", Msg: "three", Signals: sig, SignalSrc: SignalHook},
-		{TS: ts, Repo: "webshop", Actor: "b", Msg: "four", SignalSrc: SignalHook},
-		{TS: ts, Repo: "webshop", Actor: "b", Msg: "five", Grader: "considered raising the timeout, fixed the loop instead"},
-		{TS: ts, Repo: "webshop", Actor: "b", Msg: "six"},
+		{TS: ts, Repo: "webshop", Actor: "a", Msg: "one", Signals: cart, SignalSrc: SignalHook, Grader: "skipped the flaky cart test instead of fixing the race"},
+		{TS: ts, Repo: "webshop", Actor: "a", Msg: "two", Signals: cart, SignalSrc: SignalHook},
+		{TS: ts, Repo: "webshop", Actor: "b", Msg: "three", Signals: cart, SignalSrc: SignalHook},
+		{TS: ts, Repo: "webshop", Actor: "b", Msg: "four", Signals: auth, SignalSrc: SignalHook},
+		{TS: ts, Repo: "shipping", Actor: "b", Msg: "five", Signals: cart, SignalSrc: SignalHook},
+		{TS: ts, Repo: "webshop", Actor: "b", Msg: "six", SignalSrc: SignalHook},
+		{TS: ts, Repo: "webshop", Actor: "b", Msg: "seven", Grader: "considered raising the timeout, fixed the loop instead"},
+		{TS: ts, Repo: "webshop", Actor: "b", Msg: "eight"},
 	}
 	s := Compute(evs)
-	if s.SignalsMeasured != 4 || s.WithSignals != 3 || s.SignalsNamed != 2 {
-		t.Fatalf("signals = %d measured, %d with, %d named; want 4/3/2", s.SignalsMeasured, s.WithSignals, s.SignalsNamed)
+	// six posts measured; three shortcuts — the cart skip once for webshop
+	// and once for shipping, plus the auth skip — and only the first is named
+	if s.SignalsMeasured != 6 || s.SignalsShown != 3 || s.SignalsNamed != 1 {
+		t.Fatalf("signals = %d measured, %d shown, %d named; want 6/3/1", s.SignalsMeasured, s.SignalsShown, s.SignalsNamed)
+	}
+	// naming a shortcut once is naming it: the two later posts carrying the
+	// same line owe nothing further, and must not turn it back into unnamed
+	if s := Compute(evs[:3]); s.SignalsShown != 1 || s.SignalsNamed != 1 {
+		t.Errorf("one skip named once across three posts = %d shown, %d named; want 1/1", s.SignalsShown, s.SignalsNamed)
+	}
+	// and the answer may come from any post of the group, not only the first
+	if s := Compute([]Event{evs[1], evs[2], evs[0]}); s.SignalsNamed != 1 {
+		t.Errorf("a shortcut named by a later post counts as named, got %d", s.SignalsNamed)
 	}
 	// a grader without a measurement is a report, not a named signal
-	if s.WithGrader != 3 {
-		t.Errorf("with_grader = %d, want 3 — the grader counts on its own line", s.WithGrader)
+	if s.WithGrader != 2 {
+		t.Errorf("with_grader = %d, want 2 — the grader counts on its own line", s.WithGrader)
 	}
-	if s := Compute(evs[4:]); s.SignalsMeasured != 0 || s.WithSignals != 0 || s.SignalsNamed != 0 {
-		t.Fatalf("a wall nobody measured must count zero, got %d/%d/%d", s.SignalsMeasured, s.WithSignals, s.SignalsNamed)
+	if s := Compute(evs[6:]); s.SignalsMeasured != 0 || s.SignalsShown != 0 || s.SignalsNamed != 0 {
+		t.Fatalf("a wall nobody measured must count zero, got %d/%d/%d", s.SignalsMeasured, s.SignalsShown, s.SignalsNamed)
 	}
 }
 

@@ -120,9 +120,12 @@ it: what the diff showed is a measurement, what the poster writes is a
 report, and a wall that kept only the report would depend on the one source
 that omits things. A source with no signals means the hook looked and found
 nothing; no source means nobody measured. `stats` prints the difference —
-`14 of 40 measured posts carried a shortcut · 9 of them named a grader
-moment, 5 did not` — and computes nothing from it: no percentage, no per-actor
-split, no challenge. A measured shortcut without a grader is often entirely
+`14 distinct shortcuts across 40 measured posts · 9 named a grader moment,
+5 did not` — and computes nothing from it: no percentage, no per-actor
+split, no challenge. The posts are counted and the shortcuts are counted
+distinctly, because signals hang on every post of a session: one skip named
+once in a three-post session is one shortcut that was named, not one named
+and two that went unanswered. A measured shortcut without a grader is often entirely
 fine, and nobody owes a counter an explanation. `audit` is where the two
 meet: an `ok` that carried a measured shortcut and then drew a fix on the
 same ground is marked `measured shortcut` — the skipped check was the gap it

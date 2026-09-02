@@ -56,16 +56,22 @@ type Stats struct {
 	GraderDistinct int `json:"grader_distinct"`
 
 	// Signals: the measurement beside the report. SignalsMeasured counts the
-	// posts whose session the Stop hook scanned at all, WithSignals those
-	// where the diff showed a shortcut signature, SignalsNamed the ones among
-	// those whose poster also wrote a grader. The difference is the finding
-	// — measurement against self-report, the same idiom as mood against the
-	// message one level down — and it is reported, never computed with: no
-	// percentage, no per-actor split, no challenge raised from it. A signal
-	// without a grader is often entirely fine (the hook's environment-guard
-	// filter is good, not perfect), and nobody owes a counter an explanation.
+	// posts whose session the Stop hook scanned at all — coverage, and a
+	// property of posts. The other two are not: signals hang on every post
+	// of a session, so counting posts would report one shortcut named once
+	// in a three-post session as one named and two unnamed. SignalsShown
+	// therefore counts distinct shortcuts — one per (repo, line the diff
+	// showed) — and SignalsNamed those of them some post carrying that line
+	// answered with a grader. Naming a shortcut once is naming it; the next
+	// post of the same session owes nothing further. The difference is the
+	// finding — measurement against self-report, the same idiom as mood
+	// against the message one level down — and it is reported, never
+	// computed with: no percentage, no per-actor split, no challenge raised
+	// from it. A signal without a grader is often entirely fine (the hook's
+	// environment-guard filter is good, not perfect), and nobody owes a
+	// counter an explanation.
 	SignalsMeasured int `json:"signals_measured,omitempty"`
-	WithSignals     int `json:"with_signals,omitempty"`
+	SignalsShown    int `json:"signals_shown,omitempty"`
 	SignalsNamed    int `json:"signals_named,omitempty"`
 
 	// Dialogue: reactions and challenges are replies, not work, so they stay
@@ -108,6 +114,11 @@ type ActorStats struct {
 	WithRefs  int     `json:"with_refs"`
 }
 
+// signalKey identifies one shortcut the diff showed: the line, in the repo
+// it was shown in. The same `t.Skip(...)` in two repos is two shortcuts;
+// the same line seen by three posts of one session is one.
+type signalKey struct{ repo, line string }
+
 // Compute folds events into Stats. Events with a Kind (attach/detach) are
 // skipped; order does not matter.
 func Compute(evs []Event) Stats {
@@ -120,6 +131,7 @@ func Compute(evs []Event) Stats {
 	// case-folded and trimmed, so "None" and "none " are the same sentence
 	// said twice, not two ways of saying it
 	graders := map[string]struct{}{}
+	signals := map[signalKey]bool{}
 
 	// id → actor of the challenged event, so ByChallenged can name whose
 	// posts draw doubt (the parent may be any kind, including a reply)
@@ -213,15 +225,20 @@ func Compute(evs []Event) Stats {
 		}
 		if e.SignalSrc != "" {
 			s.SignalsMeasured++
-			if len(e.Signals) > 0 {
-				s.WithSignals++
-				if strings.TrimSpace(e.Grader) != "" {
-					s.SignalsNamed++
-				}
-			}
+		}
+		named := strings.TrimSpace(e.Grader) != ""
+		for _, sig := range e.Signals {
+			k := signalKey{repo: e.Repo, line: sig}
+			signals[k] = signals[k] || named
 		}
 	}
 	s.GraderDistinct = len(graders)
+	s.SignalsShown = len(signals)
+	for _, named := range signals {
+		if named {
+			s.SignalsNamed++
+		}
+	}
 
 	if s.Challenges > 0 {
 		s.ChallengesOpen = len(OpenChallenges(evs))

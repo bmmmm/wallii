@@ -93,8 +93,8 @@ func TestPostCarriesACleanScanAsASourceOnly(t *testing.T) {
 // computes nothing from it — no percentage, ever. Silent where nobody
 // measured, and a clean scan says so rather than printing zeros.
 func TestSignalsLineReportsWithoutAPercentage(t *testing.T) {
-	got := signalsLine(wall.Stats{Posts: 60, SignalsMeasured: 40, WithSignals: 14, SignalsNamed: 9})
-	if got != "signals  14 of 40 measured posts carried a shortcut · 9 of them named a grader moment, 5 did not" {
+	got := signalsLine(wall.Stats{Posts: 60, SignalsMeasured: 40, SignalsShown: 14, SignalsNamed: 9})
+	if got != "signals  14 distinct shortcuts across 40 measured posts · 9 named a grader moment, 5 did not" {
 		t.Errorf("signals line reads %q", got)
 	}
 	if strings.Contains(got, "%") {
@@ -103,8 +103,8 @@ func TestSignalsLineReportsWithoutAPercentage(t *testing.T) {
 	if clean := signalsLine(wall.Stats{SignalsMeasured: 3}); clean != "signals  measured on 3 posts, none carried a shortcut" {
 		t.Errorf("clean window reads %q", clean)
 	}
-	if one := signalsLine(wall.Stats{SignalsMeasured: 1, WithSignals: 1}); !strings.Contains(one, "1 of 1 measured post carried") {
-		t.Errorf("one post reads %q, want the singular", one)
+	if one := signalsLine(wall.Stats{SignalsMeasured: 1, SignalsShown: 1, SignalsNamed: 1}); one != "signals  1 distinct shortcut across 1 measured post · 1 named a grader moment, 0 did not" {
+		t.Errorf("one post reads %q, want the singular on both counts", one)
 	}
 	if quiet := signalsLine(wall.Stats{Posts: 400, WithGrader: 12}); quiet != "" {
 		t.Errorf("a wall nobody measured printed %q", quiet)

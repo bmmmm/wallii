@@ -201,28 +201,29 @@ func graderLine(s wall.Stats) string {
 	return fmt.Sprintf("grader   %d/%d posts name a grader moment · %d distinct", s.WithGrader, s.Posts, s.GraderDistinct)
 }
 
-// signalsLine puts the measurement beside the report: of the posts whose
-// session the hook scanned, how many carried a shortcut the diff showed,
-// and of those how many also named a grader moment — and how many did not.
-// That last number is the whole reason the line exists, and it is reported,
-// not computed with: no percentage, no per-actor split, no challenge raised
-// from it. A measured shortcut without a grader is often entirely fine —
-// the hook's environment-guard filter is good, not perfect — and nobody
-// owes a counter an explanation. Silent when no post carries a source: most
-// of the wall predates the hook, and zero coverage is not a clean diff.
+// signalsLine puts the measurement beside the report: how many posts the
+// hook scanned, how many distinct shortcuts their diffs showed, and how
+// many of those nobody named a grader moment for. That last number is the
+// whole reason the line exists, and it is reported, not computed with: no
+// percentage, no per-actor split, no challenge raised from it. A measured
+// shortcut without a grader is often entirely fine — the hook's
+// environment-guard filter is good, not perfect — and nobody owes a counter
+// an explanation. The shortcuts are counted distinctly and the posts are
+// not, because they answer different questions: coverage is a property of
+// posts, a shortcut is not, and one named once in a three-post session
+// would otherwise report itself as two that went unnamed. Silent when no
+// post carries a source: most of the wall predates the hook, and zero
+// coverage is not a clean diff.
 func signalsLine(s wall.Stats) string {
 	if s.SignalsMeasured == 0 {
 		return ""
 	}
-	if s.WithSignals == 0 {
+	if s.SignalsShown == 0 {
 		return fmt.Sprintf("signals  measured on %s, none carried a shortcut", plural(s.SignalsMeasured, "post"))
 	}
-	unit := "posts"
-	if s.SignalsMeasured == 1 {
-		unit = "post"
-	}
-	return fmt.Sprintf("signals  %d of %d measured %s carried a shortcut · %d of them named a grader moment, %d did not",
-		s.WithSignals, s.SignalsMeasured, unit, s.SignalsNamed, s.WithSignals-s.SignalsNamed)
+	return fmt.Sprintf("signals  %s across %s · %d named a grader moment, %d did not",
+		plural(s.SignalsShown, "distinct shortcut"), plural(s.SignalsMeasured, "measured post"),
+		s.SignalsNamed, s.SignalsShown-s.SignalsNamed)
 }
 
 // moodSpread lists the mood distribution in scale order. The average alone
