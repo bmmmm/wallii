@@ -7,8 +7,9 @@
 # the fold past three findings, comment lines, a Rust attribute, a signature
 # inside quotes, a prose file, the real findings that must survive both, a
 # threshold above the findings, an unreadable threshold, a fixture that
-# writes a skip, an aged session clock in both directions — and the
-# regression that the commit trigger still fires.
+# writes a skip, an aged session clock in both directions, the marker sweep
+# in both directions — and the regression that the commit trigger still
+# fires.
 # macOS only, and deliberately so: the hook's traps are BSD ones — no `\b` in
 # the patterns (a GNU extension), BSD awk's position logic instead of a greedy
 # substitution, LC_ALL=C against its abort on non-UTF-8 bytes — and the hook
@@ -327,6 +328,37 @@ now_epoch="$(cut -d' ' -f1 "$MD/s19c.start")"
 case "${now_epoch:-x}" in
     ''|*[!0-9]*) bad "19c unreadable clock: still unreadable ($now_epoch)" ;;
     *) if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok "19c unreadable clock: rewritten, hook quiet"; else bad "19c unreadable clock (rc=$rc): $out"; fi ;;
+esac
+
+# 20 THE SWEEP TAKES THE OLD AND LEAVES THE LIVE. Markers were written once
+#    and never removed — 186 files in the 12 days since the hook went live.
+#    On real data the sweep is a no-op today (the oldest marker is 12 days
+#    old, so `-mtime +30` matches nothing until late September), which is
+#    exactly why the proof cannot come from watching the live directory: it
+#    would be green having deleted nothing. These two files carry a real
+#    mtime, backdated with touch, and the second direction is the one that
+#    matters — a sweep that also took live markers would silently reset
+#    every running session's dedup.
+touch -t "$(date -v-40d +%Y%m%d%H%M)" "$MD/ancient-session-r.shortcut"
+touch "$MD/live-session-r.shortcut"
+newsid s20
+out="$(run s20 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"
+if [ ! -e "$MD/ancient-session-r.shortcut" ] && [ -e "$MD/live-session-r.shortcut" ]; then
+    ok "20 sweep: the 40-day-old marker is gone, today's is untouched"
+else
+    bad "20 sweep: ancient=$([ -e "$MD/ancient-session-r.shortcut" ] && echo present || echo gone) live=$([ -e "$MD/live-session-r.shortcut" ] && echo present || echo gone)"
+fi
+
+# 20b THE SWEEP MUST NOT OUTLIVE THE CLOCK — an ancient .start of the
+#     session now running is swept, and the aging block three lines later
+#     rewrites it. The session keeps a zero point either way; what it must
+#     never end up with is none.
+touch -t "$(date -v-40d +%Y%m%d%H%M)" "$MD/s20b.start"
+out="$(run s20b WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"
+zero="$(cut -d' ' -f1 "$MD/s20b.start" 2>/dev/null || true)"
+case "${zero:-x}" in
+    ''|*[!0-9]*) bad "20b sweep vs clock: no readable zero point left ($zero)" ;;
+    *) if [ $(( $(date +%s) - zero )) -lt 300 ]; then ok "20b sweep vs clock: swept .start rewritten to now"; else bad "20b sweep vs clock: zero point is $(( ($(date +%s) - zero) / 3600 ))h old"; fi ;;
 esac
 
 echo "=== $pass passed, $fail failed (tmp: $T)"

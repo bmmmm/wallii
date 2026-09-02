@@ -141,6 +141,29 @@ sid="$(field .session_id)"
 case "${sid:-x}" in *[/\\]*) exit 0 ;; esac
 marker_dir="${HOME:-}/.claude/wall-post-reminders"
 mkdir -p "$marker_dir" 2>/dev/null || true
+
+# Nothing ever removed a marker. 186 files, 540 KB in the 12 days since the
+# hook went live (measured 2026-09-02), ~15 MB a year. That is untidiness
+# rather than a defect — every marker is opened by its exact name, nothing
+# here ever lists or scans the directory, so the count costs no time
+# anywhere — and it is swept at Stop rather than by a cron job because this
+# hook already runs then (3 ms over 186 files), and a second mechanism is a
+# second thing that can break on its own without saying so.
+#
+# 30 days: a marker is only ever read inside its own session, and the effect
+# review works in 14-day windows. The price, named rather than discovered
+# later: a session left open longer than 30 days loses its zero point and
+# its dedup. After the aging below that is free — the zero point is renewed
+# past 8h in any case, and the sweep runs first, so a swept .start is
+# rewritten three lines further down — but before it, it would have been a
+# regression. Which is why the aging landed first, and this second.
+#
+# Absolute path. This hook widens its own PATH for wallii and jq, but a find
+# that is not found sweeps nothing and says nothing about it, and a gate
+# that switches itself off in silence is the failure mode this repo has
+# already been bitten by.
+[ -d "$marker_dir" ] && /usr/bin/find "$marker_dir" -type f -mtime +30 -delete 2>/dev/null || true
+
 startfile="$marker_dir/${sid:-nosession}.start"
 start_max=$((8 * 3600))
 fresh=""
