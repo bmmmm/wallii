@@ -715,8 +715,12 @@ Three triggers, checked in this order:
   switching the trigger off in silence. Paths under `vendor`, `node_modules`,
   `third_party` and lock files are excluded, and so are prose files (`.md`,
   `.txt`, `.rst`, `.adoc`): a `t.Skip(` in a README is documentation. For the
-  same reason a signature inside a quote or backtick does not count for the
-  gate and checker classes — a line that names one is not one.
+  same reason a signature inside a quote or backtick does not count: a line
+  that names one is not one. That holds for every class but the
+  commented-out test, which is the finding itself — including the skip: in
+  a real `t.Skip("flaky")` the anchor sits before the quote, so the rule
+  never reaches it, while `printf 'func TestX(){ t.Skip("x") }'` is a
+  fixture writing a test, not a test being switched off.
 - **Idle** — `WALLII_REMIND_IDLE_MIN` minutes (default 45) into a session with
   zero commits and nothing on the wall from this actor: a dead end is a
   finished unit of work too. Asks once per session; `0` switches it off.

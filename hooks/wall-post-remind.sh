@@ -251,15 +251,20 @@ if [ -n "$base" ]; then
     # one that runs it: this scanner's own pattern definitions, a push gate
     # printing `--no-verify` in its refusal, a log line about a step with
     # continue-on-error. All three sat on the live wall on 2026-09-02, and
-    # all three are classes B and C — short tokens that any text about
-    # checks repeats. Class A stays exempt: `t.Skip(` carries its reason in
-    # quotes and its anchor outside them, so the same rule would blind it.
+    # checks repeats — and class A too, once the trigger fired on this
+    # repo's own proof suite: a suite for a signature scanner necessarily
+    # holds lines that PRODUCE signatures. The first version exempted class
+    # A with an argument that ran backwards ("t.Skip( carries its anchor
+    # outside the quotes, so the rule would blind it") — the rule tests
+    # where the ANCHOR sits, and in `t.Skip("flaky")` it sits before the
+    # quote, so a real skip is never touched. Only class D stays out: a
+    # commented-out test is the finding, and it has no anchor to place.
     # The price is a gate hidden in a quoted value (`run: "npm test || true"`),
     # which now goes unseen — cheaper than a finding that cannot be taken
     # back off a post. The class travels as a prefix field and is stripped
     # again before the dedup, which compares path and content only.
-    found="$( export LC_ALL=C SIG_B="$sig_b" SIG_C="$sig_c"; {
-        printf '%s\n' "$added" | grep -E "$sig_a" | grep -Ev "$comment" | grep -Ev "$guard_env" | grep -iEv "$guard_words"
+    found="$( export LC_ALL=C SIG_A="$sig_a" SIG_B="$sig_b" SIG_C="$sig_c"; {
+        printf '%s\n' "$added" | grep -E "$sig_a" | grep -Ev "$comment" | grep -Ev "$guard_env" | grep -iEv "$guard_words" | sed "s/^/A$tab/"
         printf '%s\n' "$added" | grep -E "$sig_b" | grep -Ev "$comment" | sed "s/^/B$tab/"
         printf '%s\n' "$added" | grep -E "$sig_c" | grep -Ev "$comment" | sed "s/^/C$tab/"
         printf '%s\n' "$added" | grep -E "$sig_d"
@@ -275,8 +280,8 @@ if [ -n "$base" ]; then
             }
             return (sq || dq || bt)
         }
-        NF == 4 && ($1 == "B" || $1 == "C") {
-            re = ($1 == "B") ? ENVIRON["SIG_B"] : ENVIRON["SIG_C"]
+        NF == 4 && ($1 == "A" || $1 == "B" || $1 == "C") {
+            re = ($1 == "A") ? ENVIRON["SIG_A"] : ($1 == "B") ? ENVIRON["SIG_B"] : ENVIRON["SIG_C"]
             # no match here means awk read the pattern differently than grep
             # did — keep the finding, the scanner is not the place to guess
             if (match($4, re) && quoted($4, RSTART)) next

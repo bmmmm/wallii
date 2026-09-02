@@ -6,8 +6,9 @@
 # off switch, out-of-span commit, tracked edit, classes B and C, no HOME,
 # the fold past three findings, comment lines, a Rust attribute, a signature
 # inside quotes, a prose file, the real findings that must survive both, a
-# threshold above the findings, an unreadable threshold — and the regression
-# that the commit trigger still fires. macOS only (`date -v`);
+# threshold above the findings, an unreadable threshold, a fixture that
+# writes a skip — and the regression that the commit trigger still fires.
+# macOS only (`date -v`);
 # not part of CI, run it by hand after touching the hook:
 #
 #   go build . && bash hooks/wall-post-remind-proof.sh
@@ -204,6 +205,21 @@ else
     bad "17 unreadable threshold: $out"
 fi
 rm -f two_test.go
+
+# 18 A FIXTURE THAT WRITES A SKIP IS NOT A SKIP — class A inside quotes.
+#    Found by the trigger firing on this very file on 2026-09-02: a proof
+#    suite for a signature scanner necessarily contains lines that PRODUCE
+#    signatures, and they were reported as shortcuts. The exemption class A
+#    had was argued backwards — a real `t.Skip("flaky")` carries its anchor
+#    BEFORE the quote, so the rule never touches it (case 15 holds that).
+newsid s18
+{
+    printf "printf 'func TestX(t *testing.T){ t.Skip(\"flaky\") }' > fixture_test.go\n"
+    printf 'cases+=("pytest.mark.skip is what the scanner greps for")\n'
+} > make_fixture.sh
+out="$(run s18 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
+if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok "18 a fixture writing a skip stays quiet"; else bad "18 fixture skip: $out"; fi
+rm -f make_fixture.sh
 
 echo "=== $pass passed, $fail failed (tmp: $T)"
 [ "$fail" -eq 0 ]
