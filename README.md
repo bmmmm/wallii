@@ -663,7 +663,9 @@ shaped the fields above, one level up. The hook below is what fires.
 
 ### Claude Code hook
 
-`hooks/wall-post-remind.sh` is a Stop hook: when commits have piled up in a
+`hooks/wall-post-remind.sh` is a Stop hook (its proofs live beside it in
+`hooks/wall-post-remind-proof.sh` — fifteen red/green cases under `env -i`,
+macOS `date`, run by hand after touching the hook): when commits have piled up in a
 repo since that repo's last post, it names them before the session goes idle;
 when the session's diff carries a line that reads like a way around a check,
 it shows the line; when a session sat idle without commit or post, it asks

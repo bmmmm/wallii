@@ -219,10 +219,18 @@ if [ -n "$base" ]; then
     sig_d="$tab(//|#|/\\*|--) +(func Test|def test_|(it|test|describe)\\(|#\\[test\\]|@Test)$last"
     # ── end of signature patterns ──
 
+    # A line that IS a comment carries no active skip, gate or override —
+    # classes A–C skip content that starts with a comment marker. The first
+    # firing inside the harness (2026-09-02) was this file's own header,
+    # mirrored into dotfiles: `t.Skip(` in prose read as a skipped test.
+    # `#[` stays in (Rust's #[ignore] is an attribute, not a comment) and
+    # class D is exempt by definition — a commented-out test IS the finding.
+    comment="$tab(#([^[!]|\$)|//|/\\*|\\*( |\$))[^$tab]*\$"
+
     found="$( export LC_ALL=C; {
-        printf '%s\n' "$added" | grep -E "$sig_a" | grep -Ev "$guard_env" | grep -iEv "$guard_words"
-        printf '%s\n' "$added" | grep -E "$sig_b"
-        printf '%s\n' "$added" | grep -E "$sig_c"
+        printf '%s\n' "$added" | grep -E "$sig_a" | grep -Ev "$comment" | grep -Ev "$guard_env" | grep -iEv "$guard_words"
+        printf '%s\n' "$added" | grep -E "$sig_b" | grep -Ev "$comment"
+        printf '%s\n' "$added" | grep -E "$sig_c" | grep -Ev "$comment"
         printf '%s\n' "$added" | grep -E "$sig_d"
     } 2>/dev/null | awk '!seen[$0]++')"
 
