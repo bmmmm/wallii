@@ -10,6 +10,13 @@
 # writes a skip, an aged session clock in both directions, the marker sweep
 # in both directions — and the regression that the commit trigger still
 # fires.
+#
+# From case 21 the subject is the trigger protocol, the record the hook leaves
+# of what it decided: that a Stop is recorded at all, the loop breaker that
+# used to leave nothing behind, a HOME without wallii (which needs the mkdir
+# above the guards), off told apart from unreached, the idle trigger firing
+# for the first time in this suite's history, the sweep's exception for the
+# protocol in both directions, and no HOME writing nothing anywhere.
 # macOS only, and deliberately so: the hook's traps are BSD ones — no `\b` in
 # the patterns (a GNU extension), BSD awk's position logic instead of a greedy
 # substitution, LC_ALL=C against its abort on non-UTF-8 bytes — and the hook
@@ -45,12 +52,26 @@ GIT_COMMITTER_DATE="$old" git commit -qm init --allow-empty --date="$old"
 start_epoch=$(( $(date +%s) - 3600 ))
 start_iso="$(date -u -v-60M +%Y-%m-%dT%H:%M:%SZ)"
 newsid() { printf '%s %s' "$start_epoch" "$start_iso" > "$MD/$1.start"; }
+# run_json <stop payload> [extra env assignments...] — the hook as Claude Code
+# starts it, with the payload spelled out. run() below is the ordinary shape;
+# only the loop-breaker has anything else to say.
+run_json() {
+    local json="$1"; shift
+    echo "$json" | env -i HOME="$H" PATH=/usr/bin:/bin WALLII_DIR="$WALLII_DIR" "$@" "$HOOK"
+}
 # run <sid> [extra env assignments...]
 run() {
     local sid="$1"; shift
-    echo "{\"session_id\":\"$sid\",\"stop_hook_active\":false}" \
-        | env -i HOME="$H" PATH=/usr/bin:/bin WALLII_DIR="$WALLII_DIR" "$@" "$HOOK"
+    run_json "{\"session_id\":\"$sid\",\"stop_hook_active\":false}" "$@"
 }
+# The protocol the hook appends one line to per Stop. Its name carries the UTC
+# month from the hook's own clock, so the test asks in the same timezone the
+# hook answered in.
+stoplog() { printf '%s/stops-%s.log' "$MD" "$(date -u +%Y-%m)"; }
+lastrec() { tail -n 1 "$(stoplog)" 2>/dev/null || true; }
+# recfield <line> <n> — one field of a protocol record, so that no assertion
+# below has to carry a literal tab through three levels of quoting.
+recfield() { printf '%s' "$1" | awk -F'\t' -v n="$2" '{ print $n }'; }
 pass=0; fail=0
 ok()   { pass=$((pass+1)); echo "PASS $1"; }
 bad()  { fail=$((fail+1)); echo "FAIL $1"; }
@@ -360,6 +381,162 @@ case "${zero:-x}" in
     ''|*[!0-9]*) bad "20b sweep vs clock: no readable zero point left ($zero)" ;;
     *) if [ $(( $(date +%s) - zero )) -lt 300 ]; then ok "20b sweep vs clock: swept .start rewritten to now"; else bad "20b sweep vs clock: zero point is $(( ($(date +%s) - zero) / 3600 ))h old"; fi ;;
 esac
+
+# ── The trigger protocol ─────────────────────────────────────────────────
+# One line per Stop, whatever the hook decided. A firing counter cannot tell
+# "the condition was false" from "the trigger never ran", and the count that
+# started this — 107 session markers in 12 days against roughly 60 sessions a
+# day — says the second is the common case. Every assertion below reads the
+# record the hook left, so all of them were red against the hook before it
+# wrote one.
+
+# 21a A STOP IS RECORDED AT ALL — seven fields, this session, this repo.
+cd "$R2" || exit 1
+newsid s21a
+out="$(run s21a WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"
+rec="$(lastrec)"
+nf="$(printf '%s' "$rec" | awk -F'\t' '{ print NF }')"
+if [ "${nf:-0}" -eq 7 ] && [ "$(recfield "$rec" 2)" = "s21a" ] && [ "$(recfield "$rec" 3)" = "r2" ] \
+    && printf '%s' "$(recfield "$rec" 1)" | grep -qE '^2[0-9]*-[0-9]*-[0-9]*T[0-9]*:[0-9]*:[0-9]*Z$'; then
+    ok "21a protocol: one record, seven fields, session and repo named"
+else
+    bad "21a protocol (fields=${nf:-0}): $rec"
+fi
+
+# 21b THE LOOP-BREAKER IS THE CASE THE PROTOCOL EXISTS FOR. It is the first
+#     guard and the most frequent exit, it produces no output by design, and
+#     until now it left nothing behind at all — every trigger below it read as
+#     "did not fire" when in truth none of them ever ran.
+out="$(run_json '{"session_id":"s21b","stop_hook_active":true}')"; rc=$?
+rec="$(lastrec)"
+if [ -z "$out" ] && [ "$rc" -eq 0 ] && [ "$(recfield "$rec" 2)" = "s21b" ] \
+    && [ "$(recfield "$rec" 4)" = "exit=loop" ] \
+    && [ "$(recfield "$rec" 5)" = "sig=unreached" ] \
+    && [ "$(recfield "$rec" 6)" = "idle=unreached" ] \
+    && [ "$(recfield "$rec" 7)" = "commit=unreached" ]; then
+    ok "21b loop breaker: exit=loop and every trigger unreached"
+else
+    bad "21b loop breaker (rc=$rc): $rec"
+fi
+
+# 21c A HOME WITHOUT WALLII. The marker dir used to be created after every
+#     guard, so the exit that says "the tool is not installed" — the one an
+#     absent wall would be explained by — had nowhere to write. The session id
+#     has to be read before the guards too, or the record cannot name itself.
+H2="$T/home2"
+out="$(echo '{"session_id":"s21c","stop_hook_active":false}' | env -i HOME="$H2" PATH=/usr/bin:/bin "$HOOK" 2>&1)"; rc=$?
+rec="$(tail -n 1 "$H2/.claude/wall-post-reminders/stops-$(date -u +%Y-%m).log" 2>/dev/null || true)"
+if [ -z "$out" ] && [ "$rc" -eq 0 ] && [ "$(recfield "$rec" 4)" = "exit=no-wallii" ] \
+    && [ "$(recfield "$rec" 2)" = "s21c" ] && [ -z "$(recfield "$rec" 3)" ]; then
+    ok "21c no wallii: the dir is made and the record written before the guards"
+else
+    bad "21c no wallii (rc=$rc): $rec"
+fi
+
+# 21d A CLEAN SCAN IS NOT AN UNREACHED ONE — the same distinction the empty
+#     .shortcut marker draws, one field over. And the idle switch reports
+#     itself as off rather than as never reached.
+newsid s21d
+out="$(run s21d WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"; rc=$?
+rec="$(lastrec)"
+if [ -z "$out" ] && [ "$(recfield "$rec" 4)" = "exit=end" ] && [ "$(recfield "$rec" 5)" = "sig=clean" ] \
+    && [ "$(recfield "$rec" 6)" = "idle=off" ] && [ "$(recfield "$rec" 7)" = "commit=under" ]; then
+    ok "21d clean scan: sig=clean, idle=off, commit=under — three decisions, none of them silence"
+else
+    bad "21d clean scan (rc=$rc): $rec"
+fi
+
+# 21e THE SIGNATURE SWITCH — off is a different fact from unreached, and this
+#     is the only case that can tell the two apart in the sig field.
+newsid s21e
+out="$(run s21e WALLII_REMIND_SHORTCUTS=0 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"
+rec="$(lastrec)"
+if [ -z "$out" ] && [ "$(recfield "$rec" 5)" = "sig=off" ]; then
+    ok "21e off switch: sig=off, not unreached"
+else
+    bad "21e off switch: $rec"
+fi
+
+# 22a THE IDLE TRIGGER FIRES — for the first time in this suite's history.
+#     Every earlier case sets WALLII_REMIND_IDLE_MIN=0 or lets the signature
+#     trigger answer first, so the trigger that has never fired in production
+#     was also the one nothing here had ever shown to be capable of it. A clock
+#     one hour old (inside the 8h renewal bound, so it is kept), no commit
+#     since it, and an empty wall.
+aged s22a 1
+out="$(run s22a WALLII_REMIND_IDLE_MIN=1 WALLII_REMIND_AFTER=99)"
+rec="$(lastrec)"
+if printf '%s' "$out" | grep -q 'zero commits and nothing on the wall' && [ -f "$MD/s22a-idle.done" ] \
+    && [ "$(recfield "$rec" 4)" = "exit=idle" ] && [ "$(recfield "$rec" 6)" = "idle=fired" ] \
+    && [ "$(recfield "$rec" 5)" = "sig=clean" ] && [ "$(recfield "$rec" 7)" = "commit=unreached" ]; then
+    ok "22a idle trigger fires: exit=idle, and the commit trigger below it reads unreached"
+else
+    bad "22a idle trigger: $rec | $out"
+fi
+
+# 22b TOO YOUNG TO ASK — the same clock, a threshold it cannot reach.
+aged s22b 1
+out="$(run s22b WALLII_REMIND_IDLE_MIN=999 WALLII_REMIND_AFTER=99)"
+rec="$(lastrec)"
+if [ -z "$out" ] && [ "$(recfield "$rec" 6)" = "idle=young" ]; then
+    ok "22b idle young: below the threshold, and the record says which"
+else
+    bad "22b idle young: $rec | $out"
+fi
+
+# 22c COMMITTED, SO NOT IDLE — the other counter-direction. A commit inside
+#     the session's span answers the question the trigger asks.
+printf 'package r2 // work that landed\n' > note.go
+git add note.go
+git commit -qm "work committed inside the session"
+aged s22c 1
+out="$(run s22c WALLII_REMIND_IDLE_MIN=1 WALLII_REMIND_AFTER=99)"
+rec="$(lastrec)"
+if [ -z "$out" ] && [ "$(recfield "$rec" 6)" = "idle=committed" ]; then
+    ok "22c idle committed: a commit in the span keeps the trigger quiet, on the record"
+else
+    bad "22c idle committed: $rec | $out"
+fi
+
+# 23a THE PROTOCOL OUTLIVES THE MARKERS. The sweep takes markers at 30 days;
+#     a monthly log deleted there would never be written again — a silent
+#     total loss of the record — so it is kept a year. Both directions are
+#     needed because the grouping is what carries it: implicit AND binds
+#     tighter than -o in find, so without the outer parentheses the whole
+#     expression reads as `(old marker) -o (old log -delete)` and the sweep
+#     stops deleting markers altogether while still taking the log.
+touch -t "$(date -v-40d +%Y%m%d%H%M)" "$MD/stops-2026-07.log"
+touch -t "$(date -v-40d +%Y%m%d%H%M)" "$MD/elderly-session-r.shortcut"
+newsid s23a
+out="$(run s23a WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"
+if [ -e "$MD/stops-2026-07.log" ] && [ ! -e "$MD/elderly-session-r.shortcut" ]; then
+    ok "23a sweep: a 40-day-old protocol stays, a 40-day-old marker goes"
+else
+    bad "23a sweep: log=$([ -e "$MD/stops-2026-07.log" ] && echo present || echo gone) marker=$([ -e "$MD/elderly-session-r.shortcut" ] && echo present || echo gone)"
+fi
+
+# 23b AND IT DOES NOT LIVE FOREVER — 400 days is past the year, and the same
+#     expression that spared the log above has to take this one.
+touch -t "$(date -v-400d +%Y%m%d%H%M)" "$MD/stops-2025-07.log"
+newsid s23b
+out="$(run s23b WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99)"
+if [ ! -e "$MD/stops-2025-07.log" ]; then
+    ok "23b sweep: a 400-day-old protocol is taken"
+else
+    bad "23b sweep: the 400-day-old protocol survived"
+fi
+
+# 24 NO HOME, NO FILE — anywhere. The record is written from a trap that runs
+#    on every exit, including the ones before HOME was ever needed, so this is
+#    the case that keeps `mkdir -p /.claude/…` out of the hook.
+before="$(wc -l < "$(stoplog)" 2>/dev/null || echo 0)"
+out="$(echo '{"session_id":"s24","stop_hook_active":false}' | env -i PATH=/usr/bin:/bin "$HOOK" 2>&1)"; rc=$?
+after="$(wc -l < "$(stoplog)" 2>/dev/null || echo 0)"
+if [ -z "$out" ] && [ "$rc" -eq 0 ] && [ "$before" = "$after" ] && [ ! -e /.claude ]; then
+    ok "24 no HOME: quiet, and nothing written under / or into the fixture"
+else
+    bad "24 no HOME (rc=$rc, $before -> $after, /.claude $([ -e /.claude ] && echo exists || echo absent)): $out"
+fi
 
 echo "=== $pass passed, $fail failed (tmp: $T)"
 [ "$fail" -eq 0 ]

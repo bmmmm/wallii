@@ -148,6 +148,7 @@ wallii stats --since 7d     # outcomes, mood, calibration, dialog, voice, per ac
 wallii audit --since 14d    # oks that a later fix on the same ground indicted
 wallii dash --open          # self-contained HTML dashboard in the browser
 wallii coverage --since 30d # what the wall never saw: commits per day against the posts about them
+wallii triggers --since 7d  # the Stop hook's own record: which trigger ran, and how often none did
 ```
 
 The bare `tail` view folds each actor's day to three full posts plus one
@@ -751,7 +752,7 @@ shaped the fields above, one level up. The hook below is what fires.
 ### Claude Code hook
 
 `hooks/wall-post-remind.sh` is a Stop hook (its proofs live beside it in
-`hooks/wall-post-remind-proof.sh` — fifteen red/green cases under `env -i`,
+`hooks/wall-post-remind-proof.sh` — 38 red/green cases under `env -i`,
 macOS `date`, run by hand after touching the hook): when commits have piled up in a
 repo since that repo's last post, it names them before the session goes idle;
 when the session's diff carries a line that reads like a way around a check,
@@ -833,7 +834,82 @@ next day takes its diff base from before everything that happened in
 between, and reports work it never touched as its own. Markers older than 30
 days are swept at Stop by the hook that writes them; a session left open
 longer than that loses its zero point and its dedup and is given a fresh
-pair.
+pair. The monthly protocol below is the one exception and is kept a year:
+a marker is only ever read inside its own session, but the protocol is a
+series, and a month deleted out of it is a month that never comes back.
+
+### The trigger protocol
+
+The hook records what it did, and `wallii triggers` reads it back. Every Stop
+appends one line to `~/.claude/wall-post-reminders/stops-YYYY-MM.log`,
+tab-separated, written by the hook itself — no `jq`, since a missing `jq` is
+one of the things the line has to be able to report:
+
+```
+2026-09-03T21:14:07Z	c0ffee-…	wallii	exit=end	sig=clean	idle=off	commit=under
+```
+
+| field | values |
+| --- | --- |
+| `exit` | `loop` · `no-wallii` · `no-jq` · `no-git` · `no-repo` · `bad-sid` · `sig` · `idle` · `commit` · `end` |
+| `sig` | `unreached` · `off` · `nobase` · `clean` · `dedup` · `held` · `fired` |
+| `idle` | `unreached` · `off` · `asked` · `noclock` · `young` · `committed` · `posted` · `fired` |
+| `commit` | `unreached` · `under` · `nocount` · `nohead` · `dedup` · `fired` |
+
+One line per Stop, not per firing, and that is the whole design. A firing
+counter cannot tell "the condition was false" from "the trigger never ran",
+and for this hook the second looks like the common case: the `.start` marker
+is written after every guard above, and 107 of them in 12 days sit against
+roughly 60 sessions a day. Read as firings, the idle trigger's zero says its
+condition never held; read as reach, it may say the trigger was never
+evaluated at all. `off` is kept apart from `unreached` for the same reason —
+switched off is a different fact from died earlier — and `clean` means the
+scan ran and found nothing, the counterpart to the empty `.shortcut` marker.
+
+**No content is recorded**: no found lines, no commit subjects, no message
+text. Which trigger decided what, and nothing about what it saw.
+
+```sh
+wallii triggers              # everything the protocol holds
+wallii triggers --since 7d   # a window, --json for scripts
+```
+
+The shape of the answer — the numbers below are invented, since the protocol
+starts empty and the first real day of it is still being collected:
+
+```
+reached  412 of 2731 stops reached the trigger block (15%) — the rest exited above it
+window   2026-08-21 22:14 → 2026-09-03 21:40 · 2 protocol files
+exit     loop 1900 · end 380 · no-git 300 · sig 20 · commit 12 · idle 2
+sig      unreached 2319 · clean 380 · fired 20 · dedup 12
+idle     unreached 2319 · off 200 · young 180 · fired 2
+commit   unreached 2319 · under 380 · dedup 12 · fired 12
+```
+
+The first number is the one that decides how to read every other: a trigger
+with zero firings across Stops it never reached has not been measured yet.
+
+Cost, since a hook runs on a 10-second budget: one `printf >>` and no forks —
+every state is a shell variable already, and the clock is read once as
+`date -u '+%s %Y-%m-%dT%H:%M:%SZ'` in place of the two to three `date` calls
+the hook used to make, so a Stop that reaches its triggers now forks `date`
+once less than before. The month in the file name comes out of that same
+timestamp by parameter expansion. About 45 KB a day, the same order as the
+markers beside it.
+
+Two limits, named rather than papered over. The record is written from an
+`EXIT` trap, so a hook killed by its 10-second budget leaves no line: the
+numbers count Stops the hook finished, not Stops Claude Code started — and a
+`TERM` trap stays out until someone can turn it red. And a broken line is
+skipped and counted, never fatal, while a state word the hook learns and the
+reader does not is counted under its own name — folding it into a known
+bucket would let a new state read as "condition false", which is the exact
+confusion this protocol exists against.
+
+None of it goes on the wall. `Validate` rejects an empty repo and an empty
+message for good reasons, a loop-breaker Stop has neither, and some 500 lines
+a day against 534 posts in total would poison the denominator every ratio
+here is built on.
 
 ### Claude Code skill
 
