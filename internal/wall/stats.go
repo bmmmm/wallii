@@ -39,6 +39,17 @@ type Stats struct {
 	PulsePings       int   `json:"pulse_pings,omitempty"`
 	PulseDown        int   `json:"pulse_down,omitempty"`
 
+	// Squeeze: the other half of those conditions — how full the account's
+	// rate limits were while these grades were earned. Sums, so the caller
+	// divides by the count it prints beside them and cannot quietly average
+	// over posts nobody measured: a post with no reading is not a post with
+	// an empty budget. Reported and never computed with — no coverage
+	// percentage, no per-actor split, and nothing on the wall moves because
+	// of them.
+	SqueezePosts   int     `json:"squeeze_posts,omitempty"`
+	SqueezePTotal  float64 `json:"squeeze_p_total,omitempty"`
+	Squeeze5hTotal float64 `json:"squeeze_5h_total,omitempty"`
+
 	WithRefs int `json:"with_refs"`
 	// Contradicting counts posts whose grade disagrees with their own
 	// message. Nothing stops those from being posted — this is where they
@@ -217,6 +228,11 @@ func Compute(evs []Event) Stats {
 		default:
 			s.PulseTurns++
 			s.PulseTurnTotalMS += e.PulseMS
+		}
+		if e.SqueezeSrc != "" {
+			s.SqueezePosts++
+			s.SqueezePTotal += e.SqueezeP
+			s.Squeeze5hTotal += e.Squeeze5h
 		}
 		if len(e.Refs) > 0 {
 			s.WithRefs++

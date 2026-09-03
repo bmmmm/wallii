@@ -133,6 +133,22 @@ type Event struct {
 	// difference between the two is the reason a source is stored at all.
 	Signals   []string `json:"signals,omitempty"`
 	SignalSrc string   `json:"signal_src,omitempty"`
+	// SqueezeP is how much of the seven-day budget was already spent when
+	// this post was written, Squeeze5h the same for the five-hour window —
+	// percentages, the way claudii's statusline reads them off the rate
+	// limits. The room the work had left, beside the time it took.
+	//
+	// Stored, never applied. Nothing on this wall subtracts them from a
+	// grade, and squeeze.go says at length why not. They are here so the
+	// question can be asked later: a `rough` posted at 92 % is a different
+	// sentence from a `rough` posted at 4 %, and today nobody knows whether
+	// it is a different mood.
+	//
+	// SqueezeSrc says who read them. Absent, nobody did — and an absent
+	// field must never read as a budget nobody had touched.
+	SqueezeP   float64 `json:"squeeze_p,omitempty"`
+	Squeeze5h  float64 `json:"squeeze_5h,omitempty"`
+	SqueezeSrc string  `json:"squeeze_src,omitempty"`
 }
 
 // ID derives a short stable address for an event from fields that never
@@ -189,8 +205,8 @@ func (e Event) Validate() error {
 		// into nothing (stats skips kinds) and only invite confusion. The
 		// grader is about the work too — a reply has no cheap path to name,
 		// and no diff for the hook to have measured.
-		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 || e.PulseSrc != "" || e.Grader != "" || e.SignalSrc != "" || len(e.Signals) > 0 {
-			return fmt.Errorf("a %s is dialogue — outcome/mood/took/pulse/grader/signals belong on posts", e.Kind)
+		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 || e.PulseSrc != "" || e.Grader != "" || e.SignalSrc != "" || len(e.Signals) > 0 || e.SqueezeSrc != "" {
+			return fmt.Errorf("a %s is dialogue — outcome/mood/took/pulse/grader/signals/squeeze belong on posts", e.Kind)
 		}
 	default:
 		return fmt.Errorf("unknown kind %q — one of attach, detach, react, challenge, or empty", e.Kind)
@@ -238,6 +254,24 @@ func (e Event) Validate() error {
 	// whose value is that there was none.
 	if e.PulseMS != 0 && e.PulseSrc == "" {
 		return errors.New("pulse_ms is set without a source — a round trip nobody claims cannot be told from a guess")
+	}
+	if e.SqueezeSrc != "" && e.SqueezeSrc != SqueezeSession {
+		return fmt.Errorf("unknown squeeze_src %q — %q or empty (nobody measured)", e.SqueezeSrc, SqueezeSession)
+	}
+	// written as a range the value must be inside rather than as two limits
+	// it must not cross, so a NaN — which strconv parses out of the word and
+	// which no comparison against a bound would catch — fails here instead of
+	// poisoning every average taken over the field afterwards
+	for name, v := range map[string]float64{"squeeze_p": e.SqueezeP, "squeeze_5h": e.Squeeze5h} {
+		if !(v >= 0 && v <= MaxSqueezePct) {
+			return fmt.Errorf("%s is %v — a percentage of a limit, 0 to %d", name, v, MaxSqueezePct)
+		}
+	}
+	// The reverse (a source with no value) is legal and is the point: a
+	// window nobody has spent anything of reads 0 %, and an absent field
+	// could never say that.
+	if (e.SqueezeP != 0 || e.Squeeze5h != 0) && e.SqueezeSrc == "" {
+		return errors.New("squeeze is set without a source — a budget nobody claims cannot be told from a guess")
 	}
 	if e.SignalSrc != "" && e.SignalSrc != SignalHook {
 		return fmt.Errorf("unknown signal_src %q — %q or empty (nobody measured)", e.SignalSrc, SignalHook)

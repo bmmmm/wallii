@@ -250,19 +250,30 @@ func statuslineCache() string {
 	if len(sid) < 8 {
 		return ""
 	}
-	dir := strings.TrimSpace(os.Getenv("CLAUDII_CACHE_DIR"))
+	dir := claudiiCacheDir()
 	if dir == "" {
-		base := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME"))
-		if base == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return ""
-			}
-			base = filepath.Join(home, ".cache")
-		}
-		dir = filepath.Join(base, "claudii")
+		return ""
 	}
 	return filepath.Join(dir, "session-"+sid[:8])
+}
+
+// claudiiCacheDir is where the statusline keeps what it measured: the
+// per-session cache above, and the flight recorder the squeeze reads for turn
+// density. An empty answer means there is nowhere to look, which every caller
+// treats as nothing to read.
+func claudiiCacheDir() string {
+	if dir := strings.TrimSpace(os.Getenv("CLAUDII_CACHE_DIR")); dir != "" {
+		return dir
+	}
+	base := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME"))
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		base = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(base, "claudii")
 }
 
 func probeNow(ctx context.Context) Pulse {
@@ -393,6 +404,11 @@ type MoodNow struct {
 	Drag  float64 // steps the window's own waiting took off its average
 	Crash bool    // no API right now — the bottom of the scale, whatever was posted
 	Known bool    // false when the wall carries no grades and the API is fine
+	// Squeeze is the third term: how hard the account's own rate limits press
+	// right now, in the same steps Drag is counted in. It is the one term
+	// that is only ever reported — see Squeezed, and the law at the top of
+	// squeeze.go.
+	Squeeze float64
 }
 
 // Now folds the window's measured conditions into its grades, and the live
@@ -419,6 +435,26 @@ func (s MoodSummary) Now(p Pulse) MoodNow {
 		n.Drag = PulseDrag(time.Duration(s.PulseMS) * time.Millisecond)
 		n.Avg = clampMood(s.Avg - n.Drag)
 	}
+	return n
+}
+
+// Squeezed attaches the live budget pressure to a reading, and does nothing
+// else. It is a step of its own rather than an argument to Now for one
+// reason: Avg is not reachable from here. The rule that a mood is never moved
+// by how full the limits are then holds by the shape of the code instead of
+// by whoever edits Now next remembering it.
+//
+// The tighter of the two windows wins. They are not added — the five-hour
+// budget and the seven-day one are two views of one account, and a day that
+// is 90 % through both is under one pressure, not two.
+func (n MoodNow) Squeezed(b Budget, now time.Time, turnsPerHour float64) MoodNow {
+	if !b.Known() {
+		return n
+	}
+	n.Squeeze = max(
+		Squeeze(b.Pct5h, b.Elapsed5h(now), turnsPerHour),
+		Squeeze(b.Pct7d, b.Elapsed7d(now), turnsPerHour),
+	)
 	return n
 }
 

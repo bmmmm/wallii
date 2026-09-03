@@ -17,8 +17,14 @@ import (
 // challenge: a post that contradicts its grade would otherwise put a second
 // event on every fixture wall, and the tests about the challenge switch it
 // on themselves.
+//
+// And the same for the squeeze, which reads the statusline cache of whatever
+// session is running the suite: without this every fixture post would carry
+// this machine's live rate limits, and the tests would pass or fail by how
+// much of the week's budget happened to be gone.
 func TestMain(m *testing.M) {
 	os.Setenv("WALLII_PULSE", "off")
+	os.Setenv("WALLII_SQUEEZE", "off")
 	os.Setenv("WALLII_AUTO_CHALLENGE", "off")
 	os.Exit(m.Run())
 }

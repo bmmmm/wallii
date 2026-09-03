@@ -74,6 +74,13 @@ type moodState struct {
 	// that it is measuring instead of showing nothing and looking broken.
 	pulse   wall.Pulse
 	pulsing bool
+	// budget and density are the live half's other term: how much of the
+	// account's rate limits is spent, and how fast turns are coming. They
+	// arrive together with the pulse and are only ever read together — a
+	// density with no budget beside it is never used, which is why the zero
+	// value's 0 turns per hour cannot be mistaken for a measured pause.
+	budget  wall.Budget
+	density float64
 }
 
 func (st *moodState) load(evs []wall.Event) {
@@ -129,8 +136,10 @@ func moodTickCmd(epoch int) tea.Cmd {
 // the waiting one never becomes a request nobody asked for.
 type (
 	moodPulseMsg struct {
-		epoch int
-		pulse wall.Pulse
+		epoch   int
+		pulse   wall.Pulse
+		budget  wall.Budget
+		density float64
 	}
 	moodPulseDueMsg struct{ epoch int }
 )
@@ -139,12 +148,19 @@ type (
 // its own goroutine, so even a probe that has to time out costs the panel no
 // frames. It asks the same way a post does — the session's own number first —
 // so the head and the stored posts can never disagree about what a turn costs.
+//
+// The budget rides on the same clock, and the flight recorder's tail with it.
+// Both are file reads and belong here rather than in the renderer for the
+// same reason the probe does: nothing the panel draws ten times a second may
+// touch a disk. A post takes no density — it stores percentages, not
+// pressure — so this is the only place that quarter megabyte is ever read.
 func moodPulseCmd(epoch int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), wall.PulseTimeout)
 		defer cancel()
 		p, _ := wall.SessionPulse(ctx)
-		return moodPulseMsg{epoch, p}
+		now := time.Now()
+		return moodPulseMsg{epoch, p, wall.SessionBudget(now), wall.TurnDensity(now)}
 	}
 }
 
@@ -369,7 +385,9 @@ func renderMood(st moodState, width, height int, window, pin, note string) strin
 		gap = "\n"
 	}
 	var b strings.Builder
-	now := st.trail.Now(st.pulse)
+	// two steps, and the second one cannot reach Avg: the waiting is folded
+	// into the grade, the budget is only ever carried beside it
+	now := st.trail.Now(st.pulse).Squeezed(st.budget, time.Now(), st.density)
 	b.WriteString(moodHeader(st, width, window, pin) + "\n" + gap)
 
 	if st.trail.Count == 0 {
@@ -489,7 +507,34 @@ func moodReceipt(st moodState, now wall.MoodNow) string {
 			parts = append(parts, t)
 		}
 	}
+	if t := moodSqueezeTerm(st.budget, now); t != "" {
+		parts = append(parts, t)
+	}
 	return strings.Join(parts, " · ")
+}
+
+// moodSqueezeTerm is the live budget, last in the receipt because it is the
+// only term that is about neither these posts nor this second — it is about
+// what is left to work with.
+//
+// It is written as a labelled quantity and never as an expression. The window
+// term one place to the left reads `window 3.8 − 0.4`, and that minus sign is
+// the whole difference: the waiting is taken off the grade, this is not and
+// must never look as though it were. The number after `squeeze` is what the
+// pressure would be worth in mood steps if anyone ever decided it belonged
+// there. Nobody has.
+func moodSqueezeTerm(b wall.Budget, now wall.MoodNow) string {
+	if !b.Known() {
+		return ""
+	}
+	limits := fmt.Sprintf("5h %.0f%% · 7d %.0f%%", b.Pct5h, b.Pct7d)
+	if now.Squeeze < 0.05 {
+		// under a twentieth of a step there is nothing to name, and a
+		// "squeeze 0.0" beside two low percentages is a label with no reading
+		// under it
+		return limits
+	}
+	return fmt.Sprintf("squeeze %.1f · %s", now.Squeeze, limits)
 }
 
 // moodRecentN is how many posts count as "lately". Enough that one post
@@ -563,6 +608,20 @@ func pointPulseTerm(p wall.MoodPoint) string {
 		term += fmt.Sprintf(" · %d with none", p.PulseDown)
 	}
 	return term
+}
+
+// pointSqueezeTerm names how full the limits were when this column was
+// posted — a mean over the posts of a folded day that carried a reading, and
+// silence where none did. The percentages the post stored, nothing derived:
+// the pressure is a live quantity and a column is not live.
+func pointSqueezeTerm(p wall.MoodPoint) string {
+	if p.SqueezeN == 0 {
+		return ""
+	}
+	if p.N > 1 {
+		return fmt.Sprintf("squeeze ~5h %.0f%% 7d %.0f%%", p.Squeeze5h, p.SqueezeP)
+	}
+	return fmt.Sprintf("squeeze 5h %.0f%% 7d %.0f%%", p.Squeeze5h, p.SqueezeP)
 }
 
 // pulseDur rounds a round trip to what the eye can tell apart: milliseconds
@@ -972,6 +1031,9 @@ func moodInspect(st moodState, width int) string {
 	api := ""
 	if t := pointPulseTerm(p); t != "" {
 		api = " · " + t
+	}
+	if t := pointSqueezeTerm(p); t != "" {
+		api += " · " + t
 	}
 	var line string
 	if p.N > 1 {

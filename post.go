@@ -111,6 +111,14 @@ func cmdPost(args []string) error {
 	// read is a marker nobody measured with.
 	signals, signalSrc := wall.SessionSignals(*repo)
 	now := time.Now()
+	// And how much of the account's budget was already spent while it was
+	// written. Same file as the pulse, two more lines of it, so the cost is
+	// one stat and one read of well under a kilobyte — this runs on every
+	// post, inside the Stop hook's ten-second budget, and the flight recorder
+	// beside it is megabytes that nothing here needs: the density only
+	// matters to a live reading, and what a post has to carry is the two
+	// percentages. Never fatal, and never applied to the grade below.
+	squeezeP, squeeze5h, squeezeSrc := wall.SessionBudget(now).Fields()
 
 	// one read serves both post-time lints: the actor's own history is the
 	// clock for --took and the evidence for the calibration warning. A
@@ -129,7 +137,8 @@ func cmdPost(args []string) error {
 
 	e := wall.Event{TS: now.UTC(), Repo: *repo, Actor: who, Topic: *topic, Msg: msg, Refs: refs,
 		Outcome: *outcome, TookS: tookS, TookSrc: tookSrc, Mood: *mood, Grader: *grader,
-		PulseMS: pulseMS, PulseSrc: pulseSrc, Signals: signals, SignalSrc: signalSrc}
+		PulseMS: pulseMS, PulseSrc: pulseSrc, Signals: signals, SignalSrc: signalSrc,
+		SqueezeP: squeezeP, Squeeze5h: squeeze5h, SqueezeSrc: squeezeSrc}
 	if err := wall.Append(dir, e); err != nil {
 		return err
 	}
