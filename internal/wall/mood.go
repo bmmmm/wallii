@@ -31,6 +31,13 @@ type MoodPoint struct {
 	PulseMS   int64
 	PulseN    int
 	PulseDown int
+	// The other half of those conditions: how full the rate limits were.
+	// SqueezeN counts the posts here that carried a reading, so a folded day
+	// averages over those and never over the ones nobody measured — the same
+	// separation PulseN keeps, for the same reason.
+	SqueezeP  float64
+	Squeeze5h float64
+	SqueezeN  int
 }
 
 // Contradicts reports whether this column should be drawn as a doubted one.
@@ -196,6 +203,9 @@ func MoodTrail(evs []Event) MoodSummary {
 		case PulseSession:
 			p.PulseMS, p.PulseN = e.PulseMS, 1
 		} // "" is nobody measured, PulseProbe is a ping — neither is a turn
+		if e.SqueezeSrc != "" {
+			p.SqueezeP, p.Squeeze5h, p.SqueezeN = e.SqueezeP, e.Squeeze5h, 1
+		}
 		// regex work, once per post per refold — the trail is rebuilt on
 		// ingest, not per frame, so this stays off the render path
 		if len(Contradictions(e)) > 0 {
@@ -221,6 +231,7 @@ func MoodDays(pts []MoodPoint) []MoodPoint {
 	var out []MoodPoint
 	sum := make(map[int]float64)
 	psum := make(map[int]int64)
+	qsum7, qsum5 := make(map[int]float64), make(map[int]float64)
 	for _, p := range pts {
 		d := p.TS.Local()
 		day := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, d.Location())
@@ -235,6 +246,9 @@ func MoodDays(pts []MoodPoint) []MoodPoint {
 		psum[i] += p.PulseMS * int64(p.PulseN)
 		out[i].PulseN += p.PulseN
 		out[i].PulseDown += p.PulseDown
+		qsum7[i] += p.SqueezeP * float64(p.SqueezeN)
+		qsum5[i] += p.Squeeze5h * float64(p.SqueezeN)
+		out[i].SqueezeN += p.SqueezeN
 		if outcomeRank(p.Outcome) > outcomeRank(out[i].Outcome) {
 			out[i].Outcome = p.Outcome
 		}
@@ -245,6 +259,10 @@ func MoodDays(pts []MoodPoint) []MoodPoint {
 		out[i].Score = MoodLevel(out[i].Avg)
 		if out[i].PulseN > 0 {
 			out[i].PulseMS = psum[i] / int64(out[i].PulseN)
+		}
+		if out[i].SqueezeN > 0 {
+			out[i].SqueezeP = qsum7[i] / float64(out[i].SqueezeN)
+			out[i].Squeeze5h = qsum5[i] / float64(out[i].SqueezeN)
 		}
 	}
 	return out

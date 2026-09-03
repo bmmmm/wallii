@@ -229,6 +229,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // a probe from an earlier visit — its reading is not this one's
 		}
 		m.mood.pulse, m.mood.pulsing = msg.pulse, false
+		m.mood.budget, m.mood.density = msg.budget, msg.density
 		return m, moodPulseDueCmd(msg.epoch)
 	case moodPulseDueMsg:
 		if msg.epoch != m.mood.epoch || m.mode != modeMood {

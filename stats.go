@@ -68,6 +68,9 @@ func cmdStats(args []string) error {
 	if line := apiLine(s); line != "" {
 		fmt.Println(line)
 	}
+	if line := squeezeLine(s); line != "" {
+		fmt.Println(line)
+	}
 	if calib := calibLine(s, *sinceS); calib != "" {
 		fmt.Println(calib)
 	}
@@ -184,6 +187,25 @@ func apiLine(s wall.Stats) string {
 		line += fmt.Sprintf(" · %d written with no api at all", s.PulseDown)
 	}
 	return line
+}
+
+// squeezeLine reports the other half of those conditions: how much of the
+// account's five-hour and seven-day budget was already spent while these
+// grades were earned. Silent when no post in the window carries a reading,
+// for the same reason the api line is — zero coverage is not an empty budget.
+//
+// It reports and stops there. No coverage percentage, no verdict, and above
+// all no arithmetic against the mood line above it: whether a full budget
+// makes for a worse day is the question these numbers are being stored to
+// answer, and a line that already assumed the answer would be the fastest
+// possible way to lose it.
+func squeezeLine(s wall.Stats) string {
+	if s.SqueezePosts == 0 {
+		return ""
+	}
+	n := float64(s.SqueezePosts)
+	return fmt.Sprintf("squeeze  5h %.0f%% · 7d %.0f%% of the limits spent, on average across %s — recorded beside the grades, never in them",
+		s.Squeeze5hTotal/n, s.SqueezePTotal/n, plural(s.SqueezePosts, "post"))
 }
 
 // graderLine counts the posts that name the cheap path they saw, without
