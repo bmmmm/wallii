@@ -370,9 +370,30 @@ func TurnDensity(now time.Time) float64 {
 	if dir == "" {
 		return SqueezeDensityUnknown
 	}
-	path := filepath.Join(dir, "history-"+now.Format("2006-01")+".tsv")
-	stamps, fromStart, err := recorderTail(path, squeezeTailBytes)
-	if err != nil || len(stamps) == 0 {
+	stamps, fromStart, err := recorderTail(filepath.Join(dir, "history-"+now.Format("2006-01")+".tsv"), squeezeTailBytes)
+	if err != nil {
+		// no file for this month yet: the hour still has to be looked for
+		stamps, fromStart = nil, true
+	}
+	// The month rolls over inside the hour like any other minute. Ten
+	// minutes into a month this file holds ten minutes of rows and the rest
+	// of the window sits in the previous month's, so whenever a read that
+	// reached this file's head still does not reach the cutoff, the previous
+	// month's tail goes in front of it. Without that, every first of the
+	// month opened on a density of nearly nothing and eased the pressure
+	// for a pause nobody took. A read that did NOT reach the head is a
+	// different case — a tail too short for the hour under load — and
+	// prepending older rows to it would only lengthen the divisor.
+	cutoff := now.Add(-squeezeDensityWindow).Unix()
+	if fromStart && (len(stamps) == 0 || stamps[0] > cutoff) {
+		first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		prevPath := filepath.Join(dir, "history-"+first.AddDate(0, 0, -1).Format("2006-01")+".tsv")
+		if prev, prevFromStart, perr := recorderTail(prevPath, squeezeTailBytes); perr == nil {
+			stamps = append(prev, stamps...)
+			fromStart = prevFromStart
+		}
+	}
+	if len(stamps) == 0 {
 		return SqueezeDensityUnknown
 	}
 	return turnsPerHour(now, stamps, fromStart)

@@ -103,11 +103,15 @@ printf 'func TestX(t *testing.T){ t.Skip("flaky") }\n' > a_test.go
 out="$(run s1)"; rc=$?
 echo "--- red output (rc=$rc):"; printf '%s\n' "$out"
 if printf '%s' "$out" | grep -q '"decision": *"block"' && printf '%s' "$out" | grep -q 'a_test.go:1' && printf '%s' "$out" | grep -Fq 't.Skip(\"flaky\")'; then ok "1 red: block names a_test.go:1 and the skip line"; else bad "1 red"; fi
+rec="$(lastrec)"
+if [ "$(recfield "$rec" 4)" = "exit=sig" ] && [ "$(recfield "$rec" 5)" = "sig=fired" ] && [ "$(recfield "$rec" 6)" = "idle=unreached" ]; then ok "1b record: exit=sig, sig=fired, the idle trigger below it unreached"; else bad "1b record: $rec"; fi
 echo "--- markers:"; /bin/ls -la "$MD"; echo "--- marker s1-r.shortcut:"; cat -v "$MD/s1-r.shortcut" 2>/dev/null || echo "(no marker)"
 
 # 2 DEDUP — same tree, same session → silent
 out="$(run s1 WALLII_REMIND_IDLE_MIN=0)"; rc=$?
 if [ -z "$out" ] && [ "$rc" -eq 0 ]; then ok "2 dedup: unchanged signature stays quiet"; else bad "2 dedup (rc=$rc): $out"; fi
+rec="$(lastrec)"
+if [ "$(recfield "$rec" 5)" = "sig=dedup" ] && [ "$(recfield "$rec" 6)" = "idle=off" ]; then ok "2b record: sig=dedup, idle=off"; else bad "2b record: $rec"; fi
 
 # 3 ENV GUARD — the reason names the environment → silent
 newsid s3
@@ -165,6 +169,12 @@ newsid s9
 for i in 1 2 3; do printf 'package r // %s\n' "$i" > "f$i.go"; git add "f$i.go"; git commit -qm "plain $i"; done
 out="$(run s9 WALLII_REMIND_IDLE_MIN=0)"; rc=$?
 if printf '%s' "$out" | grep -q 'commit(s) in `r`'; then ok "9 regression: commit trigger still fires"; else bad "9 regression: $out"; fi
+rec="$(lastrec)"
+if [ "$(recfield "$rec" 4)" = "exit=commit" ] && [ "$(recfield "$rec" 7)" = "commit=fired" ]; then ok "9b record: exit=commit, commit=fired"; else bad "9b record: $rec"; fi
+# the same HEAD again: reported once, and the record says why it was quiet
+out="$(run s9 WALLII_REMIND_IDLE_MIN=0)"; rc=$?
+rec="$(lastrec)"
+if [ -z "$out" ] && [ "$rc" -eq 0 ] && [ "$(recfield "$rec" 4)" = "exit=end" ] && [ "$(recfield "$rec" 7)" = "commit=dedup" ]; then ok "9c record: commit=dedup on an unchanged HEAD, exit=end"; else bad "9c record (rc=$rc): $rec"; fi
 
 # 10 FOLD — four findings show three and '… and 1 more'
 newsid s10
@@ -248,6 +258,8 @@ out="$(run s16 WALLII_REMIND_IDLE_MIN=0 WALLII_REMIND_AFTER=99 WALLII_REMIND_SHO
 if [ -n "$out" ]; then bad "16 threshold: hook asked below its threshold: $out"; else
     if LC_ALL=C grep -Fq 't.Skip("flaky")' "$MD/s16-r.shortcut" 2>/dev/null; then
         ok "16 threshold: quiet, and the finding is still recorded"
+        rec="$(lastrec)"
+        if [ "$(recfield "$rec" 5)" = "sig=held" ]; then ok "16b record: sig=held — measured, the asking held back"; else bad "16b record: $rec"; fi
     else
         bad "16 threshold: marker says nothing was found ($(wc -c < "$MD/s16-r.shortcut" 2>/dev/null || echo no-file) bytes)"
     fi
@@ -455,6 +467,27 @@ if [ -z "$out" ] && [ "$(recfield "$rec" 5)" = "sig=off" ]; then
     ok "21e off switch: sig=off, not unreached"
 else
     bad "21e off switch: $rec"
+fi
+
+# 21f THE GUARD WORDS. Every exit above the triggers has its own name in the
+#     record, and a name only the hook knows is a README table nobody can
+#     trust — seventeen of the words were unasserted until review pointed
+#     it out. A session id with a slash, and a directory that is no
+#     repository; the fired, dedup and held words are pinned at 1b, 2b, 9b,
+#     9c and 16b beside the cases that produce them.
+out="$(run 's21f/bad' WALLII_REMIND_IDLE_MIN=0)"; rc=$?
+rec="$(lastrec)"
+if [ -z "$out" ] && [ "$rc" -eq 0 ] && [ "$(recfield "$rec" 4)" = "exit=bad-sid" ] && [ "$(recfield "$rec" 5)" = "sig=unreached" ]; then
+    ok "21f bad sid: exit=bad-sid, the triggers unreached"
+else
+    bad "21f bad sid (rc=$rc): $rec"
+fi
+out="$(cd "$T" && run s21g)"; rc=$?
+rec="$(lastrec)"
+if [ -z "$out" ] && [ "$rc" -eq 0 ] && [ "$(recfield "$rec" 2)" = "s21g" ] && [ "$(recfield "$rec" 4)" = "exit=no-git" ] && [ -z "$(recfield "$rec" 3)" ]; then
+    ok "21g no git: exit=no-git, the session named and the repo empty"
+else
+    bad "21g no git (rc=$rc): $rec"
 fi
 
 # 22a THE IDLE TRIGGER FIRES — for the first time in this suite's history.

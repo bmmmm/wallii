@@ -353,10 +353,11 @@ Stop hook went live:
 Four of 36 repos had no checkout on this machine; they are named, and their
 eight posts are reported as what the ratio omits. The dashboard draws the
 same reading as the card *What the wall never saw*: commits per day or week
-against the posts about them, every bucket older than the collected window
+against the posts about them, every bucket outside the collected window
 drawn as a gap labelled "not measured" — never as a day with no commits —
 and `null` inlined rather than an empty list when nothing was measured at
-all.
+all. The card counts the posts of measured repos only, so a repo without a
+checkout leaves both sides of its ratio too.
 
 ### The mood panel
 

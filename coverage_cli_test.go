@@ -2,8 +2,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -186,6 +188,116 @@ func TestDashInlinesMeasuredCommits(t *testing.T) {
 	}
 	if !strings.Contains(line, `"from":`) {
 		t.Errorf("from is mandatory — without it every bucket before the window renders as zero commits:\n%s", line)
+	}
+	if !strings.Contains(line, `"to":`) {
+		t.Errorf("to is mandatory — without it a dashboard opened next week renders the days since as zero commits:\n%s", line)
+	}
+	if !strings.Contains(line, `"repos":["webshop"]`) {
+		t.Errorf("the card must be told which repos were measured, or it counts every repo's posts:\n%s", line)
+	}
+}
+
+// The browser half is where the two contracts that matter most live — a
+// bucket outside the collected window is a gap, never a zero, and the card's
+// numerator is the posts of measured repos only — and no Go test can see
+// either from Go. So the dashboard's own script runs here under node, with a
+// DOM that swallows every call it makes, and aggregate() is read back as
+// data. Both contracts were broken once while every Go test was green
+// (found in review, 2026-09-03). Skipped, and said so, where node is not on
+// the PATH.
+func TestDashCardAggregatesWhatTheGoSideCounted(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the browser half of the card cannot be executed without it")
+	}
+	loc := time.Local
+	y, m, d := time.Now().In(loc).Date()
+	today := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	from := today.AddDate(0, 0, -5)     // the collected window: five days back …
+	to := today.AddDate(0, 0, -2)       // … up to but not including two days ago
+	measured := today.AddDate(0, 0, -4) // a day inside it, with commits and posts
+	noon := measured.Add(12 * time.Hour)
+
+	cov, err := json.Marshal(dashCoverage{
+		From: from.UnixMilli(), To: to.UnixMilli(),
+		Days:  map[string]int{wall.DashDayKey(measured): 12},
+		Repos: []string{"webshop"},
+		BlindCommits: wall.DefaultBlindCommits, BlindPosts: wall.DefaultBlindPosts,
+		Measured: 1, OnWall: 2, Unresolved: []string{"orphan"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// two posts on the measured day: one in the measured repo, one in the
+	// repo nobody found a checkout for — the second leaves the numerator the
+	// way its repo left the denominator
+	evs, err := json.Marshal([]dashEvent{
+		{T: noon.UnixMilli(), Repo: "webshop", Actor: "bot/builder", Msg: "shipped a thing"},
+		{T: noon.Add(time.Hour).UnixMilli(), Repo: "orphan", Actor: "bot/builder", Msg: "shipped elsewhere"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start, end := strings.Index(dashTemplate, "<script>"), strings.LastIndex(dashTemplate, "</script>")
+	if start < 0 || end < 0 {
+		t.Fatal("dash.html has no <script> block to run")
+	}
+	script := dashTemplate[start+len("<script>") : end]
+	script = strings.Replace(script, "__GENERATED__", "fixture", 1)
+	script = strings.Replace(script, "__WALLII_COMMITS__", string(cov), 1)
+	script = strings.Replace(script, "__WALLII_DATA__", string(evs), 1)
+	// a DOM that accepts everything and answers with itself, so the page's
+	// own top-level rendering runs to the end without a browser
+	harness := `const stub = new Proxy(function () {}, {
+  get: (_, k) => k === Symbol.toPrimitive ? () => 0 : k === Symbol.iterator ? function* () {} : k === "then" ? undefined : stub,
+  set: () => true, apply: () => stub, construct: () => stub, has: () => true,
+});
+for (const g of ["document", "window", "localStorage", "navigator", "matchMedia", "location", "requestAnimationFrame"]) globalThis[g] = stub;
+` + script + `
+const agg = aggregate(7);
+console.log("RESULT " + JSON.stringify({
+  days: agg.days,
+  buckets: agg.buckets.map(b => ({ t0: b.t0, cov: b.cov, commits: b.commits, mposts: b.mposts })),
+}));
+`
+	path := filepath.Join(t.TempDir(), "dash-harness.js")
+	if err := os.WriteFile(path, []byte(harness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the dashboard script did not run under node: %v\n%s", err, out)
+	}
+	var res struct {
+		Days    []struct{ T0 int64; Commits, Posts int; Cov bool }
+		Buckets []struct{ T0 int64; Commits, Mposts int; Cov bool }
+	}
+	_, payload, ok := strings.Cut(string(out), "RESULT ")
+	if !ok {
+		t.Fatalf("no result line from node:\n%s", out)
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(payload)), &res); err != nil {
+		t.Fatalf("cannot read the aggregate back: %v\n%s", err, out)
+	}
+	if len(res.Days) != 7 || len(res.Buckets) != 7 {
+		t.Fatalf("a 7-day range walked %d days into %d buckets", len(res.Days), len(res.Buckets))
+	}
+	for i, day := range res.Days {
+		at := time.UnixMilli(day.T0).In(loc)
+		inside := !at.Before(from) && at.Before(to)
+		switch {
+		case day.Cov != inside:
+			t.Errorf("%s: measured=%v, but the collected window is [%s, %s) — a day outside it is a gap, never a zero",
+				at.Format("2006-01-02"), day.Cov, from.Format("01-02"), to.Format("01-02"))
+		case !inside && (day.Commits != 0 || day.Posts != 0):
+			t.Errorf("%s: a gap carries %d commits and %d posts", at.Format("2006-01-02"), day.Commits, day.Posts)
+		case at.Equal(measured) && (day.Commits != 12 || day.Posts != 1):
+			t.Errorf("the measured day holds %d commits and %d posts, want 12 and 1 — the orphan's post must not count", day.Commits, day.Posts)
+		}
+		if b := res.Buckets[i]; b.Cov != day.Cov || b.Commits != day.Commits || b.Mposts != day.Posts {
+			t.Errorf("daily bucket %s disagrees with its day: %+v vs %+v", at.Format("2006-01-02"), b, day)
+		}
 	}
 }
 

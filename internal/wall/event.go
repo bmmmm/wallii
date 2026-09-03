@@ -262,10 +262,11 @@ func (e Event) Validate() error {
 	// it must not cross, so a NaN — which strconv parses out of the word and
 	// which no comparison against a bound would catch — fails here instead of
 	// poisoning every average taken over the field afterwards
-	for name, v := range map[string]float64{"squeeze_p": e.SqueezeP, "squeeze_5h": e.Squeeze5h} {
-		if !(v >= 0 && v <= MaxSqueezePct) {
-			return fmt.Errorf("%s is %v — a percentage of a limit, 0 to %d", name, v, MaxSqueezePct)
-		}
+	if !(e.SqueezeP >= 0 && e.SqueezeP <= MaxSqueezePct) {
+		return fmt.Errorf("squeeze_p is %v — a percentage of a limit, 0 to %d", e.SqueezeP, MaxSqueezePct)
+	}
+	if !(e.Squeeze5h >= 0 && e.Squeeze5h <= MaxSqueezePct) {
+		return fmt.Errorf("squeeze_5h is %v — a percentage of a limit, 0 to %d", e.Squeeze5h, MaxSqueezePct)
 	}
 	// The reverse (a source with no value) is legal and is the point: a
 	// window nobody has spent anything of reads 0 %, and an absent field

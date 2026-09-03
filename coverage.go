@@ -151,7 +151,7 @@ func repoNames(evs []wall.Event, from, to time.Time) []string {
 }
 
 func printCov(c wall.Cov, label string) {
-	head := fmt.Sprintf("%d repos posted to · %d of %d measured", c.OnWall, c.Measured, c.Measured+len(c.Unresolved))
+	head := fmt.Sprintf("%s posted to · %d of %d measured", plural(c.OnWall, "repo"), c.Measured, c.Measured+len(c.Unresolved))
 	if label != "" {
 		head = label + " · " + head
 	}

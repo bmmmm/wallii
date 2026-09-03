@@ -87,8 +87,12 @@ func reachedFrom(bands [11]float64, pct float64) float64 {
 
 // The mistake pulseAnchors made before it was recalibrated: a scale whose
 // first step the data never reach measures nothing, and reports no pressure
-// through a week of it. So every step of this one is checked against what the
-// flight recorder actually recorded, in both windows.
+// through a week of it. So every step of this one is checked against the
+// band table above — a frozen record of what the flight recorder held on the
+// day the anchors were chosen, not a live read: CI has no recorder, and a
+// test that read this machine's would prove only this machine's week. The
+// table is what goes red when an anchor climbs past the data (re-measured by
+// review on 2026-09-03 over 427k rows, within two points of every band).
 func TestSqueezeAnchorsAreReachedByRealTurns(t *testing.T) {
 	windows := map[string][11]float64{"5h": squeezeBands5h, "7d": squeezeBands7d}
 	for _, a := range squeezeAnchors {
@@ -338,6 +342,41 @@ func TestRecorderTailReadsOnlyTheEnd(t *testing.T) {
 	// the whole file, read whole, says so
 	if _, all, err := recorderTail(path, 1<<24); err != nil || !all {
 		t.Errorf("reading the whole file reported fromStart=%v (err %v)", all, err)
+	}
+}
+
+// The month rolls over inside the hour like any other minute. Ten minutes
+// into a month the current file holds ten minutes of rows and the previous
+// month's holds the other fifty — read alone, the new file reported a pause
+// nobody took and eased the pressure for it (found in review, 2026-09-03).
+func TestTurnDensityReadsAcrossTheMonthBoundary(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDII_CACHE_DIR", dir)
+	now := time.Date(2026, time.October, 1, 0, 10, 0, 0, time.Local)
+	write := func(name string, from, to time.Time) {
+		t.Helper()
+		var b strings.Builder
+		for ts := from; ts.Before(to); ts = ts.Add(time.Minute) {
+			b.WriteString(strconv.FormatInt(ts.Unix(), 10))
+			b.WriteString("\tMade Up 1.0\t1.5\t20\t30\tsid\t1\t2\t3\t40\t1800000000\n")
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// one invented row a minute: two hours of September, ten minutes of
+	// October — sixty of them inside the last hour, fifty across the boundary
+	write("history-2026-09.tsv", now.Add(-120*time.Minute), now.Add(-10*time.Minute))
+	write("history-2026-10.tsv", now.Add(-10*time.Minute), now)
+	if got := TurnDensity(now); !near(got, 60) {
+		t.Errorf("sixty rows across the month boundary read as %g per hour", got)
+	}
+	// a month whose file does not exist yet is read out of the previous one
+	if err := os.Remove(filepath.Join(dir, "history-2026-10.tsv")); err != nil {
+		t.Fatal(err)
+	}
+	if got := TurnDensity(now); !near(got, 50) {
+		t.Errorf("fifty rows, all in last month's file, read as %g per hour", got)
 	}
 }
 

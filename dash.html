@@ -178,6 +178,11 @@ RAW.sort((a, b) => a.t - b.t);
    blindness out of nothing. COMMITS.from is the floor: every bucket older
    than it is a gap labelled "not measured", never a day with no commits. */
 const COMMITS = __WALLII_COMMITS__;
+/* The repos whose commits are in COMMITS.days. The card's numerator is the
+   posts of these repos and no others — a repo with no checkout leaves both
+   sides of the ratio here exactly as it does in `wallii coverage`, or the
+   card would print a ratio its own footnote contradicts. */
+const MEASURED = new Set(COMMITS ? COMMITS.repos || [] : []);
 
 const DAY = 864e5;
 const MOODS = { great: 5, good: 4, ok: 3, rough: 2, stuck: 1 };
@@ -291,11 +296,14 @@ function aggregate(rangeDays) {
   const cur = new Date(startD);
   for (let i = 0; cur <= today; i++) {
     const bi = weekly ? Math.floor(i / 7) : i;
-    if (!buckets[bi]) buckets.push({ t0: cur.getTime(), byActor: {}, out: { ok: 0, partial: 0, failed: 0, none: 0 }, moodSum: 0, moodN: 0, posts: 0, commits: 0, cov: true });
+    if (!buckets[bi]) buckets.push({ t0: cur.getTime(), byActor: {}, out: { ok: 0, partial: 0, failed: 0, none: 0 }, moodSum: 0, moodN: 0, posts: 0, commits: 0, mposts: 0, cov: true });
     dayIdx[dayKey(cur)] = bi;
     // the commits ride along in the walk that already exists — no second
-    // calendar in the browser, and DST is handled once, here
-    const cov = !!COMMITS && cur.getTime() >= COMMITS.from;
+    // calendar in the browser, and DST is handled once, here. Measured means
+    // inside the collected window on both ends: a dashboard opened a week
+    // after it was written must not paint the days since as days with no
+    // commits on them
+    const cov = !!COMMITS && cur.getTime() >= COMMITS.from && cur.getTime() < COMMITS.to;
     const d = { t0: cur.getTime(), commits: cov ? (COMMITS.days[dayKey(cur)] || 0) : 0, posts: 0, cov };
     days.push(d);
     dayOf[dayKey(cur)] = d;
@@ -318,8 +326,10 @@ function aggregate(rangeDays) {
   for (const e of evs) {
     const b = buckets[dayIdx[dayKey(new Date(e.t))]];
     if (!b) continue; // future-dated post (clock skew) — feed still shows it
+    // the card's own numerator, counted in the same walk as its commits:
+    // posts of measured repos only, per day and per bucket
     const dayEntry = dayOf[dayKey(new Date(e.t))];
-    if (dayEntry) dayEntry.posts++;
+    if (dayEntry && MEASURED.has(e.repo)) { dayEntry.posts++; b.mposts++; }
     const actor = e.actor || "—";
     const grp = actorSlot[actor] === "--other" ? FOLD : actor;
     b.posts++;
@@ -483,18 +493,19 @@ function renderBlind(agg) {
   const band = plotW / agg.buckets.length;
   const barW = Math.min(24, band * 0.72);
   const labelEvery = Math.ceil(agg.buckets.length / 12);
-  const postsIn = b => agg.days.filter(d => d.t0 >= b.t0 && d.t0 < b.t0 + (agg.weekly ? 7 : 1) * DAY).reduce((s, d) => s + d.posts, 0);
   agg.buckets.forEach((b, i) => {
     const x = mL + i * band + (band - barW) / 2;
     if (!b.cov) {
-      // a gap, never a zero: this bucket reaches past the window the commits
+      // a gap, never a zero: this bucket lies outside the window the commits
       // were collected for, and "not measured" is a different fact from "no
       // commits" — the one bug that would make this card lie loudest
       const gap = svgEl("rect", { x: mL + i * band, y: mT, width: band, height: plotH, fill: "var(--grid)", "fill-opacity": .45, tabindex: "0" });
-      hover(gap, `<div class="t">${agg.weekly ? "week of " : ""}${fmtDay(b.t0)}</div><div class="l">not measured — older than the collected window</div>`);
+      hover(gap, `<div class="t">${agg.weekly ? "week of " : ""}${fmtDay(b.t0)}</div><div class="l">not measured — outside the collected window</div>`);
       svg.append(gap);
     } else {
-      const bp = postsIn(b);
+      // the bucket's posts were summed in the same day-walk as its commits —
+      // no millisecond arithmetic here, a 23-hour day would overshoot it
+      const bp = b.mposts;
       svg.append(svgEl("path", { d: roundTop(x, y(b.commits), barW, Math.max(mT + plotH - y(b.commits), 1.5), 4), fill: "var(--none)" }));
       const pw = Math.max(barW * 0.42, 3);
       svg.append(svgEl("path", { d: roundTop(x + (barW - pw) / 2, y(bp), pw, Math.max(mT + plotH - y(bp), 1.5), 3), fill: "var(--accent)" }));
@@ -514,7 +525,7 @@ function renderBlind(agg) {
   // the footnote, described and never scored: no percentage, for the reason
   // in the comment above this function
   c.append(el("div", { class: "sub", style: "margin-top:8px", text: `posts ${posts} · commits ${commits} · ${commits ? (posts / commits).toFixed(2) : "—"} per commit` }));
-  if (gaps) c.append(el("div", { class: "sub", text: `${gaps} day${gaps === 1 ? "" : "s"} in this range are older than the collected window — shown as gaps, counted in nothing` }));
+  if (gaps) c.append(el("div", { class: "sub", text: `${gaps} day${gaps === 1 ? "" : "s"} in this range lie outside the collected window — shown as gaps, counted in nothing` }));
   if (COMMITS.others) c.append(el("div", { class: "sub", text: `${COMMITS.others} commit${COMMITS.others === 1 ? "" : "s"} by other authors are reported beside this count, never inside it` }));
   // the repo names go in as text, never through innerHTML — a stored field
   // is only control-char-filtered

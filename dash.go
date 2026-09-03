@@ -57,10 +57,19 @@ type dashEvent struct {
 // From is mandatory for the same reason one level down: the dashboard's
 // range buttons reach past the window these commits were collected for, and
 // every bucket older than From has to render as a gap that says "not
-// measured", never as a day with no commits on it.
+// measured", never as a day with no commits on it. To closes the same
+// contract at the other end — a dashboard opened a week after it was
+// written must not paint the days since as days with no commits.
+//
+// Repos names the repos whose commits are in Days, and the card counts the
+// posts of these and no others: a repo without a checkout leaves both sides
+// of the ratio here exactly as it does in `wallii coverage`, or the card
+// would print a ratio its own footnote contradicts.
 type dashCoverage struct {
-	From         int64          `json:"from"` // unix ms, local midnight of the collected window's first day
-	Days         map[string]int `json:"days"` // dayKey() → commits
+	From         int64          `json:"from"`  // unix ms, local midnight of the collected window's first day
+	To           int64          `json:"to"`    // unix ms, local midnight after its last day
+	Days         map[string]int `json:"days"`  // dayKey() → commits
+	Repos        []string       `json:"repos"` // the measured repos — the card's numerator is their posts
 	BlindCommits int            `json:"blind_commits"`
 	BlindPosts   int            `json:"blind_posts"`
 	Measured     int            `json:"measured"`
@@ -105,10 +114,16 @@ func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time) *das
 		w := c.WallStart.In(loc)
 		fromDay = time.Date(w.Year(), w.Month(), w.Day(), 0, 0, 0, 0, loc)
 	}
+	n := now.In(loc)
+	toDay := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
 	out := &dashCoverage{
-		From: fromDay.UnixMilli(), Days: map[string]int{},
+		From: fromDay.UnixMilli(), To: toDay.UnixMilli(), Days: map[string]int{},
+		Repos:        make([]string, 0, len(c.Repos)),
 		BlindCommits: c.BlindCommits, BlindPosts: c.BlindPosts,
 		Measured: c.Measured, OnWall: c.OnWall, Others: c.Others,
+	}
+	for _, r := range c.Repos {
+		out.Repos = append(out.Repos, r.Name)
 	}
 	for _, d := range c.Days {
 		if d.PreWall {

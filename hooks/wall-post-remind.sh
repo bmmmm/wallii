@@ -94,9 +94,13 @@ field() { printf '%s' "$INPUT" | jq -r "$1 // empty" 2>/dev/null || true; }
 #
 # The clock is read once, here, in the shape every reader of it needs: epoch
 # for the session clock, ISO for the diff base, for the record and for the
-# log's name. It replaces the two to three `date` forks this hook used to
-# make per Stop, so the record costs less than nothing — every other value in
-# the line is a shell variable already, and the append is one printf.
+# log's name. On a Stop that reaches its triggers it replaces the two to
+# three `date` forks this hook used to make, so the record costs less than
+# nothing there — every other value in the line is a shell variable already,
+# and the append is one printf. A Stop that dies at a guard pays for it: the
+# clock, the mkdir and the jq for the session id used to sit below the
+# guards, and now run before them — three forks, for the one record that
+# explains an empty wall.
 #
 # The clock, the marker dir, its mkdir and the session id sit ABOVE the guards
 # on purpose. The mkdir used to come after every one of them, so
@@ -142,11 +146,21 @@ hook_record() {
     # is one this hook could have written whole.
     local s="${sid:-}"
     local r="${repo:-}"
-    printf '%s\t%s\t%s\texit=%s\tsig=%s\tidle=%s\tcommit=%s\n' \
-        "$iso" "${s//[$'\t\n']/ }" "${r//[$'\t\n']/ }" \
-        "${hook_exit:-end}" "${hook_sig:-unreached}" \
-        "${hook_idle:-unreached}" "${hook_commit:-unreached}" \
-        >> "${marker_dir:-}/stops-$month.log" 2>/dev/null || true
+    # The whole group is silenced, not the printf alone: a redirection that
+    # fails — the marker dir replaced by a plain file, say — is reported by
+    # the shell before a later `2>/dev/null` on the same command could
+    # apply, and the trap that promised silence would be the one thing on
+    # stderr (found in review, 2026-09-03). One printf, one write, O_APPEND:
+    # two Stops ending in the same instant do not tear each other's line on
+    # a local filesystem, and the reader skips and counts a torn one should
+    # it ever see it.
+    {
+        printf '%s\t%s\t%s\texit=%s\tsig=%s\tidle=%s\tcommit=%s\n' \
+            "$iso" "${s//[$'\t\n']/ }" "${r//[$'\t\n']/ }" \
+            "${hook_exit:-end}" "${hook_sig:-unreached}" \
+            "${hook_idle:-unreached}" "${hook_commit:-unreached}" \
+            >> "${marker_dir:-}/stops-$month.log"
+    } 2>/dev/null || true
     return 0
 }
 trap hook_record EXIT
@@ -533,12 +547,21 @@ fi
 # them.
 idle_min="${WALLII_REMIND_IDLE_MIN:-45}"
 idle_marker="$marker_dir/${sid:-nosession}-idle.done"
-start_epoch="$(cut -d' ' -f1 "$startfile" 2>/dev/null || true)"
-start_iso="$(cut -d' ' -f2 "$startfile" 2>/dev/null || true)"
-# A zero point no comparison can read is an absent one, and `$(( ))` on it
-# would abort the arithmetic and say so on stderr. The aging block above
-# rewrites such a file; this is what happens in the Stop where it could not.
-case "${start_epoch:-x}" in ''|*[!0-9]*) start_epoch="" ;; esac
+# The clock is read only where a step below could use it: switched off and
+# already asked are decided without it, and two `cut` forks on every Stop
+# after the question was answered would be the record costing what it
+# promised not to.
+start_epoch=""
+start_iso=""
+if [ "$idle_min" -gt 0 ] 2>/dev/null && [ ! -f "$idle_marker" ]; then
+    start_epoch="$(cut -d' ' -f1 "$startfile" 2>/dev/null || true)"
+    start_iso="$(cut -d' ' -f2 "$startfile" 2>/dev/null || true)"
+    # A zero point no comparison can read is an absent one, and `$(( ))` on
+    # it would abort the arithmetic and say so on stderr. The aging block
+    # above rewrites such a file; this is what happens in the Stop where it
+    # could not.
+    case "${start_epoch:-x}" in ''|*[!0-9]*) start_epoch="" ;; esac
+fi
 if ! [ "$idle_min" -gt 0 ] 2>/dev/null; then
     hook_idle="off"
 elif [ -f "$idle_marker" ]; then

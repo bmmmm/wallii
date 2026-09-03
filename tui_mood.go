@@ -531,8 +531,9 @@ func moodSqueezeTerm(b wall.Budget, now wall.MoodNow) string {
 	if now.Squeeze < 0.05 {
 		// under a twentieth of a step there is nothing to name, and a
 		// "squeeze 0.0" beside two low percentages is a label with no reading
-		// under it
-		return limits
+		// under it — but two bare percentages in a ·-joined receipt need a
+		// word that says what they are
+		return "limits " + limits
 	}
 	return fmt.Sprintf("squeeze %.1f · %s", now.Squeeze, limits)
 }
