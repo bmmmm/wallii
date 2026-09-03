@@ -37,23 +37,9 @@ func cmdCoverage(args []string) error {
 
 	now := time.Now()
 	loc := time.Local
-	since, err := parseSince(*sinceS, now)
+	since, split, err := coverageWindow(*sinceS, *splitS, now, loc)
 	if err != nil {
 		return err
-	}
-	if since.IsZero() {
-		return fmt.Errorf("--since is required for coverage — git is asked for an absolute window, not for everything")
-	}
-	var split time.Time
-	if *splitS != "" {
-		split, err = time.ParseInLocation("2006-01-02", *splitS, loc)
-		if err != nil {
-			return fmt.Errorf("cannot parse --split %q — use 2006-01-02", *splitS)
-		}
-		if !split.After(since) || !split.Before(now) {
-			return fmt.Errorf("--split %s lies outside the window %s … %s",
-				*splitS, since.Format("2006-01-02"), now.Format("2006-01-02"))
-		}
 	}
 
 	dir, err := wall.Dir()
@@ -108,15 +94,48 @@ func cmdCoverage(args []string) error {
 		since.In(loc).Format("2006-01-02"), now.In(loc).Format("2006-01-02"))
 	fmt.Println("           work on a branch that never merged is not in these numbers.")
 	if split.IsZero() {
-		printCov(wall.Coverage(evs, commits, loc, since, now, wallStart, *blindCommits, *blindPosts), "")
+		c := wall.Coverage(evs, commits, loc, since, now, wallStart, *blindCommits, *blindPosts)
+		printMeasured(c)
+		printCov(c, "")
 		return nil
 	}
-	printCov(wall.Coverage(evs, commits, loc, since, split, wallStart, *blindCommits, *blindPosts),
-		"before "+*splitS)
+	before := wall.Coverage(evs, commits, loc, since, split, wallStart, *blindCommits, *blindPosts)
+	after := wall.Coverage(evs, commits, loc, split, now, wallStart, *blindCommits, *blindPosts)
+	// the commit map spans the whole window, so both halves carry the same
+	// measurement — it is named once, by the first
+	printMeasured(before)
+	printCov(before, "before "+*splitS)
 	fmt.Println()
-	printCov(wall.Coverage(evs, commits, loc, split, now, wallStart, *blindCommits, *blindPosts),
-		"since "+*splitS)
+	printCov(after, "since "+*splitS)
 	return nil
+}
+
+// coverageWindow turns the flags into the window git and the fold are asked
+// for. The window begins at local midnight of its first day: `--since 30d`
+// typed at 23:00 would otherwise hand the oldest day only its last hour —
+// commits and posts alike — and then judge it as a whole day. A day is
+// judged whole or not at all, and the head line's first date is the date
+// the window really starts on.
+func coverageWindow(sinceS, splitS string, now time.Time, loc *time.Location) (since, split time.Time, err error) {
+	since, err = parseSince(sinceS, now)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if since.IsZero() {
+		return time.Time{}, time.Time{}, fmt.Errorf("--since is required for coverage — git is asked for an absolute window, not for everything")
+	}
+	since = wall.DayStart(since, loc)
+	if splitS != "" {
+		split, err = time.ParseInLocation("2006-01-02", splitS, loc)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("cannot parse --split %q — use 2006-01-02", splitS)
+		}
+		if !split.After(since) || !split.Before(now) {
+			return time.Time{}, time.Time{}, fmt.Errorf("--split %s lies outside the window %s … %s",
+				splitS, since.Format("2006-01-02"), now.Format("2006-01-02"))
+		}
+	}
+	return since, split, nil
 }
 
 // firstPost is the wall's own birthday: the oldest regular post it holds.
@@ -150,22 +169,14 @@ func repoNames(evs []wall.Event, from, to time.Time) []string {
 	return out
 }
 
-func printCov(c wall.Cov, label string) {
-	head := fmt.Sprintf("%s posted to · %d of %d measured", plural(c.OnWall, "repo"), c.Measured, c.Measured+len(c.Unresolved))
-	if label != "" {
-		head = label + " · " + head
-	}
-	fmt.Println()
-	fmt.Println(head)
-	if c.PreWallDays > 0 {
-		// The window reaches back past the wall's first post. Those days are
-		// shown and judged by nothing: "no wall yet" and "nobody posted" are
-		// the same silence in the data and the opposite finding.
-		fmt.Printf("before the wall  %d day(s) older than the first post (%s) carry %s — not judged, not counted\n",
-			c.PreWallDays, c.WallStart.Local().Format("2006-01-02"), plural(c.PreWallCommits, "commit"))
-	}
+// printMeasured names, once, what the ratio stands over: how many of the
+// repos the wall knows were measured, and which were not and why. The commit
+// map spans the whole window, so under --split both halves carry the same
+// figures — printed per half they read as two findings.
+func printMeasured(c wall.Cov) {
+	fmt.Printf("measured      %d of %d repos the wall knows\n", c.Measured, c.Measured+len(c.Unresolved))
 	if len(c.Unresolved) > 0 {
-		// Named, and out of both halves of the ratio. A repo dropped in
+		// Named, and out of both sides of the ratio. A repo dropped in
 		// silence would leave the figure standing over a subset nobody can
 		// see — the mistake this whole command exists to stop making.
 		parts := make([]string, 0, len(c.Unresolved))
@@ -173,9 +184,26 @@ func printCov(c wall.Cov, label string) {
 			parts = append(parts, fmt.Sprintf("%s (%s)", u.Name, u.Why))
 		}
 		fmt.Printf("not measured  %s\n", strings.Join(parts, " · "))
-		if c.PostsUnmeasured > 0 {
-			fmt.Printf("              %s left the ratio with them\n", plural(c.PostsUnmeasured, "post"))
-		}
+	}
+}
+
+func printCov(c wall.Cov, label string) {
+	head := plural(c.OnWall, "repo") + " posted to"
+	if label != "" {
+		head = label + " · " + head
+	}
+	fmt.Println()
+	fmt.Println(head)
+	if c.PostsUnmeasured > 0 {
+		// per window: the posts of the unmeasured repos that fell into it
+		fmt.Printf("              %s left the ratio with the unmeasured repos\n", plural(c.PostsUnmeasured, "post"))
+	}
+	if c.PreWallDays > 0 {
+		// The window reaches back past the wall's first post. Those days are
+		// shown and judged by nothing: "no wall yet" and "nobody posted" are
+		// the same silence in the data and the opposite finding.
+		fmt.Printf("before the wall  %d day(s) older than the first post (%s) carry %s — not judged, not counted\n",
+			c.PreWallDays, c.WallStart.Local().Format("2006-01-02"), plural(c.PreWallCommits, "commit"))
 	}
 
 	if c.WorkDays == 0 {

@@ -92,7 +92,7 @@ func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time) *das
 		}
 		from = wallStart
 	}
-	from = time.Date(from.In(loc).Year(), from.In(loc).Month(), from.In(loc).Day(), 0, 0, 0, 0, loc)
+	from = wall.DayStart(from, loc)
 	repos := repoNames(evs, from, now)
 	if len(repos) == 0 {
 		return nil
@@ -111,11 +111,9 @@ func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time) *das
 	// existed, drawn out of nothing.
 	fromDay := from
 	if c.WallStart.After(fromDay) {
-		w := c.WallStart.In(loc)
-		fromDay = time.Date(w.Year(), w.Month(), w.Day(), 0, 0, 0, 0, loc)
+		fromDay = wall.DayStart(c.WallStart, loc)
 	}
-	n := now.In(loc)
-	toDay := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
+	toDay := wall.DayStart(now, loc).AddDate(0, 0, 1)
 	out := &dashCoverage{
 		From: fromDay.UnixMilli(), To: toDay.UnixMilli(), Days: map[string]int{},
 		Repos:        make([]string, 0, len(c.Repos)),

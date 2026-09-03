@@ -159,7 +159,7 @@ func Coverage(evs []Event, commits map[string]RepoCommits, loc *time.Location, f
 	c := Cov{From: from, To: to, WallStart: wallStart, BlindCommits: blindCommits, BlindPosts: blindPosts}
 	floor := from
 	if wallStart.After(floor) {
-		floor = dayStart(wallStart, loc)
+		floor = DayStart(wallStart, loc)
 	}
 
 	// posts per repo and per day, regular posts only — a reaction is a reply,
@@ -250,7 +250,7 @@ func Coverage(evs []Event, commits map[string]RepoCommits, loc *time.Location, f
 
 	// One row per local calendar day, walked as dates rather than added as
 	// milliseconds — a DST transition must not merge two days into one.
-	for d := dayStart(from, loc); !d.After(dayStart(to.Add(-time.Nanosecond), loc)); d = d.AddDate(0, 0, 1) {
+	for d := DayStart(from, loc); !d.After(DayStart(to.Add(-time.Nanosecond), loc)); d = d.AddDate(0, 0, 1) {
 		key := d.Format("2006-01-02")
 		if d.Before(floor) {
 			// shown, judged by nothing: there was no wall to miss this day
@@ -271,8 +271,10 @@ func Coverage(evs []Event, commits map[string]RepoCommits, loc *time.Location, f
 	return c
 }
 
-// dayStart is midnight of t's local calendar day in loc.
-func dayStart(t time.Time, loc *time.Location) time.Time {
+// DayStart is midnight of t's local calendar day in loc — the one boundary a
+// coverage window may start on. Exported so the commands that build a window
+// (coverage, dash) share it instead of spelling the date arithmetic out.
+func DayStart(t time.Time, loc *time.Location) time.Time {
 	y, m, d := t.In(loc).Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, loc)
 }

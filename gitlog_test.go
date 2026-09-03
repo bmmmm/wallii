@@ -174,6 +174,21 @@ func TestRepoCheckoutCollapsesWorktreesAndSubdirs(t *testing.T) {
 		t.Fatalf("src names how it was found, got %q", src)
 	}
 
+	// a linked worktree offered under the repo's own name, from a second
+	// root, is the repository and resolves to the main checkout — not to
+	// itself. Make repoCheckout hand back the candidate and this is red.
+	root2 := t.TempDir()
+	runGit(t, dir, "worktree", "add", "-q", "-b", "twin", filepath.Join(root2, "webshop"))
+	t.Setenv("WALLII_REPO_ROOTS", root2)
+	got, _, err := repoCheckout(context.Background(), "webshop")
+	if err != nil {
+		t.Fatalf("a worktree named like its repo must resolve: %v", err)
+	}
+	if samePath(t, got) != samePath(t, dir) {
+		t.Fatalf("a worktree must collapse onto the main checkout: got %s, want %s", got, dir)
+	}
+	t.Setenv("WALLII_REPO_ROOTS", root)
+
 	// a linked worktree living under a root, named like a repo of its own
 	wt := filepath.Join(root, "webshop-hotfix")
 	runGit(t, dir, "worktree", "add", "-q", "-b", "hotfix", wt)
@@ -268,4 +283,42 @@ func TestGitTimeoutOverride(t *testing.T) {
 	if got := gitTimeout(); got != 5*time.Second {
 		t.Fatalf("garbage must fall back to the default, got %v", got)
 	}
+}
+
+// A submodule's common dir is <super>/.git/modules/<name>, and its basename
+// is the very name the wall knows the repo by: gitRepoName falls through to
+// --show-toplevel there, and the resolver has to invert that branch too.
+// Without it Dir pointed into the superproject's .git — a directory git log
+// happens to accept, so the count was right by accident while the "belongs
+// to" guard never saw the checkout it was meant to check.
+func TestRepoCheckoutResolvesASubmoduleToItsCheckout(t *testing.T) {
+	needGit(t)
+	root := t.TempDir()
+	sub := newRepo(t, root, "sub", "dev@example.invalid")
+	commitAt(t, sub, "seed", "dev@example.invalid", time.Now().Add(-time.Hour))
+	super := newRepo(t, root, "super", "dev@example.invalid")
+	runGit(t, super, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub")
+	t.Setenv("WALLII_REPO_ROOTS", super)
+
+	got, _, err := repoCheckout(context.Background(), "sub")
+	if err != nil {
+		t.Fatalf("the submodule checkout must resolve: %v", err)
+	}
+	if strings.Contains(got, ".git") {
+		t.Fatalf("resolved into a git directory, not a checkout: %s", got)
+	}
+	if want := samePath(t, filepath.Join(super, "sub")); samePath(t, got) != want {
+		t.Fatalf("Dir = %s, want %s", got, want)
+	}
+}
+
+// samePath follows symlinks so a path git printed compares with the one the
+// fixture built — macOS hands out temp dirs through /var, git answers /private/var.
+func samePath(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }

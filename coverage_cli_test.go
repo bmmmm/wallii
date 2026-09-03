@@ -370,3 +370,90 @@ func TestCoverageOutputLeadsWithBlindDaysAndNeverAPercentage(t *testing.T) {
 		t.Errorf("a day of 12 commits and 1 post is blind at the defaults:\n%s", out)
 	}
 }
+
+// The window begins at local midnight of its first day. `--since 3d` typed
+// at noon would otherwise hand the oldest day only its afternoon — commits
+// and posts alike — and then judge it as a whole day. The fixed clock is the
+// red proof: drop the floor in coverageWindow and it fails. The fixture repo
+// after it shows the same edge through the command itself; it cannot fail
+// by accident, only when the floor is gone and the clock is past 00:30.
+func TestCoverageWindowStartsAtMidnight(t *testing.T) {
+	anchor := yesterdayNoon()
+	since, _, err := coverageWindow("3d", "", anchor, time.Local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y, m, d := anchor.AddDate(0, 0, -3).Date()
+	if want := time.Date(y, m, d, 0, 0, 0, 0, time.Local); !since.Equal(want) {
+		t.Fatalf("the window starts at %s, want midnight %s — the oldest day would be judged on its last hours alone", since, want)
+	}
+
+	needGit(t)
+	roots := t.TempDir()
+	repo := newRepo(t, roots, "webshop", "dev@example.invalid")
+	ty, tm, td := time.Now().Date()
+	oldest := time.Date(ty, tm, td-3, 0, 30, 0, 0, time.Local) // half an hour into the oldest day
+	commitAt(t, repo, "early", "dev@example.invalid", oldest)
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_PULSE", "off")
+	t.Setenv("WALLII_REPO_ROOTS", roots)
+	if err := wall.Append(dir, wall.Event{TS: oldest.Add(12 * time.Hour), Repo: "webshop", Actor: "bot/builder", Msg: "noon of the oldest day"}); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() error { return cmdCoverage([]string{"--since", "3d", "--json"}) })
+	var c wall.Cov
+	if err := json.Unmarshal([]byte(out), &c); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	if len(c.Days) == 0 || c.Days[0].Day != oldest.Format("2006-01-02") || c.Days[0].Commits != 1 {
+		t.Fatalf("the oldest day must carry its 00:30 commit — a day is judged whole or not at all; got %+v", c.Days)
+	}
+}
+
+// Under --split the measurement — how many of the wall's repos were measured,
+// which were not and why — is fixed by the commit map, which spans the whole
+// window. Printed in each half it read as two findings. It stands once, above
+// both halves; what each half owns is the repos posted to in it.
+func TestCoverageSplitNamesTheMeasurementOnce(t *testing.T) {
+	needGit(t)
+	roots := t.TempDir()
+	repo := newRepo(t, roots, "webshop", "dev@example.invalid")
+	anchor := yesterdayNoon()
+	commitAt(t, repo, "old", "dev@example.invalid", anchor.AddDate(0, 0, -4))
+	commitAt(t, repo, "new", "dev@example.invalid", anchor)
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_PULSE", "off")
+	t.Setenv("WALLII_REPO_ROOTS", roots)
+	for _, e := range []wall.Event{
+		{TS: anchor.AddDate(0, 0, -4), Repo: "webshop", Actor: "bot/builder", Msg: "before the split"},
+		{TS: anchor.AddDate(0, 0, -4).Add(time.Minute), Repo: "ghost", Actor: "bot/builder", Msg: "no checkout anywhere"},
+		{TS: anchor, Repo: "webshop", Actor: "bot/builder", Msg: "after the split"},
+	} {
+		if err := wall.Append(dir, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	split := anchor.AddDate(0, 0, -2).Format("2006-01-02")
+	out := captureStdout(t, func() error { return cmdCoverage([]string{"--since", "7d", "--split", split}) })
+
+	var measured, notMeasured int
+	for _, l := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(l, "measured"):
+			measured++
+		case strings.HasPrefix(l, "not measured"):
+			notMeasured++
+		}
+	}
+	if measured != 1 || notMeasured != 1 {
+		t.Errorf("the measurement stands once above both halves; got %d measured and %d not-measured lines:\n%s", measured, notMeasured, out)
+	}
+	if n := strings.Count(out, "posted to"); n != 2 {
+		t.Errorf("each half names the repos posted to in it — want 2 such lines, got %d:\n%s", n, out)
+	}
+	if !strings.Contains(out, "ghost (no checkout found)") {
+		t.Errorf("the repo nobody could measure must still be named:\n%s", out)
+	}
+}

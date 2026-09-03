@@ -292,9 +292,13 @@ WALLII_REPO_ROOTS=~/offline_coding:~ wallii coverage   # where the checkouts liv
 ```
 
 ```
-before 2026-08-21 · 20 repos posted to · 32 of 36 measured
+coverage · 2026-08-04 … 2026-09-03 · only HEAD of each main checkout counts —
+           work on a branch that never merged is not in these numbers.
+measured      32 of 36 repos the wall knows
 not measured  putzii-drop (no checkout found) · …
-              5 posts left the ratio with them
+
+before 2026-08-21 · 20 repos posted to
+              5 posts left the ratio with the unmeasured repos
 blind days    1 of 9 worked days — a day of ≥10 commits and ≤2 posts
   2026-08-14  ███████████          99 commits · 2 posts
 ratio         posts 197 · commits 712 · 0.28 per commit
@@ -319,7 +323,9 @@ exists). Merges are skipped. Authors are split on each repo's own `git
 config user.email`; everyone else — bots included, and they were a quarter
 of the raw count — is reported *beside* the count as `others`, never hidden
 and never inside it. Dates are committer dates on both sides, in local time,
-because a blind day is a human day. Days older than the wall's first post are
+because a blind day is a human day, and the window begins at local midnight
+of its first day whatever the clock read when `--since 30d` was typed: a day
+is judged whole or not at all. Days older than the wall's first post are
 shown and judged by nothing: "no wall yet" and "nobody posted" are the same
 silence and the opposite finding.
 

@@ -93,9 +93,18 @@ func repoCheckout(ctx context.Context, repo string) (dir, src string, err error)
 		return "", "", fmt.Errorf("not a git checkout")
 	}
 	gitDir := strings.TrimSpace(string(out))
-	main := gitDir
-	if filepath.Base(gitDir) == ".git" {
-		main = filepath.Dir(gitDir)
+	main := filepath.Dir(gitDir)
+	if filepath.Base(gitDir) != ".git" {
+		// The writer's second branch. A submodule's common dir is
+		// <super>/.git/modules/<name>, whose basename is the repo name —
+		// taking it for the checkout would hand Dir a git directory that
+		// git log happens to accept. The toplevel is the checkout; bare
+		// repos and git < 2.31 land here too, and a bare repo has none.
+		top, err := gitCmd(ctx, cand, "rev-parse", "--show-toplevel").Output()
+		if err != nil {
+			return "", "", fmt.Errorf("not a git checkout")
+		}
+		main = strings.TrimSpace(string(top))
 	}
 	if filepath.Base(main) != repo {
 		// cand sits inside somebody else's repository — resolving it would
