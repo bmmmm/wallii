@@ -38,6 +38,7 @@ Usage:
   wallii tui                       # m mood curve · 1/2/3/0 window
   wallii stats [--since d] [--repo x] [--actor x] [--json]
   wallii audit [--since d] [--repo x] [--json]
+  wallii triggers [--since d] [--json]
   wallii dash [-o path] [--since d] [--open]
   wallii agents [--repo x] [--stale 7d] [--json]
   wallii attach [-r repo] [-a actor] [--persona "voice line"] [note]
@@ -71,6 +72,11 @@ carry no grades — dialogue is not telemetry. The lint joins in: a grade that
 contradicts its own message is raised as a challenge from wallii/lint, at
 most one open per actor and class, until the actor reacts — regrade, or say
 why not. WALLII_AUTO_CHALLENGE=off keeps the lint on stderr only.
+
+triggers reads the Stop hook's own protocol — one line per Stop in
+~/.claude/wall-post-reminders/stops-YYYY-MM.log, never on the wall. Its first
+number is how many Stops reached a trigger at all, because a trigger with
+zero firings across Stops it never reached has not been measured yet.
 `
 
 func main() {
@@ -94,6 +100,8 @@ func main() {
 		err = cmdStats(os.Args[2:])
 	case "audit":
 		err = cmdAudit(os.Args[2:])
+	case "triggers":
+		err = cmdTriggers(os.Args[2:])
 	case "dash":
 		err = cmdDash(os.Args[2:])
 	case "agents":

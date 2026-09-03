@@ -82,13 +82,82 @@ export PATH
 INPUT="$(cat)"
 field() { printf '%s' "$INPUT" | jq -r "$1 // empty" 2>/dev/null || true; }
 
+# ── The record of this Stop ──────────────────────────────────────────────
+# One line per Stop, whatever this hook decides — because a counter of
+# firings cannot answer the question the firings raise. "Idle: 0 firings"
+# reads as "the condition was never true", and the marker directory says
+# something else: 107 session markers in 12 days against roughly 60 sessions
+# a day, with the .start file written after every guard below. If that holds,
+# most Stops never reach a trigger at all, and "never ran" and "condition
+# false" are indistinguishable from any count of firings. Only a line written
+# on the way out can tell them apart.
+#
+# The clock is read once, here, in the shape every reader of it needs: epoch
+# for the session clock, ISO for the diff base, for the record and for the
+# log's name. It replaces the two to three `date` forks this hook used to
+# make per Stop, so the record costs less than nothing — every other value in
+# the line is a shell variable already, and the append is one printf.
+#
+# The clock, the marker dir, its mkdir and the session id sit ABOVE the guards
+# on purpose. The mkdir used to come after every one of them, so
+# exit=no-wallii — a wall that is empty because the tool is not installed,
+# which is the most valuable thing this record can say — had nowhere to write.
+# HOME is checked before the mkdir, or an unset HOME has the hook create
+# /.claude on the way past.
+now="$(date -u '+%s %Y-%m-%dT%H:%M:%SZ')"
+now_epoch="${now%% *}"
+now_iso="${now#* }"
+sid="$(field .session_id)"
+marker_dir="${HOME:-}/.claude/wall-post-reminders"
+[ -n "${HOME:-}" ] && mkdir -p "$marker_dir" 2>/dev/null || true
+
+hook_exit="end"
+hook_sig="unreached"
+hook_idle="unreached"
+hook_commit="unreached"
+
+# hook_record writes the record on the way out, from an EXIT trap, so that
+# every exit above is covered by one line instead of by a printf at each of a
+# dozen returns. It never writes to stdout — Claude Code parses that, and a
+# stray line there is a broken hook. Every variable is read with a default,
+# because the trap can fire before any of them exists (the hook runs under
+# `set -u`). And nothing but the decisions is recorded: no found lines, no
+# commit subjects, no message text. Which trigger decided what, and nothing
+# about what it saw.
+#
+# The gap, named rather than papered over: a hook killed by its 10s budget
+# never runs this trap, so the count is of Stops this hook finished, not of
+# Stops Claude Code started. A TERM trap would be a gate nobody here could
+# turn red without a fixture that races the timeout, and this repo does not
+# believe a gate it has not seen fail.
+hook_record() {
+    [ -n "${HOME:-}" ] || return 0
+    local iso="${now_iso:-}"
+    local day="${iso%%T*}"   # 2026-09-03T21:14:07Z → 2026-09-03
+    local month="${day%-*}"  #                      → 2026-09, no fork
+    [ -n "$month" ] || return 0
+    # A tab or a newline in the session id or the repo name would make this
+    # record two, or eight fields; both come from outside this hook. The
+    # reader skips and counts what it cannot parse, and a line it has to skip
+    # is one this hook could have written whole.
+    local s="${sid:-}"
+    local r="${repo:-}"
+    printf '%s\t%s\t%s\texit=%s\tsig=%s\tidle=%s\tcommit=%s\n' \
+        "$iso" "${s//[$'\t\n']/ }" "${r//[$'\t\n']/ }" \
+        "${hook_exit:-end}" "${hook_sig:-unreached}" \
+        "${hook_idle:-unreached}" "${hook_commit:-unreached}" \
+        >> "${marker_dir:-}/stops-$month.log" 2>/dev/null || true
+    return 0
+}
+trap hook_record EXIT
+
 # The documented loop-breaker: never block a stop that a block already caused.
-[ "$(field .stop_hook_active)" = "true" ] && exit 0
+[ "$(field .stop_hook_active)" = "true" ] && { hook_exit="loop"; exit 0; }
 
-command -v wallii >/dev/null 2>&1 || exit 0
-command -v jq     >/dev/null 2>&1 || exit 0
+command -v wallii >/dev/null 2>&1 || { hook_exit="no-wallii"; exit 0; }
+command -v jq     >/dev/null 2>&1 || { hook_exit="no-jq"; exit 0; }
 
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { hook_exit="no-git"; exit 0; }
 
 # Must resolve to the same name `wallii post` records, or the comparison is
 # against the wrong repo's posts. Mirrors gitRepoName() in post.go: a session
@@ -99,10 +168,10 @@ if [ -n "$common_dir" ] && [ "$(basename "$common_dir")" = ".git" ]; then
     repo="$(basename "$(dirname "$common_dir")")"
 else
     toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-    [ -n "$toplevel" ] || exit 0
+    [ -n "$toplevel" ] || { hook_exit="no-repo"; exit 0; }
     repo="$(basename "$toplevel")"
 fi
-[ -n "$repo" ] || exit 0
+[ -n "$repo" ] || { hook_exit="no-repo"; exit 0; }
 
 # ── Session bookkeeping ──────────────────────────────────────────────────
 # Shared by every trigger below. The session id names the per-session
@@ -137,10 +206,9 @@ fi
 # and .shortcut markers. Both mean "already asked, and the answer was
 # respected", and renewing them would ask again for an answer already given —
 # silence is the safe direction here, a wrong number is not.
-sid="$(field .session_id)"
-case "${sid:-x}" in *[/\\]*) exit 0 ;; esac
-marker_dir="${HOME:-}/.claude/wall-post-reminders"
-mkdir -p "$marker_dir" 2>/dev/null || true
+# sid, marker_dir and its mkdir come from the record block at the top — the
+# record needs them before the first guard. What stays here is the refusal.
+case "${sid:-x}" in *[/\\]*) hook_exit="bad-sid"; exit 0 ;; esac
 
 # Nothing ever removed a marker. 186 files, 540 KB in the 12 days since the
 # hook went live (measured 2026-09-02), ~15 MB a year. That is untidiness
@@ -158,11 +226,25 @@ mkdir -p "$marker_dir" 2>/dev/null || true
 # rewritten three lines further down — but before it, it would have been a
 # regression. Which is why the aging landed first, and this second.
 #
+# The monthly protocol is the exception, and it is kept a year: a marker is
+# read only inside its own session, but the record is a series, and a series
+# with a hole in it answers a different question than the one it was asked.
+# Deleted here it would never be written again — the month is gone — so the
+# loss would be silent and total.
+#
+# The outer parentheses carry that exception. Implicit AND binds tighter than
+# -o in find, so `A -o B -delete` means `A -o ( B -delete )`: without the
+# grouping the sweep quietly stops deleting markers and takes only the old
+# protocol, which is precisely backwards. Both directions are proven (cases
+# 23a and 23b) because a wrong grouping turns one of them green.
+#
 # Absolute path. This hook widens its own PATH for wallii and jq, but a find
 # that is not found sweeps nothing and says nothing about it, and a gate
 # that switches itself off in silence is the failure mode this repo has
 # already been bitten by.
-[ -d "$marker_dir" ] && /usr/bin/find "$marker_dir" -type f -mtime +30 -delete 2>/dev/null || true
+[ -d "$marker_dir" ] && /usr/bin/find "$marker_dir" -type f \
+    \( \( ! -name 'stops-*' -mtime +30 \) -o \( -name 'stops-*' -mtime +365 \) \) \
+    -delete 2>/dev/null || true
 
 startfile="$marker_dir/${sid:-nosession}.start"
 start_max=$((8 * 3600))
@@ -171,11 +253,13 @@ if [ -f "$startfile" ]; then
     prev="$(cut -d' ' -f1 "$startfile" 2>/dev/null || true)"
     case "${prev:-x}" in
         ''|*[!0-9]*) ;;
-        *) [ $(( $(date +%s) - prev )) -lt "$start_max" ] && fresh=1 ;;
+        *) [ $(( now_epoch - prev )) -lt "$start_max" ] && fresh=1 ;;
     esac
 fi
 if [ -z "$fresh" ]; then
-    printf '%s %s' "$(date +%s)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$startfile" 2>/dev/null || true
+    # `$now` is already `<epoch> <iso>`, which is what this file has always
+    # held — the same two values, read once instead of forked for twice.
+    printf '%s' "$now" > "$startfile" 2>/dev/null || true
 fi
 
 # ── Signature trigger ────────────────────────────────────────────────────
@@ -234,6 +318,14 @@ if [ "$shortcuts" -gt 0 ] && [ -n "$top" ] && [ -n "$start_iso" ]; then
     base="$(git rev-list -1 --before="$start_iso" HEAD 2>/dev/null || true)"
     # a repo born in this session has no such commit: everything in it is new
     [ -n "$base" ] || base="$(git hash-object -t tree /dev/null 2>/dev/null || true)"
+fi
+# Switched off is a different fact from never reached, and a scan with no
+# base is a third: the record keeps all three apart, or a quiet week of
+# `sig=off` would read as a quiet week of clean diffs.
+if [ "$shortcuts" -eq 0 ]; then
+    hook_sig="off"
+elif [ -z "$base" ]; then
+    hook_sig="nobase"
 fi
 if [ -n "$base" ]; then
     tab=$'\t'
@@ -374,6 +466,17 @@ if [ -n "$base" ]; then
         printf '%s' "$new" | awk -F"$tab" '{ print $1 "\t" $3 }' >> "$marker" 2>/dev/null || true
     fi
 
+    # The same three answers the marker gives, in the record: the scan ran
+    # and found nothing, it found only lines already answered, or it found
+    # something and the threshold below held the asking back.
+    if [ "$n_found" -eq 0 ]; then
+        hook_sig="clean"
+    elif [ "$n_new" -eq 0 ]; then
+        hook_sig="dedup"
+    else
+        hook_sig="held"
+    fi
+
     # The threshold governs the asking alone, and it counts what the diff
     # holds rather than what is still unanswered — otherwise recording a
     # finding would deduplicate it out of its own count, and a threshold
@@ -381,6 +484,8 @@ if [ -n "$base" ]; then
     # while the hook stayed quiet is not repeated in the block that a later
     # one triggers. It is measured either way; only the asking is once.
     if [ "$n_new" -gt 0 ] && [ "$n_found" -ge "$shortcuts" ]; then
+        hook_sig="fired"
+        hook_exit="sig"
         list="$(printf '%s' "$new" | awk -F"$tab" 'NR <= 3 { printf "  %s:%s\n      %s\n", $1, $2, $3 }')"
         more=""
         [ "$n_new" -gt 3 ] && more="
@@ -421,37 +526,56 @@ fi
 # and put nothing on the wall — where did the time go? A dead end IS a unit
 # of work. Fires once per session, and only asks — deciding "still mid-work"
 # is respected like everywhere else in this hook.
+#
+# One chain, not a nest: every step is the reason the next one was not
+# reached, and the record names exactly the step that ended it. The nesting
+# this replaces said the same thing in three shapes and could report none of
+# them.
 idle_min="${WALLII_REMIND_IDLE_MIN:-45}"
 idle_marker="$marker_dir/${sid:-nosession}-idle.done"
-if [ "$idle_min" -gt 0 ] 2>/dev/null && [ ! -f "$idle_marker" ] && [ -f "$startfile" ]; then
-    start_epoch="$(cut -d' ' -f1 "$startfile" 2>/dev/null || true)"
-    start_iso="$(cut -d' ' -f2 "$startfile" 2>/dev/null || true)"
-    now_epoch="$(date +%s)"
-    if [ -n "$start_epoch" ] && [ -n "$start_iso" ] \
-        && [ $(( (now_epoch - start_epoch) / 60 )) -ge "$idle_min" ]; then
-        commits_since_start="$(git log --since="$start_iso" --oneline 2>/dev/null | grep -c . || true)"
-        actor="${WALLII_ACTOR:-manual}"
-        if [ -n "${WALLII_ROLE:-}" ]; then
-            case "$actor" in */"${WALLII_ROLE}") ;; *) actor="$actor/$WALLII_ROLE" ;; esac
-        fi
-        last_post_ts="$(wallii tail --actor "$actor" -n 1 --json 2>/dev/null | jq -r '.ts // empty' 2>/dev/null || true)"
-        posted_since_start=0
-        if [ -n "$last_post_ts" ] && [[ "$last_post_ts" > "$start_iso" ]]; then
-            posted_since_start=1
-        fi
-        if [ "${commits_since_start:-1}" -eq 0 ] 2>/dev/null && [ "$posted_since_start" -eq 0 ]; then
-            printf '%s' 'done' > "$idle_marker" 2>/dev/null || true
-            mins=$(( (now_epoch - start_epoch) / 60 ))
-            reason="This session has run ${mins}m in \`$repo\` with zero commits and nothing on the wall from $actor.
+start_epoch="$(cut -d' ' -f1 "$startfile" 2>/dev/null || true)"
+start_iso="$(cut -d' ' -f2 "$startfile" 2>/dev/null || true)"
+# A zero point no comparison can read is an absent one, and `$(( ))` on it
+# would abort the arithmetic and say so on stderr. The aging block above
+# rewrites such a file; this is what happens in the Stop where it could not.
+case "${start_epoch:-x}" in ''|*[!0-9]*) start_epoch="" ;; esac
+if ! [ "$idle_min" -gt 0 ] 2>/dev/null; then
+    hook_idle="off"
+elif [ -f "$idle_marker" ]; then
+    hook_idle="asked"
+elif [ -z "$start_epoch" ] || [ -z "$start_iso" ]; then
+    hook_idle="noclock"
+elif [ $(( (now_epoch - start_epoch) / 60 )) -lt "$idle_min" ]; then
+    hook_idle="young"
+else
+    commits_since_start="$(git log --since="$start_iso" --oneline 2>/dev/null | grep -c . || true)"
+    actor="${WALLII_ACTOR:-manual}"
+    if [ -n "${WALLII_ROLE:-}" ]; then
+        case "$actor" in */"${WALLII_ROLE}") ;; *) actor="$actor/$WALLII_ROLE" ;; esac
+    fi
+    last_post_ts="$(wallii tail --actor "$actor" -n 1 --json 2>/dev/null | jq -r '.ts // empty' 2>/dev/null || true)"
+    posted_since_start=0
+    if [ -n "$last_post_ts" ] && [[ "$last_post_ts" > "$start_iso" ]]; then
+        posted_since_start=1
+    fi
+    if ! [ "${commits_since_start:-1}" -eq 0 ] 2>/dev/null; then
+        hook_idle="committed"
+    elif [ "$posted_since_start" -eq 1 ]; then
+        hook_idle="posted"
+    else
+        hook_idle="fired"
+        hook_exit="idle"
+        printf '%s' 'done' > "$idle_marker" 2>/dev/null || true
+        mins=$(( (now_epoch - start_epoch) / 60 ))
+        reason="This session has run ${mins}m in \`$repo\` with zero commits and nothing on the wall from $actor.
 
 If an approach died in that time — a dead end, a rabbit hole, a rollback — that IS a finished unit of work, and it belongs on the wall exactly because no commit will ever tell the story:
   wallii post --topic fix --outcome failed --mood rough \"<what was tried, what killed it>\"
 (or --topic obituary for a proper eulogy — failures with dignity are the posts worth rereading.)
 
 If this is still mid-work, research, or a planning session, say so and stop — this asks once per session and never again."
-            jq -n --arg r "$reason" '{decision:"block", reason:$r}'
-            exit 0
-        fi
+        jq -n --arg r "$reason" '{decision:"block", reason:$r}'
+        exit 0
     fi
 fi
 
@@ -473,20 +597,23 @@ else
 fi
 
 commits="$(git log --since="$since" --oneline 2>/dev/null | grep -c . || true)"
-[ -n "$commits" ] || exit 0
-[ "$commits" -ge "$threshold" ] 2>/dev/null || exit 0
+[ -n "$commits" ] || { hook_commit="nocount"; exit 0; }
+[ "$commits" -ge "$threshold" ] 2>/dev/null || { hook_commit="under"; exit 0; }
 
 # Report once per HEAD. An unchanged HEAD stays silent, so a session that
 # deliberately leaves work unposted is told once, not on every turn — but the
 # next commit makes it a new finding again.
 head_sha="$(git rev-parse HEAD 2>/dev/null || true)"
-[ -n "$head_sha" ] || exit 0
-# sid and marker_dir come from the session bookkeeping block above
+[ -n "$head_sha" ] || { hook_commit="nohead"; exit 0; }
+# sid and marker_dir come from the record block at the top of the file
 marker="$marker_dir/${sid:-nosession}-${repo}.sha"
 if [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$head_sha" ]; then
+    hook_commit="dedup"
     exit 0
 fi
 printf '%s' "$head_sha" > "$marker" 2>/dev/null || true
+hook_commit="fired"
+hook_exit="commit"
 
 subjects="$(git log --since="$since" --pretty=format:'  %h %s' 2>/dev/null | head -8)"
 more=""
