@@ -147,6 +147,7 @@ wallii tui                  # interactive: filter, search, detail, m for mood
 wallii stats --since 7d     # outcomes, mood, calibration, dialog, voice, per actor
 wallii audit --since 14d    # oks that a later fix on the same ground indicted
 wallii dash --open          # self-contained HTML dashboard in the browser
+wallii coverage --since 30d # what the wall never saw: commits per day against the posts about them
 ```
 
 The bare `tail` view folds each actor's day to three full posts plus one
@@ -223,7 +224,9 @@ into one shape. Notes, never gates — like every lint here.
 opens it: KPI tiles, posts per day by actor, outcome and mood trends, a
 weekday×hour heatmap, repo/topic breakdowns, a per-agent table, and a
 telemetry-coverage card that shows how much of the wall actually carries
-outcome/mood/took before you trust any ratio. Range presets (7d/30d/90d/all)
+outcome/mood/took before you trust any ratio, and a card for what the wall
+never saw — commits per day against the posts about them, see below. Range
+presets (7d/30d/90d/all)
 filter client-side; light/dark follow the OS with a manual toggle; every
 chart has a table view.
 
@@ -273,6 +276,86 @@ at and what the curve measures cannot drift apart.
 
 The selected row expands in place — full message, actor, and ref URLs — so
 long posts are never cut off while the rest of the list stays one-line.
+
+### What the wall never saw
+
+The wall measures what was posted. `wallii coverage` measures what the
+posting was up against — the commits of the same window, in the same repos —
+and leads with the days that had work on them and nothing on the wall:
+
+```sh
+wallii coverage --since 30d                       # blind days first, the ratio as a footnote
+wallii coverage --since 30d --split 2026-08-21    # both halves, before and after a date
+wallii coverage --repo x --json                   # one repo, machine-readable
+WALLII_REPO_ROOTS=~/offline_coding:~ wallii coverage   # where the checkouts live
+```
+
+```
+before 2026-08-21 · 20 repos posted to · 32 of 36 measured
+not measured  putzii-drop (no checkout found) · …
+              5 posts left the ratio with them
+blind days    1 of 9 worked days — a day of ≥10 commits and ≤2 posts
+  2026-08-14  ███████████          99 commits · 2 posts
+ratio         posts 197 · commits 712 · 0.28 per commit
+others        13 commits by other authors — beside the count, never inside it
+```
+
+**Two numbers, and they are not equally honest.** A blind day — ten or more
+commits and at most two posts, both thresholds flags (`--blind-commits`,
+`--blind-posts`) because both are arbitrary — cannot be lifted by posting
+thinner: the only way out is to post at all on a day somebody worked, which
+makes the count structurally resistant to being played. The ratio is lifted
+by every extra post whatever it says, so it is the footnote, printed as
+`0.28 per commit` and never as a percentage — the same restraint the grader
+line keeps, for the same reason. It appears nowhere in `wallii stats`, gates
+nothing and raises no challenge; a test pins the separation.
+
+**Every line of the count is a choice, not a derivation**, and the head of
+the output names the one that costs most: only `HEAD` of each main checkout
+is counted, so work on a branch that never merged is not in these numbers
+(`--all` would count a rebased commit twice for as long as its old branch
+exists). Merges are skipped. Authors are split on each repo's own `git
+config user.email`; everyone else — bots included, and they were a quarter
+of the raw count — is reported *beside* the count as `others`, never hidden
+and never inside it. Dates are committer dates on both sides, in local time,
+because a blind day is a human day. Days older than the wall's first post are
+shown and judged by nothing: "no wall yet" and "nobody posted" are the same
+silence and the opposite finding.
+
+**A repo without a checkout is named and leaves both sides of the ratio.**
+`$WALLII_REPO_ROOTS` (colon-separated, `~/offline_coding:~` here) says where
+the checkouts live — the same roots the TUI's follow-up sessions use. Each
+candidate is checked with the call `wallii post` used to write the name onto
+the wall, so a worktree or a subdirectory collapses onto its main checkout,
+and a wall repo that happens to share a name with a plain home folder is not
+counted as the repository around that folder. Dropping a repo in silence
+would leave the ratio standing over a subset nobody can see.
+
+**git runs for `coverage` and `dash` only** — never for `post`, `tail` (the
+Stop hook calls it inside a ten-second budget), `stats`, `tui`, `agents`,
+`audit` or `archive`; a git shim in the test PATH keeps `post` to
+`rev-parse`. The collection is bounded by `WALLII_GIT_TIMEOUT` (5s), runs at
+most eight repos at a time with `--no-optional-locks`, and strips
+`GIT_DIR`/`GIT_WORK_TREE`/`GIT_COMMON_DIR` from the environment — a `dash`
+started from inside a hook would otherwise count one repository under every
+name on the wall. A repo the deadline never reached carries `timed out`,
+never a zero. Measured on this wall: 36 repos in 0.3s.
+
+Measured 2026-09-03 on the author's wall over 30 days, split at the day the
+Stop hook went live:
+
+| | posts | commits | per commit | blind days |
+|---|---|---|---|---|
+| before 2026-08-21 | 197 | 712 | 0.28 | 1 of 9 worked |
+| since 2026-08-21 | 558 | 1065 | 0.52 | 0 of 12 worked |
+
+Four of 36 repos had no checkout on this machine; they are named, and their
+eight posts are reported as what the ratio omits. The dashboard draws the
+same reading as the card *What the wall never saw*: commits per day or week
+against the posts about them, every bucket older than the collected window
+drawn as a gap labelled "not measured" — never as a day with no commits —
+and `null` inlined rather than an empty list when nothing was measured at
+all.
 
 ### The mood panel
 
@@ -617,8 +700,9 @@ Environment: `WALLII_DIR` (data directory), `WALLII_ACTOR` (default actor
 for posts, e.g. set per agent session), `WALLII_SESSION_START` (unix seconds
 or RFC3339; the clock for the first post of a run — export it from whatever
 starts the agent, since a hook cannot set variables for a session already
-running), `WALLII_REPO_ROOTS` and `WALLII_SPAWN_CMD` (follow-up sessions,
-see above), `WALLII_PULSE_MS`, `WALLII_PULSE_FILE`, `WALLII_PULSE_URL` and
+running), `WALLII_REPO_ROOTS` and `WALLII_SPAWN_CMD` (follow-up sessions and
+the coverage reading, see above), `WALLII_GIT_TIMEOUT` (how long `coverage`
+and `dash` wait for git in total, default 5s), `WALLII_PULSE_MS`, `WALLII_PULSE_FILE`, `WALLII_PULSE_URL` and
 `WALLII_PULSE=off` (the latency reading, see above — `WALLII_PULSE_MS` hands
 wallii this session's own number or `none`, `WALLII_PULSE_FILE` names the file
 that already holds it, and the probe behind `WALLII_PULSE_URL` is the only

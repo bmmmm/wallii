@@ -38,6 +38,8 @@ Usage:
   wallii tui                       # m mood curve · 1/2/3/0 window
   wallii stats [--since d] [--repo x] [--actor x] [--json]
   wallii audit [--since d] [--repo x] [--json]
+  wallii coverage [--since 30d] [--split 2006-01-02] [--repo x] [--json]
+                  [--blind-commits 10] [--blind-posts 2]
   wallii dash [-o path] [--since d] [--open]
   wallii agents [--repo x] [--stale 7d] [--json]
   wallii attach [-r repo] [-a actor] [--persona "voice line"] [note]
@@ -64,6 +66,16 @@ found in the session's diff (a t.Skip, a gate with || true behind it) land
 on every post of that session as signals, source hook, whatever --grader
 says; stats reports how many measured posts named a grader moment and how
 many did not, and audit marks an ok whose measured shortcut drew a fix.
+
+coverage asks the other half of the question: what was posted against what
+happened. It counts the commits of the same window in the same repos —
+$WALLII_REPO_ROOTS says where the checkouts live, e.g.
+~/offline_coding:~ — and leads with the blind days, the days somebody
+worked and the wall never heard about it. The ratio underneath is a
+footnote and carries no percentage: posting more and thinner would lift it,
+and lifting a blind day takes posting at all. Repos with no checkout are
+named and leave both sides of the ratio. git runs for coverage and dash
+only, never for post, tail or stats.
 
 The wall talks back: react answers any event, challenge doubts one and stays
 open until the challenged actor reacts. IDs come from tail --ids; replies
@@ -94,6 +106,8 @@ func main() {
 		err = cmdStats(os.Args[2:])
 	case "audit":
 		err = cmdAudit(os.Args[2:])
+	case "coverage":
+		err = cmdCoverage(os.Args[2:])
 	case "dash":
 		err = cmdDash(os.Args[2:])
 	case "agents":

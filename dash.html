@@ -151,6 +151,7 @@
 
   <div class="grid">
     <div class="card wide" id="c-activity"></div>
+    <div class="card wide" id="c-blind"></div>
     <div class="card" id="c-outcome"></div>
     <div class="card" id="c-mood"></div>
     <div class="card" id="c-heat"></div>
@@ -169,6 +170,14 @@
 "use strict";
 const RAW = __WALLII_DATA__ || [];
 RAW.sort((a, b) => a.t - b.t);
+
+/* What the wall was posted against: commits per local day, collected by
+   `wallii dash` over the window it inlined posts for. null means nobody
+   measured — deliberately not an empty object, which could not tell that
+   apart from "measured, no commits" and would let the card paint a month of
+   blindness out of nothing. COMMITS.from is the floor: every bucket older
+   than it is a gap labelled "not measured", never a day with no commits. */
+const COMMITS = __WALLII_COMMITS__;
 
 const DAY = 864e5;
 const MOODS = { great: 5, good: 4, ok: 3, rough: 2, stuck: 1 };
@@ -276,17 +285,29 @@ function aggregate(rangeDays) {
   const evs = RAW.filter(e => e.t >= since);
 
   const buckets = [];
-  const dayIdx = {}; // local calendar day → bucket index
+  const dayIdx = {};  // local calendar day → bucket index
+  const days = [];    // the same walk, one entry per day — a blind day is a daily question
+  const dayOf = {};   // local calendar day → that entry
   const cur = new Date(startD);
   for (let i = 0; cur <= today; i++) {
     const bi = weekly ? Math.floor(i / 7) : i;
-    if (!buckets[bi]) buckets.push({ t0: cur.getTime(), byActor: {}, out: { ok: 0, partial: 0, failed: 0, none: 0 }, moodSum: 0, moodN: 0, posts: 0 });
+    if (!buckets[bi]) buckets.push({ t0: cur.getTime(), byActor: {}, out: { ok: 0, partial: 0, failed: 0, none: 0 }, moodSum: 0, moodN: 0, posts: 0, commits: 0, cov: true });
     dayIdx[dayKey(cur)] = bi;
+    // the commits ride along in the walk that already exists — no second
+    // calendar in the browser, and DST is handled once, here
+    const cov = !!COMMITS && cur.getTime() >= COMMITS.from;
+    const d = { t0: cur.getTime(), commits: cov ? (COMMITS.days[dayKey(cur)] || 0) : 0, posts: 0, cov };
+    days.push(d);
+    dayOf[dayKey(cur)] = d;
+    buckets[bi].commits += d.commits;
+    // a bucket is measured only if every day in it was: a week straddling
+    // the collection boundary carries a partial count and must read as a gap
+    buckets[bi].cov = buckets[bi].cov && cov;
     cur.setDate(cur.getDate() + 1);
   }
 
   const agg = {
-    since, evs, buckets, weekly,
+    since, evs, buckets, weekly, days,
     repoCounts: {}, topicCounts: {},
     heat: Array.from({ length: 7 }, () => new Array(24).fill(0)),
     actors: {},
@@ -297,6 +318,8 @@ function aggregate(rangeDays) {
   for (const e of evs) {
     const b = buckets[dayIdx[dayKey(new Date(e.t))]];
     if (!b) continue; // future-dated post (clock skew) — feed still shows it
+    const dayEntry = dayOf[dayKey(new Date(e.t))];
+    if (dayEntry) dayEntry.posts++;
     const actor = e.actor || "—";
     const grp = actorSlot[actor] === "--other" ? FOLD : actor;
     b.posts++;
@@ -420,6 +443,87 @@ function renderActivity(agg) {
   if (series.length > 1) c.append(legend(series.map(s => [s, colorOf(s)])));
   c.append(tableView(["", ...series],
     agg.buckets.filter(b => b.posts).map(b => [fmtDay(b.t0), ...series.map(s => b.byActor[s] || 0)])));
+}
+
+/* The other half of the wall's question: not what was posted, but what it was
+   posted against. The blind days lead and the ratio follows as a footnote,
+   and the order is the point — a blind day cannot be lifted by posting more
+   and thinner, only by posting at all on a day somebody worked, while the
+   ratio rises with every extra post whatever it says. So no percentage on it
+   here either, the same restraint the grader line keeps. */
+function renderBlind(agg) {
+  const c = card("c-blind", "What the wall never saw",
+    "commits per " + (agg.weekly ? "week" : "day") + " against the posts about them");
+  if (!COMMITS) {
+    c.append(el("div", { class: "empty", text: "nobody measured — no checkout was found for any repo on the wall. Point $WALLII_REPO_ROOTS at your code (e.g. ~/offline_coding:~) and run wallii dash again." }));
+    return;
+  }
+  const worked = agg.days.filter(d => d.cov && d.commits >= COMMITS.blind_commits);
+  const blind = worked.filter(d => d.posts <= COMMITS.blind_posts);
+  const gaps = agg.days.filter(d => !d.cov).length;
+  const commits = agg.days.reduce((s, d) => s + d.commits, 0);
+  const posts = agg.days.reduce((s, d) => s + (d.cov ? d.posts : 0), 0);
+
+  const head = el("div", { style: "font-size:19px;font-weight:650;margin:2px 0 2px" });
+  head.append(el("span", { text: worked.length ? `${blind.length} blind day${blind.length === 1 ? "" : "s"} of ${worked.length} worked` : "no day reached the work threshold" }));
+  c.append(head);
+  c.append(el("div", { class: "sub", text: `a worked day is ≥${COMMITS.blind_commits} counted commits, blind at ≤${COMMITS.blind_posts} posts · only HEAD of each main checkout counts, so work on a branch that never merged is not in these numbers` }));
+
+  const W = 720, H = 190, mL = 30, mB = 20, mT = 8;
+  const plotW = W - mL - 6, plotH = H - mT - mB;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+  const yMax = niceMax(Math.max(1, ...agg.buckets.map(b => b.commits)));
+  const y = v => mT + plotH - v / yMax * plotH;
+  const nTicks = yMax % 4 === 0 ? 4 : 5;
+  for (let i = 0; i <= nTicks; i++) {
+    const v = yMax / nTicks * i, yy = y(v);
+    svg.append(svgEl("line", { x1: mL, x2: W - 6, y1: yy, y2: yy, stroke: i ? "var(--grid)" : "var(--axis)", "stroke-width": 1 }));
+    if (i) svg.append(svgEl("text", { x: mL - 6, y: yy + 3.5, "text-anchor": "end", "font-size": 10, fill: "var(--muted)", text: String(v) }));
+  }
+  const band = plotW / agg.buckets.length;
+  const barW = Math.min(24, band * 0.72);
+  const labelEvery = Math.ceil(agg.buckets.length / 12);
+  const postsIn = b => agg.days.filter(d => d.t0 >= b.t0 && d.t0 < b.t0 + (agg.weekly ? 7 : 1) * DAY).reduce((s, d) => s + d.posts, 0);
+  agg.buckets.forEach((b, i) => {
+    const x = mL + i * band + (band - barW) / 2;
+    if (!b.cov) {
+      // a gap, never a zero: this bucket reaches past the window the commits
+      // were collected for, and "not measured" is a different fact from "no
+      // commits" — the one bug that would make this card lie loudest
+      const gap = svgEl("rect", { x: mL + i * band, y: mT, width: band, height: plotH, fill: "var(--grid)", "fill-opacity": .45, tabindex: "0" });
+      hover(gap, `<div class="t">${agg.weekly ? "week of " : ""}${fmtDay(b.t0)}</div><div class="l">not measured — older than the collected window</div>`);
+      svg.append(gap);
+    } else {
+      const bp = postsIn(b);
+      svg.append(svgEl("path", { d: roundTop(x, y(b.commits), barW, Math.max(mT + plotH - y(b.commits), 1.5), 4), fill: "var(--none)" }));
+      const pw = Math.max(barW * 0.42, 3);
+      svg.append(svgEl("path", { d: roundTop(x + (barW - pw) / 2, y(bp), pw, Math.max(mT + plotH - y(bp), 1.5), 3), fill: "var(--accent)" }));
+      const hit = svgEl("rect", { x: mL + i * band, y: mT, width: band, height: plotH, fill: "transparent", tabindex: "0" });
+      hover(hit, `<div class="t">${agg.weekly ? "week of " : ""}${fmtDay(b.t0)}</div>` +
+        `<div class="l"><span class="sw" style="background:var(--none)"></span>${b.commits} commit${b.commits === 1 ? "" : "s"}</div>` +
+        `<div class="l"><span class="sw" style="background:var(--accent)"></span>${bp} post${bp === 1 ? "" : "s"}</div>`);
+      svg.append(hit);
+    }
+    if (i % labelEvery === 0) {
+      svg.append(svgEl("text", { x: mL + i * band + band / 2, y: H - 6, "text-anchor": "middle", "font-size": 10, fill: "var(--muted)", text: (agg.weekly ? "wk " : "") + fmtDay(b.t0) }));
+    }
+  });
+  c.append(svg);
+  c.append(legend([["commits", "--none"], ["posts", "--accent"], ["not measured", "--grid"]]));
+
+  // the footnote, described and never scored: no percentage, for the reason
+  // in the comment above this function
+  c.append(el("div", { class: "sub", style: "margin-top:8px", text: `posts ${posts} · commits ${commits} · ${commits ? (posts / commits).toFixed(2) : "—"} per commit` }));
+  if (gaps) c.append(el("div", { class: "sub", text: `${gaps} day${gaps === 1 ? "" : "s"} in this range are older than the collected window — shown as gaps, counted in nothing` }));
+  if (COMMITS.others) c.append(el("div", { class: "sub", text: `${COMMITS.others} commit${COMMITS.others === 1 ? "" : "s"} by other authors are reported beside this count, never inside it` }));
+  // the repo names go in as text, never through innerHTML — a stored field
+  // is only control-char-filtered
+  if (COMMITS.unresolved && COMMITS.unresolved.length) {
+    c.append(el("div", { class: "sub", text: `no checkout found for ${COMMITS.unresolved.join(", ")} — named, and out of both sides of the ratio` }));
+  }
+  c.append(tableView(["", "commits", "posts", ""],
+    agg.days.map(d => [fmtDay(d.t0), d.cov ? d.commits : "—", d.cov ? d.posts : "—",
+      !d.cov ? "not measured" : (d.commits >= COMMITS.blind_commits && d.posts <= COMMITS.blind_posts ? "blind" : "")])));
 }
 
 function renderOutcome(agg) {
@@ -665,6 +769,7 @@ function renderAll() {
   const agg = aggregate(currentRange);
   renderTiles(agg);
   renderActivity(agg);
+  renderBlind(agg);
   renderOutcome(agg);
   renderMood(agg);
   renderHeat(agg);

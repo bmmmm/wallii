@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"flag"
@@ -45,6 +46,86 @@ type dashEvent struct {
 	Signals []string `json:"signals,omitempty"`
 }
 
+// dashCoverage is what the c-blind card draws on: commits per local day,
+// keyed exactly the way dash.html's dayKey() builds its bucket keys.
+//
+// The whole struct is nil — inlined as `null`, never as `[]` or `{}` — when
+// nothing was measured. An empty object cannot tell "measured, no commits"
+// from "nobody looked", and the card that cannot tell them apart paints a
+// month of blindness out of nothing.
+//
+// From is mandatory for the same reason one level down: the dashboard's
+// range buttons reach past the window these commits were collected for, and
+// every bucket older than From has to render as a gap that says "not
+// measured", never as a day with no commits on it.
+type dashCoverage struct {
+	From         int64          `json:"from"` // unix ms, local midnight of the collected window's first day
+	Days         map[string]int `json:"days"` // dayKey() → commits
+	BlindCommits int            `json:"blind_commits"`
+	BlindPosts   int            `json:"blind_posts"`
+	Measured     int            `json:"measured"`
+	OnWall       int            `json:"on_wall"`
+	Others       int            `json:"others,omitempty"`
+	Unresolved   []string       `json:"unresolved,omitempty"`
+}
+
+// collectDashCoverage measures the same window the dashboard inlines posts
+// for. git runs here and in cmdCoverage only — both are commands a person
+// types. Returns nil when no repo could be measured, which is the honest
+// answer and the one the card knows how to render.
+func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time) *dashCoverage {
+	loc := time.Local
+	from := since
+	if from.IsZero() {
+		// no --since: the window is the wall itself, starting at its first post
+		if wallStart.IsZero() {
+			return nil
+		}
+		from = wallStart
+	}
+	from = time.Date(from.In(loc).Year(), from.In(loc).Month(), from.In(loc).Day(), 0, 0, 0, 0, loc)
+	repos := repoNames(evs, from, now)
+	if len(repos) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout())
+	defer cancel()
+	c := wall.Coverage(evs, collectCommits(ctx, repos, from, now, loc), loc, from, now,
+		wallStart, wall.DefaultBlindCommits, wall.DefaultBlindPosts)
+	if c.Measured == 0 {
+		return nil
+	}
+	// From is the floor, not the flag: with a window reaching past the wall's
+	// first post the earlier days are emitted by nobody and must render as
+	// gaps. Handing the browser the flag's date instead would file them as
+	// days with no commits — a stretch of perfect coverage before the wall
+	// existed, drawn out of nothing.
+	fromDay := from
+	if c.WallStart.After(fromDay) {
+		w := c.WallStart.In(loc)
+		fromDay = time.Date(w.Year(), w.Month(), w.Day(), 0, 0, 0, 0, loc)
+	}
+	out := &dashCoverage{
+		From: fromDay.UnixMilli(), Days: map[string]int{},
+		BlindCommits: c.BlindCommits, BlindPosts: c.BlindPosts,
+		Measured: c.Measured, OnWall: c.OnWall, Others: c.Others,
+	}
+	for _, d := range c.Days {
+		if d.PreWall {
+			continue
+		}
+		day, err := time.ParseInLocation("2006-01-02", d.Day, loc)
+		if err != nil {
+			continue
+		}
+		out.Days[wall.DashDayKey(day)] = d.Commits
+	}
+	for _, u := range c.Unresolved {
+		out.Unresolved = append(out.Unresolved, u.Name)
+	}
+	return out
+}
+
 func cmdDash(args []string) error {
 	fs := flag.NewFlagSet("dash", flag.ExitOnError)
 	outPath := fs.String("o", "", "output file (default: <wall dir>/dashboard.html)")
@@ -60,13 +141,24 @@ func cmdDash(args []string) error {
 	if err != nil {
 		return err
 	}
-	evs, rstats, err := wall.ReadLast(dir, 0, func(e wall.Event) bool {
-		return e.Kind == "" && (since.IsZero() || !e.TS.Before(since))
-	})
+	// The whole wall, then the window: the commit card needs the wall's own
+	// first post as the floor under every blind day, and read through the
+	// --since filter that floor would move with the flag.
+	all, rstats, err := wall.ReadLast(dir, 0, func(e wall.Event) bool { return e.Kind == "" })
 	if err != nil {
 		return err
 	}
 	reportStats(rstats)
+	wallStart := firstPost(all)
+	evs := all
+	if !since.IsZero() {
+		evs = all[:0:0]
+		for _, e := range all {
+			if !e.TS.Before(since) {
+				evs = append(evs, e)
+			}
+		}
+	}
 
 	out := make([]dashEvent, 0, len(evs))
 	for _, e := range evs {
@@ -90,9 +182,18 @@ func cmdDash(args []string) error {
 		// the range buttons cannot reach past what was inlined — say so
 		stamp += " · only posts since " + *sinceS + " included"
 	}
+	// json.Marshal of a nil *dashCoverage is the literal null the card reads
+	// as "nobody measured"
+	cov, err := json.Marshal(collectDashCoverage(evs, wallStart, since, time.Now()))
+	if err != nil {
+		return err
+	}
 	// substitute the stamp BEFORE the data: once user-controlled message text
-	// is in the string, a literal "__GENERATED__" inside a post could be hit
+	// is in the string, a literal "__GENERATED__" inside a post could be hit.
+	// The commits go in before the posts for exactly the same reason — they
+	// are the last thing in the file that is not a post.
 	html := strings.Replace(dashTemplate, "__GENERATED__", stamp, 1)
+	html = strings.Replace(html, "__WALLII_COMMITS__", string(cov), 1)
 	html = strings.Replace(html, "__WALLII_DATA__", string(data), 1)
 
 	path := *outPath
