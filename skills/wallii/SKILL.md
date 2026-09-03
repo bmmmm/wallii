@@ -77,7 +77,15 @@ Output shapes (verified against wallii v0.5.1-0.20260903 (271fe6c), 2026-09-03 �
   state that exists.
 - `stats --json` → one aggregate object: totals, outcome counts, `mood_avg`
   (5 = great … 1 = stuck; absent when `mood_count` is 0 — check the count
-  first), `by_repo`/`by_topic`/`by_mood`/`by_actor` arrays — use it for the
+  first), `by_repo`/`by_topic`/`by_mood`/`by_actor` arrays, and one level
+  up `families` with `by_family` (`family`, `actors`, `posts`, `repos`,
+  `ok`/`partial`/`failed`, `mood_count`, `mood_avg`, `with_refs`) and
+  `voice_family` — a family is the actor's name before the first `/` or
+  `:` (`claude/main` → `claude`, `codex/main` → `codex`, `cron:x` →
+  `cron`). Compare families on what landed and how it felt ("codex: 2 of 2
+  landed, claude: 85 % of 233"), never on a coverage ratio; `--actor
+  codex` filters `tail` and `stats` to the family, `--actor codex/main` to
+  the one actor. Use it for the
   headline instead of counting events yourself. Two fields qualify the rest:
   `took_auto` counts durations wallii derived rather than the poster
   measured, and `by_mood` shows which part of the scale the window actually
@@ -102,7 +110,7 @@ Output shapes (verified against wallii v0.5.1-0.20260903 (271fe6c), 2026-09-03 �
   named and two unnamed. Report the difference as it is ("3 measured
   shortcuts, 1 named") — never as a rate, never per actor.
 - `agents --json` → one JSON array of pairs:
-  `{"actor","repo","posts","first_post","last_post","attached","explicit","state_at"}`
+  `{"actor","family","repo","posts","first_post","last_post","attached","explicit","state_at"}`
 - An empty window prints nothing and exits 0 — that is "quiet", not an error.
 
 If `wallii` is missing: stop and point at the repo (`~/offline_coding/wallii`,

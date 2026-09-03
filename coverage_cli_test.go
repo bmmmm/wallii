@@ -246,6 +246,7 @@ func TestDashCardAggregatesWhatTheGoSideCounted(t *testing.T) {
 	script := dashTemplate[start+len("<script>") : end]
 	script = strings.Replace(script, "__GENERATED__", "fixture", 1)
 	script = strings.Replace(script, "__WALLII_COMMITS__", string(cov), 1)
+	script = strings.Replace(script, "__WALLII_FAMILIES__", "{}", 1)
 	script = strings.Replace(script, "__WALLII_DATA__", string(evs), 1)
 	// a DOM that accepts everything and answers with itself, so the page's
 	// own top-level rendering runs to the end without a browser
@@ -476,5 +477,121 @@ func TestCoverageSplitNamesTheMeasurementOnce(t *testing.T) {
 	}
 	if halves[0].Measured != halves[1].Measured || fmt.Sprint(halves[0].Unresolved) != fmt.Sprint(halves[1].Unresolved) {
 		t.Fatalf("the halves disagree on the measurement, so naming it once would hide one of them:\n%+v\n%+v", halves[0].Unresolved, halves[1].Unresolved)
+	}
+}
+
+// The dashboard colors by family, and the rule that turns an actor into a
+// family lives in Go — so the page is handed the mapping, not the rule.
+func TestDashInlinesActorFamilies(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_PULSE", "off")
+	t.Setenv("WALLII_REPO_ROOTS", t.TempDir())
+	now := time.Now()
+	for i, actor := range []string{"claude/main", "codex/main", "cron:nightly"} {
+		if err := wall.Append(dir, wall.Event{TS: now.Add(-time.Duration(i+1) * time.Minute), Repo: "webshop", Actor: actor, Msg: "posted"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(t.TempDir(), "d.html")
+	if _, err := captureStdout(t, func() error { return cmdDash([]string{"-o", out}) }), error(nil); err != nil {
+		t.Fatal(err)
+	}
+	html, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := firstLineWith(string(html), "const FAMILIES")
+	for _, want := range []string{`"claude/main":"claude"`, `"codex/main":"codex"`, `"cron:nightly":"cron"`} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the page must be handed %s: %s", want, line)
+		}
+	}
+}
+
+// The family chip narrows every card but one. The blind-days card counts
+// every post in range whatever the chip says — a blind day is a repo's day,
+// and a per-family numerator over a per-repo denominator would be the actor
+// split the ratio refuses. And the series the activity chart stacks are
+// families, so claude/main and claude/ops are one color, not two.
+func TestDashFamilyFilterLeavesTheBlindDaysAlone(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the browser half cannot be executed without it")
+	}
+	loc := time.Local
+	y, m, d := time.Now().In(loc).Date()
+	today := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	from, to := today.AddDate(0, 0, -5), today.AddDate(0, 0, -2)
+	measured := today.AddDate(0, 0, -4)
+	noon := measured.Add(12 * time.Hour)
+	cov, err := json.Marshal(dashCoverage{
+		From: from.UnixMilli(), To: to.UnixMilli(),
+		Days: map[string]int{wall.DashDayKey(measured): 12}, Repos: []string{"webshop"},
+		BlindCommits: wall.DefaultBlindCommits, BlindPosts: wall.DefaultBlindPosts, Measured: 1, OnWall: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evs, err := json.Marshal([]dashEvent{
+		{T: noon.UnixMilli(), Repo: "webshop", Actor: "claude/main", Msg: "one"},
+		{T: noon.Add(time.Hour).UnixMilli(), Repo: "webshop", Actor: "claude/ops", Msg: "two"},
+		{T: noon.Add(2 * time.Hour).UnixMilli(), Repo: "webshop", Actor: "codex/main", Msg: "three"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, end := strings.Index(dashTemplate, "<script>"), strings.LastIndex(dashTemplate, "</script>")
+	if start < 0 || end < 0 {
+		t.Fatal("dash.html has no <script> block to run")
+	}
+	script := dashTemplate[start+len("<script>") : end]
+	script = strings.Replace(script, "__GENERATED__", "fixture", 1)
+	script = strings.Replace(script, "__WALLII_COMMITS__", string(cov), 1)
+	script = strings.Replace(script, "__WALLII_FAMILIES__", `{"claude/main":"claude","claude/ops":"claude","codex/main":"codex"}`, 1)
+	script = strings.Replace(script, "__WALLII_DATA__", string(evs), 1)
+	harness := `const stub = new Proxy(function () {}, {
+  get: (_, k) => k === Symbol.toPrimitive ? () => 0 : k === Symbol.iterator ? function* () {} : k === "then" ? undefined : stub,
+  set: () => true, apply: () => stub, construct: () => stub, has: () => true,
+});
+for (const g of ["document", "window", "localStorage", "navigator", "matchMedia", "location", "requestAnimationFrame"]) globalThis[g] = stub;
+` + script + `
+const sum = (xs, f) => xs.reduce((s, x) => s + f(x), 0);
+const shape = agg => ({
+  evs: agg.evs.length,
+  mposts: sum(agg.buckets, b => b.mposts),
+  dayPosts: sum(agg.days, d => d.posts),
+  families: Object.keys(agg.buckets.reduce((o, b) => Object.assign(o, b.byFamily), {})).sort(),
+  actors: Object.keys(agg.actors).sort(),
+});
+const all = shape(aggregate(7));
+currentFamily = "codex";
+const codex = shape(aggregate(7));
+console.log("RESULT " + JSON.stringify({ all, codex }));`
+	path := filepath.Join(t.TempDir(), "dash.js")
+	if err := os.WriteFile(path, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := exec.Command(node, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, raw)
+	}
+	line := firstLineWith(string(raw), "RESULT ")
+	type shape struct {
+		Evs, Mposts, DayPosts int
+		Families, Actors      []string
+	}
+	var res struct{ All, Codex shape }
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "RESULT ")), &res); err != nil {
+		t.Fatalf("result: %v\n%s", err, raw)
+	}
+	if res.All.Evs != 3 || fmt.Sprint(res.All.Families) != "[claude codex]" {
+		t.Errorf("unfiltered: the series are families, not actors: %+v", res.All)
+	}
+	if res.Codex.Evs != 1 || fmt.Sprint(res.Codex.Families) != "[codex]" || fmt.Sprint(res.Codex.Actors) != "[codex/main]" {
+		t.Errorf("the codex chip must narrow the posts, the series and the agents: %+v", res.Codex)
+	}
+	if res.Codex.Mposts != 3 || res.Codex.DayPosts != 3 || res.All.Mposts != 3 {
+		t.Errorf("the blind-days numerator must count every family's posts under any chip: all=%+v codex=%+v", res.All, res.Codex)
 	}
 }

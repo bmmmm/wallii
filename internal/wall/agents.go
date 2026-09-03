@@ -9,6 +9,7 @@ import (
 // PairState is the registration state of one (actor, repo) pair.
 type PairState struct {
 	Actor     string    `json:"actor"`
+	Family    string    `json:"family,omitempty"` // ActorFamily(Actor), derived
 	Repo      string    `json:"repo"`
 	Posts     int       `json:"posts"`
 	FirstPost time.Time `json:"first_post,omitzero"`
@@ -39,7 +40,7 @@ func Attachments(evs []Event) []PairState {
 		if p, ok := m[k]; ok {
 			return p
 		}
-		p := &PairState{Actor: actor, Repo: repo}
+		p := &PairState{Actor: actor, Family: ActorFamily(actor), Repo: repo}
 		m[k] = p
 		return p
 	}

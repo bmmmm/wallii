@@ -166,6 +166,18 @@ func (e Event) ID() string {
 	return hex.EncodeToString(h[:])[:7]
 }
 
+// ActorFamily is the part of an actor's name before the first "/" or ":" —
+// claude/main and claude/ops are both claude, cron:pegel-hires is cron,
+// manual is manual. The wall stores actors, never families: this is the one
+// place the grouping is defined, and everything that shows a family reads it
+// from here.
+func ActorFamily(actor string) string {
+	if i := strings.IndexAny(actor, "/:"); i >= 0 {
+		return actor[:i]
+	}
+	return actor
+}
+
 func (e Event) Validate() error {
 	if strings.TrimSpace(e.Repo) == "" {
 		return errors.New("repo is empty — run inside a git repo or pass -r <name>")

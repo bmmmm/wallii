@@ -147,6 +147,7 @@
   </header>
 
   <div class="filters" id="filters"></div>
+  <div class="filters" id="families"></div>
   <div class="tiles" id="tiles"></div>
 
   <div class="grid">
@@ -178,6 +179,11 @@ RAW.sort((a, b) => a.t - b.t);
    blindness out of nothing. COMMITS.from is the floor: every bucket older
    than it is a gap labelled "not measured", never a day with no commits. */
 const COMMITS = __WALLII_COMMITS__;
+/* actor → family, handed over by Go: the rule that names a family lives in
+   one place (wall.ActorFamily) and the page only reads the mapping. An actor
+   the mapping does not know is its own family. */
+const FAMILIES = __WALLII_FAMILIES__;
+const familyOf = a => FAMILIES[a || "—"] || (a || "—");
 /* The repos whose commits are in COMMITS.days. The card's numerator is the
    posts of these repos and no others — a repo with no checkout leaves both
    sides of the ratio here exactly as it does in `wallii coverage`, or the
@@ -260,18 +266,43 @@ function hover(node, html) {
   node.addEventListener("blur", ttHide);
 }
 
-/* ---------- actor → slot assignment: global over ALL loaded data, so
-   switching the range never repaints a series (color follows the entity) ---------- */
+/* ---------- family → slot assignment: global over ALL loaded data, so
+   switching the range never repaints a series (color follows the family).
+   Families, not actors: claude/main and claude/ops share a color, and codex
+   gets its own the day it posts, not once it has out-posted a cron job ---------- */
 const SLOT_VARS = ["--s1", "--s2", "--s3", "--s4", "--s5"];
-const FOLD = "…others"; // fold-group key; distinct from any real actor named "Other"
-const actorTotals = {};
-for (const e of RAW) actorTotals[e.actor || "—"] = (actorTotals[e.actor || "—"] || 0) + 1;
-const actorOrder = Object.keys(actorTotals).sort((a, b) => actorTotals[b] - actorTotals[a] || a.localeCompare(b));
-const actorSlot = {};
-actorOrder.forEach((a, i) => { actorSlot[a] = i < SLOT_VARS.length ? SLOT_VARS[i] : "--other"; });
-function actorSeriesNames() {
-  const named = actorOrder.slice(0, SLOT_VARS.length);
-  return actorOrder.length > SLOT_VARS.length ? [...named, FOLD] : named;
+const FOLD = "…others"; // fold-group key; distinct from any real family named "Other"
+const famTotals = {};
+for (const e of RAW) { const f = familyOf(e.actor); famTotals[f] = (famTotals[f] || 0) + 1; }
+const famOrder = Object.keys(famTotals).sort((a, b) => famTotals[b] - famTotals[a] || a.localeCompare(b));
+const famSlot = {};
+famOrder.forEach((f, i) => { famSlot[f] = i < SLOT_VARS.length ? SLOT_VARS[i] : "--other"; });
+function familySeriesNames() {
+  const named = famOrder.slice(0, SLOT_VARS.length);
+  return famOrder.length > SLOT_VARS.length ? [...named, FOLD] : named;
+}
+const slotOfActor = a => famSlot[familyOf(a)] || "--other";
+
+/* ---------- the family filter: one family's posts, or all. The chips are the
+   same five families that have a color, plus the fold. The coverage card
+   ignores it on purpose: commits are per repo, and the ratio is never split
+   by actor — a family filter there would be exactly that split. ---------- */
+function familyChips() {
+  const named = famOrder.slice(0, SLOT_VARS.length);
+  return ["all", ...named, ...(famOrder.length > SLOT_VARS.length ? [FOLD] : [])];
+}
+let currentFamily = "all";
+{
+  // a remembered choice is only taken if it is still a chip — localStorage
+  // may hand back anything, a stub included
+  const saved = lsGet("wallii-family");
+  if (familyChips().includes(saved)) currentFamily = saved;
+}
+function inFamily(e) {
+  if (currentFamily === "all") return true;
+  const f = familyOf(e.actor);
+  if (currentFamily === FOLD) return famOrder.indexOf(f) >= SLOT_VARS.length;
+  return f === currentFamily;
 }
 
 /* ---------- aggregation for the selected range ---------- */
@@ -287,7 +318,10 @@ function aggregate(rangeDays) {
   const spanDays = Math.round((today - startD) / DAY) + 1;
   const weekly = spanDays > 60;
   const since = startD.getTime();
-  const evs = RAW.filter(e => e.t >= since);
+  // every post in range feeds the coverage card; the family filter narrows
+  // everything else
+  const inRange = RAW.filter(e => e.t >= since);
+  const evs = inRange.filter(inFamily);
 
   const buckets = [];
   const dayIdx = {};  // local calendar day → bucket index
@@ -296,7 +330,7 @@ function aggregate(rangeDays) {
   const cur = new Date(startD);
   for (let i = 0; cur <= today; i++) {
     const bi = weekly ? Math.floor(i / 7) : i;
-    if (!buckets[bi]) buckets.push({ t0: cur.getTime(), byActor: {}, out: { ok: 0, partial: 0, failed: 0, none: 0 }, moodSum: 0, moodN: 0, posts: 0, commits: 0, mposts: 0, cov: true });
+    if (!buckets[bi]) buckets.push({ t0: cur.getTime(), byFamily: {}, out: { ok: 0, partial: 0, failed: 0, none: 0 }, moodSum: 0, moodN: 0, posts: 0, commits: 0, mposts: 0, cov: true });
     dayIdx[dayKey(cur)] = bi;
     // the commits ride along in the walk that already exists — no second
     // calendar in the browser, and DST is handled once, here. Measured means
@@ -315,7 +349,7 @@ function aggregate(rangeDays) {
   }
 
   const agg = {
-    since, evs, buckets, weekly, days,
+    since, evs, buckets, weekly, days, family: currentFamily,
     repoCounts: {}, topicCounts: {},
     heat: Array.from({ length: 7 }, () => new Array(24).fill(0)),
     actors: {},
@@ -323,17 +357,23 @@ function aggregate(rangeDays) {
     moodSum: 0, moodN: 0, tookSum: 0, tookN: 0, tookAuto: 0, refsN: 0, outN: 0,
     moodCounts: {}, contra: 0,
   };
+  // the card's own numerator, counted in the same walk as its commits:
+  // posts of measured repos only, per day and per bucket — over every post
+  // in range, whatever family is selected
+  for (const e of inRange) {
+    const b = buckets[dayIdx[dayKey(new Date(e.t))]];
+    if (!b) continue;
+    const dayEntry = dayOf[dayKey(new Date(e.t))];
+    if (dayEntry && MEASURED.has(e.repo)) { dayEntry.posts++; b.mposts++; }
+  }
   for (const e of evs) {
     const b = buckets[dayIdx[dayKey(new Date(e.t))]];
     if (!b) continue; // future-dated post (clock skew) — feed still shows it
-    // the card's own numerator, counted in the same walk as its commits:
-    // posts of measured repos only, per day and per bucket
-    const dayEntry = dayOf[dayKey(new Date(e.t))];
-    if (dayEntry && MEASURED.has(e.repo)) { dayEntry.posts++; b.mposts++; }
     const actor = e.actor || "—";
-    const grp = actorSlot[actor] === "--other" ? FOLD : actor;
+    const fam = familyOf(actor);
+    const grp = famSlot[fam] === "--other" ? FOLD : fam;
     b.posts++;
-    b.byActor[grp] = (b.byActor[grp] || 0) + 1;
+    b.byFamily[grp] = (b.byFamily[grp] || 0) + 1;
     // an outcome value this build doesn't know counts as unreported, matching Go's stats
     const o = agg.out[e.out] !== undefined ? e.out : "none";
     b.out[o]++;
@@ -358,7 +398,7 @@ function aggregate(rangeDays) {
     a.last = Math.max(a.last, e.t);
   }
   // previous window of equal length, for tile deltas
-  agg.prev = rangeDays ? RAW.filter(e => e.t >= since - rangeDays * DAY && e.t < since) : null;
+  agg.prev = rangeDays ? RAW.filter(e => e.t >= since - rangeDays * DAY && e.t < since && inFamily(e)) : null;
   return agg;
 }
 
@@ -445,14 +485,14 @@ function stackedColumns(buckets, series, colorOf, labelOf, weekly) {
 
 /* ---------- charts ---------- */
 function renderActivity(agg) {
-  const c = card("c-activity", "Who's posting", (agg.weekly ? "posts per week" : "posts per day") + " by actor");
+  const c = card("c-activity", "Who's posting", (agg.weekly ? "posts per week" : "posts per day") + " by agent family — claude/main and claude/ops are one color");
   if (!agg.evs.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
-  const series = actorSeriesNames();
-  const colorOf = name => name === FOLD ? "--other" : actorSlot[name];
-  c.append(stackedColumns(agg.buckets, series, colorOf, b => b.byActor, agg.weekly));
+  const series = familySeriesNames();
+  const colorOf = name => name === FOLD ? "--other" : famSlot[name];
+  c.append(stackedColumns(agg.buckets, series, colorOf, b => b.byFamily, agg.weekly));
   if (series.length > 1) c.append(legend(series.map(s => [s, colorOf(s)])));
   c.append(tableView(["", ...series],
-    agg.buckets.filter(b => b.posts).map(b => [fmtDay(b.t0), ...series.map(s => b.byActor[s] || 0)])));
+    agg.buckets.filter(b => b.posts).map(b => [fmtDay(b.t0), ...series.map(s => b.byFamily[s] || 0)])));
 }
 
 /* The other half of the wall's question: not what was posted, but what it was
@@ -478,6 +518,7 @@ function renderBlind(agg) {
   head.append(el("span", { text: worked.length ? `${blind.length} blind day${blind.length === 1 ? "" : "s"} of ${worked.length} worked` : "no day reached the work threshold" }));
   c.append(head);
   c.append(el("div", { class: "sub", text: `a worked day is ≥${COMMITS.blind_commits} counted commits, blind at ≤${COMMITS.blind_posts} posts · only HEAD of each main checkout counts, so work on a branch that never merged is not in these numbers` }));
+  if (agg.family !== "all") c.append(el("div", { class: "sub", text: `every family's posts, whatever the chip says — a blind day is a repo's day, and the ratio is never split by actor` }));
 
   const W = 720, H = 190, mL = 30, mB = 20, mT = 8;
   const plotW = W - mL - 6, plotH = H - mT - mB;
@@ -670,7 +711,7 @@ function renderCoverage(agg) {
 }
 
 function renderAgents(agg) {
-  const c = card("c-agents", "The agents", "per actor, across all repos in range · landed % is over outcome-reporting posts");
+  const c = card("c-agents", "The agents", "per actor, across all repos in range · the swatch is the family's color · landed % is over outcome-reporting posts");
   const names = Object.keys(agg.actors).sort((a, b) => agg.actors[b].posts - agg.actors[a].posts || a.localeCompare(b));
   if (!names.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
   const table = el("table", { class: "agents" },
@@ -679,7 +720,7 @@ function renderAgents(agg) {
   for (const name of names) {
     const a = agg.actors[name];
     const rep = a.ok + a.partial + a.failed;
-    const swatch = el("span", { class: "sw", style: `display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px;background:var(${actorSlot[name] || "--other"})` });
+    const swatch = el("span", { class: "sw", style: `display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px;background:var(${slotOfActor(name)})` });
     table.append(el("tr", {},
       el("td", {}, swatch, el("span", { text: name })),
       el("td", { text: String(a.posts), class: "n" }),
@@ -801,6 +842,19 @@ function renderFilters() {
     }));
   }
 }
+function renderFamilies() {
+  const f = $("families");
+  f.replaceChildren();
+  const chips = familyChips();
+  if (chips.length <= 2) return; // one family on the wall: nothing to choose between
+  for (const name of chips) {
+    f.append(el("button", {
+      class: name === currentFamily ? "on" : "",
+      text: name,
+      onclick: () => { currentFamily = name; lsSet("wallii-family", name); renderFamilies(); renderAll(); },
+    }));
+  }
+}
 
 /* theme toggle: auto → light → dark, persisted. localStorage can throw on
    file:// (Safari) or with cookies blocked — the dashboard must render anyway */
@@ -821,6 +875,7 @@ themeBtn.addEventListener("click", () => {
 applyTheme(lsGet("wallii-theme") || "auto");
 
 renderFilters();
+renderFamilies();
 renderAll();
 </script>
 </body>

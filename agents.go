@@ -55,25 +55,28 @@ func cmdAgents(args []string) error {
 	}
 
 	now := time.Now()
-	actors, repos := map[string]struct{}{}, map[string]struct{}{}
+	actors, families, repos := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}
 	silent := 0
 	for _, p := range pairs {
 		actors[p.Actor] = struct{}{}
+		families[p.Family] = struct{}{}
 		repos[p.Repo] = struct{}{}
 		if s := pairState(p, now, stale); strings.HasPrefix(s, "silent") || strings.Contains(s, "never posted") {
 			silent++
 		}
 	}
-	fmt.Printf("%d agents · %d repos · %d pairs · %d need attention\n\n", len(actors), len(repos), len(pairs), silent)
+	fmt.Printf("%d agents in %d families · %d repos · %d pairs · %d need attention\n\n", len(actors), len(families), len(repos), len(pairs), silent)
 
+	// sorted by actor, and a family is an actor's prefix — so the rows are
+	// already grouped by family without a second sort
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ACTOR\tREPO\tPOSTS\tLAST POST\tSTATE\tPERSONA")
+	fmt.Fprintln(w, "FAMILY\tACTOR\tREPO\tPOSTS\tLAST POST\tSTATE\tPERSONA")
 	for _, p := range pairs {
 		last := "—"
 		if !p.LastPost.IsZero() {
 			last = ago(now.Sub(p.LastPost))
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\n", orDash(p.Actor), p.Repo, p.Posts, last, pairState(p, now, stale), p.Persona)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n", orDash(p.Family), orDash(p.Actor), p.Repo, p.Posts, last, pairState(p, now, stale), p.Persona)
 	}
 	return w.Flush()
 }

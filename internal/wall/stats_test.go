@@ -191,3 +191,68 @@ func TestValidateOutcomeMoodTook(t *testing.T) {
 		}
 	}
 }
+
+// Actors fold into families by name prefix: claude/main and claude/ops are
+// one family with two members, codex/main another. The rows add up exactly
+// what the actor rows hold, and sort the same way.
+func TestComputeFoldsActorsIntoFamilies(t *testing.T) {
+	ts := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	evs := []Event{
+		{TS: ts, Repo: "alpha", Actor: "claude/main", Msg: "one", Outcome: OutcomeOK, Mood: "good", Refs: []string{"https://x.example/1"}},
+		{TS: ts, Repo: "beta", Actor: "claude/main", Msg: "two", Outcome: OutcomeOK, Mood: "great"},
+		{TS: ts, Repo: "beta", Actor: "claude/ops", Msg: "three", Outcome: OutcomeFailed, Mood: "stuck"},
+		{TS: ts, Repo: "gamma", Actor: "codex/main", Msg: "four", Outcome: OutcomeOK, Mood: "good"},
+		{TS: ts, Repo: "gamma", Actor: "cron:nightly", Msg: "five"},
+		{TS: ts, Repo: "gamma", Actor: "codex/main", Kind: KindAttach, Msg: "attached"},
+	}
+	s := Compute(evs)
+	if s.Actors != 4 || s.Families != 3 {
+		t.Fatalf("actors/families = %d/%d, want 4/3", s.Actors, s.Families)
+	}
+	if len(s.ByFamily) != 3 {
+		t.Fatalf("by_family has %d rows, want 3: %+v", len(s.ByFamily), s.ByFamily)
+	}
+	claude := s.ByFamily[0]
+	if claude.Family != "claude" || claude.Actors != 2 || claude.Posts != 3 || claude.Repos != 2 ||
+		claude.OK != 2 || claude.Failed != 1 || claude.MoodCount != 3 || claude.WithRefs != 1 {
+		t.Errorf("claude row wrong: %+v", claude)
+	}
+	// good(4) + great(5) + stuck(1) over three graded posts
+	if claude.MoodAvg < 3.3 || claude.MoodAvg > 3.4 {
+		t.Errorf("claude mood avg = %.2f, want 3.33", claude.MoodAvg)
+	}
+	// ties on posts sort by name, as the actor rows do
+	if s.ByFamily[1].Family != "codex" || s.ByFamily[2].Family != "cron" {
+		t.Errorf("order = %s, %s, want codex, cron", s.ByFamily[1].Family, s.ByFamily[2].Family)
+	}
+	if s.ByFamily[2].MoodCount != 0 || s.ByFamily[2].MoodAvg != 0 {
+		t.Errorf("a family nobody graded carries no mood: %+v", s.ByFamily[2])
+	}
+}
+
+// The family voice is the actor voice one level up: the members' posts read
+// as one author. Enough posts for a style, split across two members so
+// neither alone would qualify.
+func TestVoiceFamilyReadsMembersAsOneAuthor(t *testing.T) {
+	ts := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	var evs []Event
+	for i := 0; i < 2*SamenessRun; i++ {
+		actor := "claude/main"
+		if i%2 == 1 {
+			actor = "claude/ops"
+		}
+		evs = append(evs, Event{TS: ts, Repo: "alpha", Actor: actor, Msg: "gate closed, retry loop landed"})
+	}
+	for i := 0; i < SamenessRun-1; i++ {
+		evs = append(evs, Event{TS: ts, Repo: "beta", Actor: "codex/main", Msg: "smallest useful repository"})
+	}
+	s := Compute(evs)
+	if len(s.VoiceFamily) != 1 || s.VoiceFamily[0].Actor != "claude" || s.VoiceFamily[0].Posts != 2*SamenessRun {
+		t.Fatalf("voice_family = %+v, want one row for claude over %d posts", s.VoiceFamily, 2*SamenessRun)
+	}
+	for _, v := range s.Voice {
+		if v.Actor == "claude" {
+			t.Errorf("the family must not appear among the actor voices: %+v", s.Voice)
+		}
+	}
+}

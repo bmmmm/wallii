@@ -190,6 +190,18 @@ func cmdDash(args []string) error {
 	if err != nil {
 		return err
 	}
+	// actor → family, so the page colors and filters by family without
+	// carrying the rule that names one: that rule lives in wall.ActorFamily
+	families := map[string]string{}
+	for _, e := range evs {
+		if e.Actor != "" {
+			families[e.Actor] = wall.ActorFamily(e.Actor)
+		}
+	}
+	fam, err := json.Marshal(families)
+	if err != nil {
+		return err
+	}
 	stamp := time.Now().Format("2006-01-02 15:04")
 	if *sinceS != "" {
 		// the range buttons cannot reach past what was inlined — say so
@@ -203,10 +215,11 @@ func cmdDash(args []string) error {
 	}
 	// substitute the stamp BEFORE the data: once user-controlled message text
 	// is in the string, a literal "__GENERATED__" inside a post could be hit.
-	// The commits go in before the posts for exactly the same reason — they
-	// are the last thing in the file that is not a post.
+	// The commits and the families go in before the posts for exactly the
+	// same reason — they are the last things in the file that are not a post.
 	html := strings.Replace(dashTemplate, "__GENERATED__", stamp, 1)
 	html = strings.Replace(html, "__WALLII_COMMITS__", string(cov), 1)
+	html = strings.Replace(html, "__WALLII_FAMILIES__", string(fam), 1)
 	html = strings.Replace(html, "__WALLII_DATA__", string(data), 1)
 
 	path := *outPath

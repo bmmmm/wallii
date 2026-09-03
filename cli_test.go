@@ -518,3 +518,86 @@ func TestGraderLineCountsWithoutAPercentage(t *testing.T) {
 		t.Errorf("absence must be named with the command that ends it, got %q", none)
 	}
 }
+
+// --actor names an actor or a family: "claude" is claude, claude/main and
+// claude/ops together; "claude/main" is that one actor. Codex arrived on the
+// wall as codex/main, and the question is never "codex/main against
+// claude/main" but Codex against Claude.
+func TestActorFilterMatchesTheFamily(t *testing.T) {
+	main := wall.Event{Repo: "x", Actor: "claude/main", Msg: "a"}
+	ops := wall.Event{Repo: "x", Actor: "claude/ops", Msg: "b"}
+	bare := wall.Event{Repo: "x", Actor: "claude", Msg: "c"}
+	codex := wall.Event{Repo: "x", Actor: "codex/main", Msg: "d"}
+
+	fam := filter{actor: "claude"}
+	for _, e := range []wall.Event{main, ops, bare} {
+		if !fam.match(e) {
+			t.Errorf("--actor claude must match %s", e.Actor)
+		}
+	}
+	if fam.match(codex) {
+		t.Error("--actor claude must not match codex/main")
+	}
+	exact := filter{actor: "claude/main"}
+	if !exact.match(main) || exact.match(ops) || exact.match(bare) {
+		t.Error("--actor claude/main is that one actor, not its family")
+	}
+	if !(filter{actor: "CODEX"}).match(codex) {
+		t.Error("the family match is case-insensitive like the actor match")
+	}
+}
+
+// The family block is printed when there is something to compare and not
+// when it would only repeat the one family the wall has.
+func TestStatsPrintsFamiliesOnlyWhenThereAreTwo(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_SESSION_START", "")
+	t.Setenv("WALLII_PULSE", "off")
+	now := time.Now()
+	for i, actor := range []string{"claude/main", "claude/ops"} {
+		if err := wall.Append(dir, wall.Event{TS: now.Add(-time.Duration(i+1) * time.Minute), Repo: "webshop", Actor: actor, Msg: "one family so far", Outcome: wall.OutcomeOK}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := captureStdout(t, func() error { return cmdStats(nil) })
+	if strings.Contains(out, "FAMILY") {
+		t.Errorf("one family is nothing to compare, the block must stay away:\n%s", out)
+	}
+	if err := wall.Append(dir, wall.Event{TS: now, Repo: "webshop", Actor: "codex/main", Msg: "a second family", Outcome: wall.OutcomeOK}); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStdout(t, func() error { return cmdStats(nil) })
+	if strings.Count(out, "FAMILY") != 1 || !strings.Contains(out, "3 actors in 2 families") {
+		t.Errorf("two families must print the block once and count them in the head line:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "claude ") && !strings.Contains(line, "2") {
+			t.Errorf("the claude row must count its two members: %q", line)
+		}
+	}
+}
+
+// agents groups its pairs by family in the head line and the first column.
+func TestAgentsNamesFamilies(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	now := time.Now()
+	for i, actor := range []string{"claude/main", "claude/ops", "codex/main"} {
+		if err := wall.Append(dir, wall.Event{TS: now.Add(-time.Duration(i+1) * time.Minute), Repo: "webshop", Actor: actor, Msg: "posted"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := captureStdout(t, func() error { return cmdAgents(nil) })
+	if !strings.Contains(out, "3 agents in 2 families") {
+		t.Errorf("the head line counts families:\n%s", out)
+	}
+	if !strings.Contains(out, "FAMILY") {
+		t.Errorf("the table names the family in its first column:\n%s", out)
+	}
+	for _, p := range wall.Attachments(func() []wall.Event { evs, _, _ := wall.ReadLast(dir, 0, nil); return evs }()) {
+		if p.Family != wall.ActorFamily(p.Actor) || p.Family == "" {
+			t.Errorf("pair %s carries family %q", p.Actor, p.Family)
+		}
+	}
+}

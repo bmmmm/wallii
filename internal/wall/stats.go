@@ -17,6 +17,7 @@ type Stats struct {
 	Posts      int `json:"posts"`
 	Repos      int `json:"repos"`
 	Actors     int `json:"actors"`
+	Families   int `json:"families"` // distinct ActorFamily values among Actors
 	OK         int `json:"ok"`
 	Partial    int `json:"partial"`
 	Failed     int `json:"failed"`
@@ -110,6 +111,28 @@ type Stats struct {
 	ByTopic []NameCount  `json:"by_topic"`
 	ByMood  []NameCount  `json:"by_mood"`
 	ByActor []ActorStats `json:"by_actor"`
+
+	// ByFamily folds the actor rows by ActorFamily — claude against codex
+	// against cron — and VoiceFamily is the same mirror one level up: does
+	// one family write like one voice. Families may be compared on what
+	// lands and how it feels; the coverage ratio is never split this way.
+	ByFamily    []FamilyStats `json:"by_family,omitempty"`
+	VoiceFamily []VoiceStats  `json:"voice_family,omitempty"`
+}
+
+// FamilyStats is one family's row: the ActorStats of its members added up,
+// and how many members there were.
+type FamilyStats struct {
+	Family    string  `json:"family"`
+	Actors    int     `json:"actors"`
+	Posts     int     `json:"posts"`
+	Repos     int     `json:"repos"`
+	OK        int     `json:"ok"`
+	Partial   int     `json:"partial"`
+	Failed    int     `json:"failed"`
+	MoodCount int     `json:"mood_count"`
+	MoodAvg   float64 `json:"mood_avg,omitempty"`
+	WithRefs  int     `json:"with_refs"`
 }
 
 type NameCount struct {
@@ -145,6 +168,10 @@ func Compute(evs []Event) Stats {
 	actorRepos := map[string]map[string]struct{}{}
 	moodSum := 0
 	actorMoodSum := map[string]int{}
+	families := map[string]*FamilyStats{}
+	familyRepos := map[string]map[string]struct{}{}
+	familyActors := map[string]map[string]struct{}{}
+	familyMoodSum := map[string]int{}
 	// case-folded and trimmed, so "None" and "none " are the same sentence
 	// said twice, not two ways of saying it
 	graders := map[string]struct{}{}
@@ -192,16 +219,30 @@ func Compute(evs []Event) Stats {
 		}
 		a.Posts++
 		actorRepos[e.Actor][e.Repo] = struct{}{}
+		fam := ActorFamily(e.Actor)
+		f, ok := families[fam]
+		if !ok {
+			f = &FamilyStats{Family: fam}
+			families[fam] = f
+			familyRepos[fam] = map[string]struct{}{}
+			familyActors[fam] = map[string]struct{}{}
+		}
+		f.Posts++
+		familyRepos[fam][e.Repo] = struct{}{}
+		familyActors[fam][e.Actor] = struct{}{}
 		switch e.Outcome {
 		case OutcomeOK:
 			s.OK++
 			a.OK++
+			f.OK++
 		case OutcomePartial:
 			s.Partial++
 			a.Partial++
+			f.Partial++
 		case OutcomeFailed:
 			s.Failed++
 			a.Failed++
+			f.Failed++
 		default:
 			s.Unreported++
 		}
@@ -211,6 +252,8 @@ func Compute(evs []Event) Stats {
 			moods[e.Mood]++
 			a.MoodCount++
 			actorMoodSum[e.Actor] += sc
+			f.MoodCount++
+			familyMoodSum[fam] += sc
 		}
 		if e.TookS > 0 {
 			s.TookCount++
@@ -237,6 +280,7 @@ func Compute(evs []Event) Stats {
 		if len(e.Refs) > 0 {
 			s.WithRefs++
 			a.WithRefs++
+			f.WithRefs++
 		}
 		if len(Contradictions(e)) > 0 {
 			s.Contradicting++
@@ -300,6 +344,32 @@ func Compute(evs []Event) Stats {
 		}
 		return s.ByActor[i].Actor < s.ByActor[j].Actor
 	})
+
+	s.Families = len(families)
+	for name, f := range families {
+		f.Actors = len(familyActors[name])
+		f.Repos = len(familyRepos[name])
+		if f.MoodCount > 0 {
+			f.MoodAvg = float64(familyMoodSum[name]) / float64(f.MoodCount)
+		}
+		s.ByFamily = append(s.ByFamily, *f)
+	}
+	sort.Slice(s.ByFamily, func(i, j int) bool {
+		if s.ByFamily[i].Posts != s.ByFamily[j].Posts {
+			return s.ByFamily[i].Posts > s.ByFamily[j].Posts
+		}
+		return s.ByFamily[i].Family < s.ByFamily[j].Family
+	})
+	// the members' posts read as one author: the same fingerprint, one level up
+	fevs := make([]Event, 0, s.Posts)
+	for _, e := range evs {
+		if e.Kind != "" {
+			continue
+		}
+		e.Actor = ActorFamily(e.Actor)
+		fevs = append(fevs, e)
+	}
+	s.VoiceFamily = Voices(fevs)
 	return s
 }
 

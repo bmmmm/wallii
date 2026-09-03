@@ -40,7 +40,9 @@ func (f filter) match(e wall.Event) bool {
 	if f.topic != "" && !strings.EqualFold(e.Topic, f.topic) {
 		return false
 	}
-	if f.actor != "" && !strings.EqualFold(e.Actor, f.actor) {
+	// an actor, or a family: "claude" is claude, claude/main and claude/ops
+	// together, "claude/main" is that one actor
+	if f.actor != "" && !strings.EqualFold(e.Actor, f.actor) && !strings.EqualFold(wall.ActorFamily(e.Actor), f.actor) {
 		return false
 	}
 	if !f.since.IsZero() && e.TS.Before(f.since) {
@@ -74,7 +76,7 @@ func cmdTail(args []string) error {
 	follow := fs.Bool("f", false, "keep following new posts")
 	repo := fs.String("repo", "", "filter: repo name")
 	topic := fs.String("topic", "", "filter: topic")
-	actor := fs.String("actor", "", "filter: actor")
+	actor := fs.String("actor", "", "filter: actor, or a family (claude, codex) — the part before / or :")
 	sinceS := fs.String("since", "", "filter: 2006-01-02, 36h or 3d")
 	grep := fs.String("grep", "", "filter: substring across all fields")
 	contra := fs.Bool("contradicting", false, "filter: only posts whose grade disagrees with their message")

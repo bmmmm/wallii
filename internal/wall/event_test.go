@@ -237,3 +237,23 @@ func TestIDIgnoresSignals(t *testing.T) {
 		t.Fatalf("signals changed the ID: %s vs %s — every stored parent reference would break", a.ID(), b.ID())
 	}
 }
+
+// The family is the name before the first "/" or ":" and nothing else — no
+// list of known agents, so a new one is a family the moment it posts.
+func TestActorFamily(t *testing.T) {
+	for actor, want := range map[string]string{
+		"claude/main":         "claude",
+		"claude":              "claude",
+		"codex/main":          "codex",
+		"cron:pegel-hires":    "cron",
+		"worker/issue-pickup": "worker",
+		"wallii/lint":         "wallii",
+		"a/b/c":               "a",
+		"manual":              "manual",
+		"":                    "",
+	} {
+		if got := ActorFamily(actor); got != want {
+			t.Errorf("ActorFamily(%q) = %q, want %q", actor, got, want)
+		}
+	}
+}

@@ -17,7 +17,7 @@ func cmdStats(args []string) error {
 	fs := flag.NewFlagSet("stats", flag.ExitOnError)
 	sinceS := fs.String("since", "", "window: 2006-01-02, 36h or 3d (default: everything)")
 	repoF := fs.String("repo", "", "filter: repo name")
-	actorF := fs.String("actor", "", "filter: actor")
+	actorF := fs.String("actor", "", "filter: actor, or a family (claude, codex) — the part before / or :")
 	asJSON := fs.Bool("json", false, "JSON output")
 	fs.Parse(args)
 
@@ -54,7 +54,7 @@ func cmdStats(args []string) error {
 			window = "last " + *sinceS
 		}
 	}
-	fmt.Printf("%d posts · %d repos · %d actors · %s\n", s.Posts, s.Repos, s.Actors, window)
+	fmt.Printf("%d posts · %d repos · %d actors in %d families · %s\n", s.Posts, s.Repos, s.Actors, s.Families, window)
 
 	reported := s.OK + s.Partial + s.Failed
 	line := fmt.Sprintf("outcome  ok %d · partial %d · failed %d · unreported %d", s.OK, s.Partial, s.Failed, s.Unreported)
@@ -103,6 +103,43 @@ func cmdStats(args []string) error {
 			label, orDash(v.Actor), v.FavWord, v.FavCount, v.OpeningPct, v.Opening, v.Distinct)
 	}
 	fmt.Println()
+
+	// Families — claude against codex against cron — only when there is
+	// more than one to compare; a single family would only repeat itself.
+	// What lands and how it feels may be compared here; the coverage ratio
+	// is never split this way.
+	if len(s.ByFamily) > 1 {
+		for i, v := range s.VoiceFamily {
+			if i == 4 {
+				break
+			}
+			label := "family"
+			if i > 0 {
+				label = ""
+			}
+			fmt.Printf("%-8s %s: favorite %q ×%d · %d%% open with %q · %d distinct words\n",
+				label, orDash(v.Actor), v.FavWord, v.FavCount, v.OpeningPct, v.Opening, v.Distinct)
+		}
+		if len(s.VoiceFamily) > 0 {
+			fmt.Println()
+		}
+		fw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(fw, "FAMILY\tACTORS\tPOSTS\tREPOS\tLANDED\tMOOD\tREFS")
+		for _, f := range s.ByFamily {
+			landed, mood := "—", "—"
+			if rep := f.OK + f.Partial + f.Failed; rep > 0 {
+				landed = fmt.Sprintf("%d%%", pct(f.OK, rep))
+			}
+			if f.MoodCount > 0 {
+				mood = fmt.Sprintf("%.1f", f.MoodAvg)
+			}
+			fmt.Fprintf(fw, "%s\t%d\t%d\t%d\t%s\t%s\t%d%%\n", orDash(f.Family), f.Actors, f.Posts, f.Repos, landed, mood, pct(f.WithRefs, f.Posts))
+		}
+		if err := fw.Flush(); err != nil {
+			return err
+		}
+		fmt.Println()
+	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "ACTOR\tPOSTS\tREPOS\tLANDED\tMOOD\tREFS")
