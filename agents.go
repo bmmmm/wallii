@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -67,8 +68,17 @@ func cmdAgents(args []string) error {
 	}
 	fmt.Printf("%d agents in %d families · %d repos · %d pairs · %d need attention\n\n", len(actors), len(families), len(repos), len(pairs), silent)
 
-	// sorted by actor, and a family is an actor's prefix — so the rows are
-	// already grouped by family without a second sort
+	// grouped by family, then actor, then repo — an actor sort alone would
+	// split a family whose members use different separators (cron/x, cron:z)
+	sort.SliceStable(pairs, func(i, j int) bool {
+		if pairs[i].Family != pairs[j].Family {
+			return pairs[i].Family < pairs[j].Family
+		}
+		if pairs[i].Actor != pairs[j].Actor {
+			return pairs[i].Actor < pairs[j].Actor
+		}
+		return pairs[i].Repo < pairs[j].Repo
+	})
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "FAMILY\tACTOR\tREPO\tPOSTS\tLAST POST\tSTATE\tPERSONA")
 	for _, p := range pairs {

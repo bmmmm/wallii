@@ -231,28 +231,40 @@ func TestComputeFoldsActorsIntoFamilies(t *testing.T) {
 }
 
 // The family voice is the actor voice one level up: the members' posts read
-// as one author. Enough posts for a style, split across two members so
-// neither alone would qualify.
+// as one author. Each member stays one post under the threshold, so neither
+// alone has a voice and the family only has one because they are folded.
 func TestVoiceFamilyReadsMembersAsOneAuthor(t *testing.T) {
 	ts := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	var evs []Event
-	for i := 0; i < 2*SamenessRun; i++ {
+	per := SamenessRun - 1
+	for i := 0; i < 2*per; i++ {
 		actor := "claude/main"
 		if i%2 == 1 {
 			actor = "claude/ops"
 		}
 		evs = append(evs, Event{TS: ts, Repo: "alpha", Actor: actor, Msg: "gate closed, retry loop landed"})
 	}
-	for i := 0; i < SamenessRun-1; i++ {
+	for i := 0; i < per; i++ {
 		evs = append(evs, Event{TS: ts, Repo: "beta", Actor: "codex/main", Msg: "smallest useful repository"})
 	}
 	s := Compute(evs)
-	if len(s.VoiceFamily) != 1 || s.VoiceFamily[0].Actor != "claude" || s.VoiceFamily[0].Posts != 2*SamenessRun {
-		t.Fatalf("voice_family = %+v, want one row for claude over %d posts", s.VoiceFamily, 2*SamenessRun)
+	if len(s.Voice) != 0 {
+		t.Fatalf("no member has enough posts for a voice of its own, got %+v", s.Voice)
 	}
-	for _, v := range s.Voice {
-		if v.Actor == "claude" {
-			t.Errorf("the family must not appear among the actor voices: %+v", s.Voice)
-		}
+	if len(s.VoiceFamily) != 1 || s.VoiceFamily[0].Actor != "claude" || s.VoiceFamily[0].Posts != 2*per {
+		t.Fatalf("voice_family = %+v, want one row for claude over %d posts", s.VoiceFamily, 2*per)
+	}
+}
+
+// One family is nothing to compare, so no family voice is computed for it —
+// stats prints none, and --json ships none.
+func TestVoiceFamilyNeedsTwoFamilies(t *testing.T) {
+	ts := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	var evs []Event
+	for i := 0; i < 2*SamenessRun; i++ {
+		evs = append(evs, Event{TS: ts, Repo: "alpha", Actor: "claude/main", Msg: "gate closed, retry loop landed"})
+	}
+	if s := Compute(evs); s.Families != 1 || len(s.VoiceFamily) != 0 {
+		t.Fatalf("one family: families=%d voice_family=%+v", s.Families, s.VoiceFamily)
 	}
 }

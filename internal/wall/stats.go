@@ -120,8 +120,8 @@ type Stats struct {
 	VoiceFamily []VoiceStats  `json:"voice_family,omitempty"`
 }
 
-// FamilyStats is one family's row: the ActorStats of its members added up,
-// and how many members there were.
+// FamilyStats is one family's row: the counters of its members added up,
+// Repos the union of theirs, and how many members there were.
 type FamilyStats struct {
 	Family    string  `json:"family"`
 	Actors    int     `json:"actors"`
@@ -360,16 +360,16 @@ func Compute(evs []Event) Stats {
 		}
 		return s.ByFamily[i].Family < s.ByFamily[j].Family
 	})
-	// the members' posts read as one author: the same fingerprint, one level up
-	fevs := make([]Event, 0, s.Posts)
-	for _, e := range evs {
-		if e.Kind != "" {
-			continue
+	// the members' posts read as one author: the same fingerprint, one level
+	// up — and only when there is a second family to hold it against
+	if len(families) > 1 {
+		fevs := make([]Event, 0, len(evs))
+		for _, e := range evs {
+			e.Actor = ActorFamily(e.Actor)
+			fevs = append(fevs, e)
 		}
-		e.Actor = ActorFamily(e.Actor)
-		fevs = append(fevs, e)
+		s.VoiceFamily = Voices(fevs)
 	}
-	s.VoiceFamily = Voices(fevs)
 	return s
 }
 

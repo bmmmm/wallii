@@ -519,31 +519,40 @@ func TestGraderLineCountsWithoutAPercentage(t *testing.T) {
 	}
 }
 
-// --actor names an actor or a family: "claude" is claude, claude/main and
-// claude/ops together; "claude/main" is that one actor. Codex arrived on the
-// wall as codex/main, and the question is never "codex/main against
-// claude/main" but Codex against Claude.
-func TestActorFilterMatchesTheFamily(t *testing.T) {
+// --family selects a family: claude is claude, claude/main and claude/ops
+// together. Codex arrived on the wall as codex/main, and the question is
+// never "codex/main against claude/main" but Codex against Claude. --actor
+// stays exact — the bare actor "claude" and the family "claude" coexist on
+// the real wall (7 against 226 posts in two days), and one word for both
+// would turn a saved --actor claude into a silent superset.
+func TestFamilyFilterSelectsTheWholeFamilyAndActorStaysExact(t *testing.T) {
 	main := wall.Event{Repo: "x", Actor: "claude/main", Msg: "a"}
 	ops := wall.Event{Repo: "x", Actor: "claude/ops", Msg: "b"}
 	bare := wall.Event{Repo: "x", Actor: "claude", Msg: "c"}
 	codex := wall.Event{Repo: "x", Actor: "codex/main", Msg: "d"}
 
-	fam := filter{actor: "claude"}
+	fam := filter{family: "claude"}
 	for _, e := range []wall.Event{main, ops, bare} {
 		if !fam.match(e) {
-			t.Errorf("--actor claude must match %s", e.Actor)
+			t.Errorf("--family claude must match %s", e.Actor)
 		}
 	}
 	if fam.match(codex) {
-		t.Error("--actor claude must not match codex/main")
+		t.Error("--family claude must not match codex/main")
 	}
-	exact := filter{actor: "claude/main"}
-	if !exact.match(main) || exact.match(ops) || exact.match(bare) {
-		t.Error("--actor claude/main is that one actor, not its family")
-	}
-	if !(filter{actor: "CODEX"}).match(codex) {
+	if !(filter{family: "CODEX"}).match(codex) {
 		t.Error("the family match is case-insensitive like the actor match")
+	}
+	exact := filter{actor: "claude"}
+	if !exact.match(bare) || exact.match(main) || exact.match(ops) {
+		t.Error("--actor claude is the bare actor claude and nothing else")
+	}
+	if !(filter{actor: "claude/main"}).match(main) || (filter{actor: "claude/main"}).match(ops) {
+		t.Error("--actor claude/main is that one actor")
+	}
+	both := filter{family: "claude", actor: "claude/ops"}
+	if !both.match(ops) || both.match(main) {
+		t.Error("--family and --actor compose, they do not override each other")
 	}
 }
 

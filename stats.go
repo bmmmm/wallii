@@ -17,7 +17,8 @@ func cmdStats(args []string) error {
 	fs := flag.NewFlagSet("stats", flag.ExitOnError)
 	sinceS := fs.String("since", "", "window: 2006-01-02, 36h or 3d (default: everything)")
 	repoF := fs.String("repo", "", "filter: repo name")
-	actorF := fs.String("actor", "", "filter: actor, or a family (claude, codex) — the part before / or :")
+	actorF := fs.String("actor", "", "filter: actor (exact)")
+	familyF := fs.String("family", "", "filter: agent family (claude, codex) — the part of the actor before / or :")
 	asJSON := fs.Bool("json", false, "JSON output")
 	fs.Parse(args)
 
@@ -25,7 +26,7 @@ func cmdStats(args []string) error {
 	if err != nil {
 		return err
 	}
-	flt := filter{repo: *repoF, actor: *actorF, since: since}
+	flt := filter{repo: *repoF, actor: *actorF, family: *familyF, since: since}
 
 	dir, err := wall.Dir()
 	if err != nil {

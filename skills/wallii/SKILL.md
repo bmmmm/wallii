@@ -83,9 +83,9 @@ Output shapes (verified against wallii v0.5.1-0.20260903 (e42a547), 2026-09-03 �
   `voice_family` — a family is the actor's name before the first `/` or
   `:` (`claude/main` → `claude`, `codex/main` → `codex`, `cron:x` →
   `cron`). Compare families on what landed and how it felt ("codex: 2 of 2
-  landed, claude: 85 % of 233"), never on a coverage ratio; `--actor
-  codex` filters `tail` and `stats` to the family, `--actor codex/main` to
-  the one actor. Use it for the
+  landed, claude: 85 % of 233"), never on a coverage ratio; `--family
+  codex` filters `tail` and `stats` to the family, `--actor` stays exact
+  (the bare actor `claude` and the family `claude` coexist). Use it for the
   headline instead of counting events yourself. Two fields qualify the rest:
   `took_auto` counts durations wallii derived rather than the poster
   measured, and `by_mood` shows which part of the scale the window actually

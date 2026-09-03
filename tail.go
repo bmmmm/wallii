@@ -16,7 +16,12 @@ import (
 
 type filter struct {
 	repo, topic, actor, grep string
-	since                    time.Time
+	// family selects every actor whose ActorFamily is this — codex against
+	// claude. A flag of its own, not a widening of actor: the bare actor
+	// "claude" and the family "claude" coexist on the wall, and one word
+	// meaning both would turn a saved `--actor claude` into a silent superset.
+	family string
+	since  time.Time
 	// contradicting keeps only posts whose grade disagrees with their own
 	// message. stats counts them and calls them the honest ones; without
 	// this there was no way to actually read them.
@@ -40,9 +45,10 @@ func (f filter) match(e wall.Event) bool {
 	if f.topic != "" && !strings.EqualFold(e.Topic, f.topic) {
 		return false
 	}
-	// an actor, or a family: "claude" is claude, claude/main and claude/ops
-	// together, "claude/main" is that one actor
-	if f.actor != "" && !strings.EqualFold(e.Actor, f.actor) && !strings.EqualFold(wall.ActorFamily(e.Actor), f.actor) {
+	if f.actor != "" && !strings.EqualFold(e.Actor, f.actor) {
+		return false
+	}
+	if f.family != "" && !strings.EqualFold(wall.ActorFamily(e.Actor), f.family) {
 		return false
 	}
 	if !f.since.IsZero() && e.TS.Before(f.since) {
@@ -76,7 +82,8 @@ func cmdTail(args []string) error {
 	follow := fs.Bool("f", false, "keep following new posts")
 	repo := fs.String("repo", "", "filter: repo name")
 	topic := fs.String("topic", "", "filter: topic")
-	actor := fs.String("actor", "", "filter: actor, or a family (claude, codex) — the part before / or :")
+	actor := fs.String("actor", "", "filter: actor (exact)")
+	family := fs.String("family", "", "filter: agent family (claude, codex) — the part of the actor before / or :")
 	sinceS := fs.String("since", "", "filter: 2006-01-02, 36h or 3d")
 	grep := fs.String("grep", "", "filter: substring across all fields")
 	contra := fs.Bool("contradicting", false, "filter: only posts whose grade disagrees with their message")
@@ -90,7 +97,7 @@ func cmdTail(args []string) error {
 	if err != nil {
 		return err
 	}
-	flt := filter{repo: *repo, topic: *topic, actor: *actor, grep: *grep, since: since, contradicting: *contra, grader: *graderF}
+	flt := filter{repo: *repo, topic: *topic, actor: *actor, family: *family, grep: *grep, since: since, contradicting: *contra, grader: *graderF}
 
 	dir, err := wall.Dir()
 	if err != nil {

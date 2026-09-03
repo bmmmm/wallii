@@ -9,7 +9,7 @@ import (
 // PairState is the registration state of one (actor, repo) pair.
 type PairState struct {
 	Actor     string    `json:"actor"`
-	Family    string    `json:"family,omitempty"` // ActorFamily(Actor), derived
+	Family    string    `json:"family"` // ActorFamily(Actor), derived
 	Repo      string    `json:"repo"`
 	Posts     int       `json:"posts"`
 	FirstPost time.Time `json:"first_post,omitzero"`

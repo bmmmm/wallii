@@ -183,7 +183,9 @@ const COMMITS = __WALLII_COMMITS__;
    one place (wall.ActorFamily) and the page only reads the mapping. An actor
    the mapping does not know is its own family. */
 const FAMILIES = __WALLII_FAMILIES__;
-const familyOf = a => FAMILIES[a || "—"] || (a || "—");
+// own properties only: an actor literally named __proto__ must not read
+// Object.prototype out of the mapping and become a family called [object Object]
+const familyOf = a => { const k = a || "—"; return Object.hasOwn(FAMILIES, k) ? FAMILIES[k] : k; };
 /* The repos whose commits are in COMMITS.days. The card's numerator is the
    posts of these repos and no others — a repo with no checkout leaves both
    sides of the ratio here exactly as it does in `wallii coverage`, or the
@@ -487,7 +489,9 @@ function stackedColumns(buckets, series, colorOf, labelOf, weekly) {
 function renderActivity(agg) {
   const c = card("c-activity", "Who's posting", (agg.weekly ? "posts per week" : "posts per day") + " by agent family — claude/main and claude/ops are one color");
   if (!agg.evs.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
-  const series = familySeriesNames();
+  // with a chip on, only that family is in the data — the other four would
+  // be permanently empty columns in the legend and the table view
+  const series = agg.family === "all" ? familySeriesNames() : [agg.family];
   const colorOf = name => name === FOLD ? "--other" : famSlot[name];
   c.append(stackedColumns(agg.buckets, series, colorOf, b => b.byFamily, agg.weekly));
   if (series.length > 1) c.append(legend(series.map(s => [s, colorOf(s)])));
@@ -674,7 +678,7 @@ function renderBars(id, title, sub, counts) {
 }
 
 function renderCoverage(agg) {
-  const c = card("c-coverage", "What the wall doesn't know yet", "share of posts carrying each optional field");
+  const c = card("c-coverage", "What the wall doesn't know yet", "share of posts carrying each optional field" + (agg.family === "all" ? "" : ` · ${agg.family}'s posts only, as the chip says`));
   const n = agg.evs.length;
   if (!n) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
   const derived = agg.tookAuto ? ` · ${agg.tookAuto} derived, ${agg.tookN - agg.tookAuto} measured` : "";
