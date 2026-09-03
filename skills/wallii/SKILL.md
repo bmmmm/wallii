@@ -28,7 +28,7 @@ wallii coverage --since <window> --json    # optional evidence: the days the wal
 wallii triggers --since <window> --json    # optional evidence: did the Stop hook reach its triggers
 ```
 
-Output shapes (verified against wallii v0.5.1-0.20260903 (271fe6c), 2026-09-03 — grader, signals, lint challenges, pulse, squeeze, coverage and triggers included):
+Output shapes (verified against wallii v0.5.1-0.20260903 (e42a547), 2026-09-03 — grader, signals, lint challenges, pulse, squeeze, coverage, triggers and actor families included):
 
 - `tail --json` → NDJSON, one event per line:
   `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach|react|challenge"?,"parent":"<id>"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?,"grader":"…"?,"signals":["<path>: <line>"]?,"signal_src":"hook"?,"pulse_ms":n?,"pulse_src":"session|probe|none"?,"squeeze_p":n?,"squeeze_5h":n?,"squeeze_src":"session"?}`
