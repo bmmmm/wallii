@@ -220,8 +220,8 @@ func TestDashCardAggregatesWhatTheGoSideCounted(t *testing.T) {
 
 	cov, err := json.Marshal(dashCoverage{
 		From: from.UnixMilli(), To: to.UnixMilli(),
-		Days:  map[string]int{wall.DashDayKey(measured): 12},
-		Repos: []string{"webshop"},
+		Days:         map[string]int{wall.DashDayKey(measured): 12},
+		Repos:        []string{"webshop"},
 		BlindCommits: wall.DefaultBlindCommits, BlindPosts: wall.DefaultBlindPosts,
 		Measured: 1, OnWall: 2, Unresolved: []string{"orphan"},
 	})
@@ -270,8 +270,16 @@ console.log("RESULT " + JSON.stringify({
 		t.Fatalf("the dashboard script did not run under node: %v\n%s", err, out)
 	}
 	var res struct {
-		Days    []struct{ T0 int64; Commits, Posts int; Cov bool }
-		Buckets []struct{ T0 int64; Commits, Mposts int; Cov bool }
+		Days []struct {
+			T0             int64
+			Commits, Posts int
+			Cov            bool
+		}
+		Buckets []struct {
+			T0              int64
+			Commits, Mposts int
+			Cov             bool
+		}
 	}
 	_, payload, ok := strings.Cut(string(out), "RESULT ")
 	if !ok {
