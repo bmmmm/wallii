@@ -294,14 +294,14 @@ WALLII_REPO_ROOTS=~/offline_coding:~ wallii coverage   # where the checkouts liv
 ```
 coverage · 2026-08-04 … 2026-09-03 · only HEAD of each main checkout counts —
            work on a branch that never merged is not in these numbers.
-measured      32 of 36 repos the wall knows
-not measured  putzii-drop (no checkout found) · …
+measured      37 of 39 repos the wall knows
+not measured  file-organizer (no checkout found) · putzii-drop (no checkout found)
 
 before 2026-08-21 · 20 repos posted to
-              5 posts left the ratio with the unmeasured repos
+              2 posts left the ratio with the unmeasured repos
 blind days    1 of 9 worked days — a day of ≥10 commits and ≤2 posts
-  2026-08-14  ███████████          99 commits · 2 posts
-ratio         posts 197 · commits 712 · 0.28 per commit
+  2026-08-14  ███████████          100 commits · 2 posts
+ratio         posts 200 · commits 725 · 0.28 per commit
 others        13 commits by other authors — beside the count, never inside it
 ```
 
@@ -353,11 +353,11 @@ Stop hook went live:
 
 | | posts | commits | per commit | blind days |
 |---|---|---|---|---|
-| before 2026-08-21 | 197 | 712 | 0.28 | 1 of 9 worked |
-| since 2026-08-21 | 558 | 1065 | 0.52 | 0 of 12 worked |
+| before 2026-08-21 | 200 | 725 | 0.28 | 1 of 9 worked |
+| since 2026-08-21 | 592 | 1160 | 0.51 | 0 of 12 worked |
 
-Four of 36 repos had no checkout on this machine; they are named, and their
-eight posts are reported as what the ratio omits. The dashboard draws the
+Two of 39 repos had no checkout on this machine; they are named, and their
+four posts are reported as what the ratio omits. The dashboard draws the
 same reading as the card *What the wall never saw*: commits per day or week
 against the posts about them, every bucket outside the collected window
 drawn as a gap labelled "not measured" — never as a day with no commits —

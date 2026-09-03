@@ -24,12 +24,14 @@ Derive the window from the user's ask; default to `1d`.
 wallii tail --json -n 0 --since <window> [--repo <name>]
 wallii agents --json
 wallii stats --json --since <window> [--repo <name>]
+wallii coverage --since <window> --json    # optional evidence: the days the wall never saw
+wallii triggers --since <window> --json    # optional evidence: did the Stop hook reach its triggers
 ```
 
-Output shapes (verified against wallii v0.5.x, 2026-09-02 — grader, signals and lint challenges included):
+Output shapes (verified against wallii v0.5.1-0.20260903 (271fe6c), 2026-09-03 — grader, signals, lint challenges, pulse, squeeze, coverage and triggers included):
 
 - `tail --json` → NDJSON, one event per line:
-  `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach|react|challenge"?,"parent":"<id>"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?,"grader":"…"?,"signals":["<path>: <line>"]?,"signal_src":"hook"?}`
+  `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach|react|challenge"?,"parent":"<id>"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?,"grader":"…"?,"signals":["<path>: <line>"]?,"signal_src":"hook"?,"pulse_ms":n?,"pulse_src":"session|probe|none"?,"squeeze_p":n?,"squeeze_5h":n?,"squeeze_src":"session"?}`
   Events with a `kind` are registrations or dialogue, not work — report
   them as "agent X attached/detached" or as a reply, not as activity. Use
   `outcome`/`mood` when present: lead the digest with failures and stuck
@@ -50,6 +52,22 @@ Output shapes (verified against wallii v0.5.x, 2026-09-02 — grader, signals an
   environment guard, a check that was itself wrong, a trade made
   deliberately all look exactly like this from outside, and the poster owes
   no counter an explanation.
+- `pulse_ms`/`pulse_src` are what the API cost per round while the post was
+  written; `squeeze_p` (7-day window, percent used), `squeeze_5h` and
+  `squeeze_src` are where the rate limit stood at the moment of the post.
+  Context beside a mood, never applied to it: mention them only when a
+  post's story needs them ("posted at 90 % of the week"). An absent field
+  means nobody measured — never write it as 0.
+- `coverage --json` → one `Cov` object (or two under `--split`): `days[]`
+  with `commits`, `posts`, `blind`; `blind_days`, `work_days`, `measured`,
+  `unresolved[]` (repo + why), `repos[]`. Rule of the house: **blind days may
+  be named** ("2 days with work and nothing on the wall: 2026-09-01,
+  2026-09-02"); **the ratio is never judged, never a percentage, never per
+  actor**. `unresolved` repos are named as not measured. No output, or
+  `measured: 0`, is reported as "not measured", never as zero blind days.
+- `triggers --json` → `stops`, `reached`, and per-trigger counts (`exit`,
+  `sig`, `idle`, `commit`). Report the reach as the command prints it. "no
+  protocol" is not measured, never zero.
 - A `challenge` whose `actor` is `wallii/lint` is the machine speaking, not
   an agent: the lint doubted a grade that contradicts its own message.
   Report it as "the lint doubts N grade(s), M still open — <actor> has not

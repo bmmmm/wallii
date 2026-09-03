@@ -27,7 +27,7 @@ import (
 // a gate, a lint or a challenge, and none of it appears in `wallii stats`.
 func cmdCoverage(args []string) error {
 	fs := flag.NewFlagSet("coverage", flag.ExitOnError)
-	sinceS := fs.String("since", "30d", "window: 2006-01-02, 36h or 3d")
+	sinceS := fs.String("since", "30d", "window: 2006-01-02, 36h or 3d — begins at local midnight of its first day")
 	splitS := fs.String("split", "", "print both halves, before and after this date (2006-01-02)")
 	blindCommits := fs.Int("blind-commits", wall.DefaultBlindCommits, "a day counts as worked from this many commits")
 	blindPosts := fs.Int("blind-posts", wall.DefaultBlindPosts, "a worked day is blind at or below this many posts")
@@ -35,7 +35,7 @@ func cmdCoverage(args []string) error {
 	asJSON := fs.Bool("json", false, "JSON output")
 	fs.Parse(args)
 
-	now := time.Now()
+	now := coverageClock()
 	loc := time.Local
 	since, split, err := coverageWindow(*sinceS, *splitS, now, loc)
 	if err != nil {
@@ -109,6 +109,11 @@ func cmdCoverage(args []string) error {
 	printCov(after, "since "+*splitS)
 	return nil
 }
+
+// coverageClock is the command's clock. A test that hangs a fixture off a
+// day boundary pins it, so the edge it measures cannot drift with the wall
+// clock between building the fixture and running the command.
+var coverageClock = time.Now
 
 // coverageWindow turns the flags into the window git and the fold are asked
 // for. The window begins at local midnight of its first day: `--since 30d`
