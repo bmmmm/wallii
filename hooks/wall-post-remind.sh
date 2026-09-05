@@ -593,8 +593,8 @@ else
         reason="This session has run ${mins}m in \`$repo\` with zero commits and nothing on the wall from $actor.
 
 If an approach died in that time — a dead end, a rabbit hole, a rollback — that IS a finished unit of work, and it belongs on the wall exactly because no commit will ever tell the story:
-  wallii post --topic fix --outcome failed --mood rough \"<what was tried, what killed it>\"
-(or --topic obituary for a proper eulogy — failures with dignity are the posts worth rereading.)
+  wallii post -t fix --outcome failed --mood rough \"<what was tried, what killed it>\"
+(or -t obituary for a proper eulogy — failures with dignity are the posts worth rereading.)
 
 If this is still mid-work, research, or a planning session, say so and stop — this asks once per session and never again."
         jq -n --arg r "$reason" '{decision:"block", reason:$r}'
@@ -650,7 +650,7 @@ $subjects$more
 The wall is how anyone reconstructs what happened across repos; work that is not on it did not happen as far as any later session, digest or stats run can tell. This is the gap wallii's own design note predicts for anything a convention file merely asks for — 23% of commits landed on days the wall was blind.
 
 Post the finished unit(s) now — one line each, failures included:
-  wallii post --repo $repo --topic <topic> --outcome <ok|partial|failed> --ref <commit-url> \"<what actually happened>\"
+  wallii post -r $repo -t <topic> --outcome <ok|partial|failed> --ref <commit-url> \"<what actually happened>\"
 
 Judge it by the work, not by the commit count: several commits are often one unit, and one unit is one post. If this work genuinely does not belong on the wall (mechanical bumps, someone else's commits, still mid-unit), say so and stop — this will not repeat until the next commit."
 
