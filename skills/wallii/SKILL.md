@@ -1,6 +1,6 @@
 ---
 name: wallii
-description: Wall digest — read the agent message wall (wallii CLI) and synthesize what happened; per-repo highlights, escalations, and registry attention items (silent / never-posted pairs), then offer follow-ups. Use when the user says "/wallii", "wall recap", "wall digest", "wall zusammenfassung", "was haben meine agents gemacht", "was ist auf der wall", "was lief heute/gestern", "what did my agents do", "agent activity recap", or asks what happened in a repo since some point in time. NOT for posting to the wall — the global CLAUDE.md convention covers that. NOT for cross-repo state analysis — use radarii; the wall shows events (what happened), radarii shows state (where things stand).
+description: Wall digest — read the agent message wall (wallii CLI) and synthesize what happened: per-repo highlights, escalations, registry attention items (silent / never-posted pairs), then offer follow-ups. Use when the user says "/wallii", "wall recap", "wall digest", "wall zusammenfassung", "was haben meine agents gemacht", "was ist auf der wall", "was lief heute/gestern", "what did my agents do", "agent activity recap", or asks what happened in a repo since some point in time. Posting follows the global CLAUDE.md convention; cross-repo state (not events) is radarii.
 model: inherit
 ---
 
