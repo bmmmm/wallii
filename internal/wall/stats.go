@@ -173,6 +173,9 @@ type signalKey struct{ repo, line string }
 
 // Compute folds events into Stats. Events with a Kind (attach/detach) are
 // skipped; order does not matter.
+// Compute folds evs with the unit readings taken over evs itself — right
+// for the whole wall, wrong for a window cut out of it: use ComputeWith
+// with units read over the whole wall then (stats.go does).
 func Compute(evs []Event) Stats { return ComputeWith(evs, UnitCosts(evs)) }
 
 // ComputeWith folds evs with unit readings taken elsewhere — over the whole

@@ -297,3 +297,22 @@ func TestTheUnitNoteReadsTheSessionAcrossActors(t *testing.T) {
 		t.Errorf("second note read the actor, not the session: %q", second)
 	}
 }
+
+// The cost rides on the budget reading: a cache that carries cost and
+// session_id but lost a limit line stores no cost fields either. Written
+// down as a test, because nothing else would report the coupling.
+func TestCostRidesOnTheBudgetReading(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_SQUEEZE", "")
+	t.Setenv(wall.SqueezeFileEnv, fakeStatusline(t, "rate_5h=12\ncost=3.84\ntok=5\nsession_id=efff5d73-e2ee-47a1-b5b5-9c0d0ff3afdc\n"))
+	if err := cmdPost([]string{"-r", "x", "-t", "fix", "no rate_7d"}); err != nil {
+		t.Fatal(err)
+	}
+	raw := rawWall(t, dir)
+	for _, k := range []string{"cost_src", "squeeze_src"} {
+		if strings.Contains(raw, k) {
+			t.Errorf("a cache without rate_7d stored %s: %s", k, raw)
+		}
+	}
+}

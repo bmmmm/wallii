@@ -364,7 +364,11 @@ func parseBudget(s string) (Budget, bool) {
 			b.Sess = sessKey(v)
 		}
 	}
-	// the cost is a reading only with the session it belongs to; tok is
+	// The cost rides on the budget reading: SessionBudget drops the whole
+	// Budget when a limit line is missing, and the cost fields with it. A
+	// statusline that stops writing rate_7d silently stops the cost too —
+	// TestCostRidesOnTheBudgetReading is what says so out loud.
+	// The cost is a reading only with the session it belongs to; tok is
 	// optional beside it — a missing count reads 0 and a delta of 0, which
 	// is what an absent statusline key honestly measured
 	b.HaveCost = haveCost && b.Sess != ""

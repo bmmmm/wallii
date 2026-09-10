@@ -107,12 +107,24 @@ func cmdTail(args []string) error {
 	if err != nil {
 		return err
 	}
+	// --json carries the unit cost beside each post, read over the whole
+	// wall the way stats and audit read it: a unit is the delta to the
+	// session's previous post, and neither a filter nor -n ends a session
+	var units map[string]wall.Unit
+	if *asJSON {
+		whole, _, uerr := wall.ReadLast(dir, 0, nil)
+		if uerr != nil {
+			return uerr
+		}
+		units = wall.UnitCosts(whole)
+	}
 	reportStats(stats)
 	r := newRenderer()
 	// Only under the flag: naming the reason is the point when you asked for
 	// these posts, and noise in every other listing.
 	r.showContradictions = *contra
 	r.showIDs = *ids
+	r.units = units
 	// Replies render indented under the event they answer, when that event is
 	// in the window; a reply whose parent fell outside still shows, marked as
 	// answering something further up.
@@ -217,6 +229,10 @@ type renderer struct {
 	// take. Off by default: a column of hex on every listing is noise until
 	// you want to answer something.
 	showIDs bool
+	// units are the unit-cost readings for --json, keyed by event ID; nil
+	// on every other path. A post without an entry carries no unit_cost
+	// key — nobody measured, which must never read as free.
+	units map[string]wall.Unit
 }
 
 func newRenderer() *renderer {
@@ -366,6 +382,9 @@ func (r *renderer) printAt(w io.Writer, e wall.Event, asJSON bool, depth int) {
 			m["id"] = e.ID()
 			if len(notes) > 0 {
 				m["contradictions"] = notes
+			}
+			if u, ok := r.units[e.ID()]; ok {
+				m["unit_cost"] = map[string]any{"cost_usd": u.CostUSD, "tok": u.Tok, "from_start": u.FromStart}
 			}
 			if b2, err := json.Marshal(m); err == nil {
 				b = b2
