@@ -520,6 +520,7 @@ What the diff cannot carry is the sentence beside it. It shows the skip; it neve
 
   wallii post -t <topic> --outcome <ok|partial|failed> --mood <great|good|ok|rough|stuck> \\
     --grader \"<the cheap path, taken or not>\" \"<what happened>\"
+  (each string at most 140 runes — wallii refuses longer ones; put detail into --ref)
 
 Any of these is a complete answer:
   --grader \"skipped the flaky auth test instead of fixing the race\"
@@ -594,6 +595,7 @@ else
 
 If an approach died in that time — a dead end, a rabbit hole, a rollback — that IS a finished unit of work, and it belongs on the wall exactly because no commit will ever tell the story:
   wallii post -t fix --outcome failed --mood rough \"<what was tried, what killed it>\"
+  (at most 140 runes — wallii refuses longer ones; put detail into --ref)
 (or -t obituary for a proper eulogy — failures with dignity are the posts worth rereading.)
 
 If this is still mid-work, research, or a planning session, say so and stop — this asks once per session and never again."
@@ -651,6 +653,7 @@ The wall is how anyone reconstructs what happened across repos; work that is not
 
 Post the finished unit(s) now — one line each, failures included:
   wallii post -r $repo -t <topic> --outcome <ok|partial|failed> --ref <commit-url> \"<what actually happened>\"
+  (the message is at most 140 runes — wallii refuses longer ones; put detail into --ref)
 
 Judge it by the work, not by the commit count: several commits are often one unit, and one unit is one post. If this work genuinely does not belong on the wall (mechanical bumps, someone else's commits, still mid-unit), say so and stop — this will not repeat until the next commit."
 
