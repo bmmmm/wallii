@@ -85,12 +85,14 @@ field() { printf '%s' "$INPUT" | jq -r "$1 // empty" 2>/dev/null || true; }
 # ── The record of this Stop ──────────────────────────────────────────────
 # One line per Stop, whatever this hook decides — because a counter of
 # firings cannot answer the question the firings raise. "Idle: 0 firings"
-# reads as "the condition was never true", and the marker directory says
-# something else: 107 session markers in 12 days against roughly 60 sessions
-# a day, with the .start file written after every guard below. If that holds,
-# most Stops never reach a trigger at all, and "never ran" and "condition
-# false" are indistinguishable from any count of firings. Only a line written
-# on the way out can tell them apart.
+# reads as "the condition was never true", and only a line written on the way
+# out can tell "never ran" from "condition false". The first guess was that
+# most Stops never reach a trigger (107 session markers in 12 days against
+# ~60 sessions a day); the record itself said otherwise once it existed —
+# 82 % of 308 Stops on day one, 76 % of 1,097 over the first week
+# (2026-09-03…09-10) reached the triggers. The markers had counted sessions,
+# the record counts turns. The line stays for the other reason: the quarter
+# that does not reach them is still invisible to any count of firings.
 #
 # The clock is read once, here, in the shape every reader of it needs: epoch
 # for the session clock, ISO for the diff base, for the record and for the
@@ -582,6 +584,12 @@ else
     if [ -n "$last_post_ts" ] && [[ "$last_post_ts" > "$start_iso" ]]; then
         posted_since_start=1
     fi
+    # "committed" is any author's commit in THIS repo since the session
+    # started. Per repo is per actor here, and it cannot be narrower: both
+    # agents commit under the same git author (658 of 658 agent commits in
+    # the week to 2026-09-10 carry one name), and the house rule puts a
+    # second agent in a worktree of its own, so this checkout's commits are
+    # this session's. A --author filter would measure nothing.
     if ! [ "${commits_since_start:-1}" -eq 0 ] 2>/dev/null; then
         hook_idle="committed"
     elif [ "$posted_since_start" -eq 1 ]; then

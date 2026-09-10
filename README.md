@@ -913,7 +913,11 @@ Three triggers, checked in this order:
   sentence beside it; `none — …` is a complete answer. It runs first because
   the post it asks for silences the other two, and the reverse does not hold.
   Calibrated at about one hit per 140 commits; it catches the known forms
-  only, so a clean count is not proof that nothing was cut short.
+  only, so a clean count is not proof that nothing was cut short. The
+  protocol's first week (2026-09-03 to 09-10) read 4 `sig=fired` and 9
+  `dedup` against 1,028 commits in 29 repos, 7.3 expected — inside the
+  factor of three, so the calibration stands; day 1 alone had shown 0 of
+  266 and decided nothing.
   `WALLII_REMIND_SHORTCUTS` is how many signature lines the diff must hold
   before it asks (default 1; `0` switches it off) — it gates the asking, not
   the measuring, so the marker records what the diff showed at any threshold.
@@ -978,12 +982,20 @@ one of the things the line has to be able to report:
 | `commit` | `unreached` · `under` · `nocount` · `nohead` · `dedup` · `fired` |
 
 One line per Stop, not per firing, and that is the whole design. A firing
-counter cannot tell "the condition was false" from "the trigger never ran",
-and for this hook the second looks like the common case: the `.start` marker
-is written after every guard above, and 107 of them in 12 days sit against
-roughly 60 sessions a day. Read as firings, the idle trigger's zero says its
-condition never held; read as reach, it may say the trigger was never
-evaluated at all. `off` is kept apart from `unreached` for the same reason —
+counter cannot tell "the condition was false" from "the trigger never ran".
+The first guess was that the second is the common case — 107 `.start`
+markers in 12 days against roughly 60 sessions a day — and the record
+overturned it within a week: 82 % of 308 Stops on day one and 76 % of 1,097
+over the first week (2026-09-03 to 09-10) reached the triggers. The markers
+had counted sessions, the record counts turns. The quarter that never
+reaches them is still invisible to any count of firings, which is why the
+line stays. The same week answered the idle question: 30 of 56 day-one
+sessions ran past 45 minutes and `idle=fired` in 6 of 260 sessions, so
+"idle: 0" would have been wrong, not structural. `committed` there means any
+author's commit in that repo, and it cannot be narrower — both agents commit
+under one git author (658 of 658 agent commits that week), and the
+one-checkout-one-agent rule makes the repo the actor's. `off` is kept apart
+from `unreached` for the same reason —
 switched off is a different fact from died earlier — and `clean` means the
 scan ran and found nothing, the counterpart to the empty `.shortcut` marker.
 
