@@ -173,7 +173,15 @@ type signalKey struct{ repo, line string }
 
 // Compute folds events into Stats. Events with a Kind (attach/detach) are
 // skipped; order does not matter.
-func Compute(evs []Event) Stats {
+func Compute(evs []Event) Stats { return ComputeWith(evs, UnitCosts(evs)) }
+
+// ComputeWith folds evs with unit readings taken elsewhere — over the whole
+// wall, when evs is a window cut out of it. A unit is the delta to the
+// previous post of its session, and a window cut through a session would
+// otherwise read its first post inside the window as counted from session
+// start, cumulative and all: the reading must see the post before the
+// edge, the fold must not.
+func ComputeWith(evs []Event, units map[string]Unit) Stats {
 	var s Stats
 	repos, topics, moods := map[string]int{}, map[string]int{}, map[string]int{}
 	actors := map[string]*ActorStats{}
@@ -188,7 +196,6 @@ func Compute(evs []Event) Stats {
 	// said twice, not two ways of saying it
 	graders := map[string]struct{}{}
 	signals := map[signalKey]bool{}
-	units := UnitCosts(evs)
 
 	// id → actor of the challenged event, so ByChallenged can name whose
 	// posts draw doubt (the parent may be any kind, including a reply)

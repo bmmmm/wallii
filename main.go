@@ -38,6 +38,7 @@ Usage:
   wallii tui                       # m mood curve · 1/2/3/0 window
   wallii stats [--since d] [--repo x] [--actor x] [--json]
   wallii audit [--since d] [--repo x] [--json]
+  wallii mirror --actor x [--since 7d] [--json]   # one line: what this actor's week cost and held
   wallii coverage [--since 30d] [--split 2006-01-02] [--repo x] [--json]
                   [--blind-commits 10] [--blind-posts 2]
   wallii triggers [--since d] [--json]
@@ -112,6 +113,8 @@ func main() {
 		err = cmdStats(os.Args[2:])
 	case "audit":
 		err = cmdAudit(os.Args[2:])
+	case "mirror":
+		err = cmdMirror(os.Args[2:])
 	case "coverage":
 		err = cmdCoverage(os.Args[2:])
 	case "triggers":

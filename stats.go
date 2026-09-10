@@ -32,12 +32,20 @@ func cmdStats(args []string) error {
 	if err != nil {
 		return err
 	}
-	evs, rstats, err := wall.ReadLast(dir, 0, flt.match)
+	// the whole wall, then the window: the unit costs are deltas between
+	// posts of one session, and a session does not end where --since cuts
+	all, rstats, err := wall.ReadLast(dir, 0, nil)
 	if err != nil {
 		return err
 	}
 	reportStats(rstats)
-	s := wall.Compute(evs)
+	evs := make([]wall.Event, 0, len(all))
+	for _, e := range all {
+		if flt.match(e) {
+			evs = append(evs, e)
+		}
+	}
+	s := wall.ComputeWith(evs, wall.UnitCosts(all))
 
 	if *asJSON {
 		return json.NewEncoder(os.Stdout).Encode(s)
