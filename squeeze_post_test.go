@@ -278,3 +278,22 @@ func TestAStaleCacheCarriesNoCost(t *testing.T) {
 		}
 	}
 }
+
+// The note reads the session, not the actor: a session that posted under
+// one actor and posts again under another still hears the delta, not the
+// whole session's spend as "since session start".
+func TestTheUnitNoteReadsTheSessionAcrossActors(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_SQUEEZE", "")
+	t.Setenv(wall.SqueezeFileEnv, fakeStatusline(t, "rate_5h=1\nrate_7d=1\ncost=4.24\ntok=100000\nsession_id=efff5d73-e2ee-47a1-b5b5-9c0d0ff3afdc\n"))
+	first := captureStderr(t, func() error { return cmdPost([]string{"-r", "x", "-a", "claude/main", "-t", "docs", "one"}) })
+	if !strings.Contains(first, "$4.24") || !strings.Contains(first, "since session start") {
+		t.Errorf("first note: %q", first)
+	}
+	t.Setenv(wall.SqueezeFileEnv, fakeStatusline(t, "rate_5h=1\nrate_7d=1\ncost=5.44\ntok=130000\nsession_id=efff5d73-e2ee-47a1-b5b5-9c0d0ff3afdc\n"))
+	second := captureStderr(t, func() error { return cmdPost([]string{"-r", "x", "-a", "claude/ops", "-t", "fix", "two"}) })
+	if !strings.Contains(second, "$1.20") || !strings.Contains(second, "30.0k tok since your last post in this session") {
+		t.Errorf("second note read the actor, not the session: %q", second)
+	}
+}

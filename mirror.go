@@ -24,6 +24,7 @@ type mirror struct {
 	Since      string  `json:"since"`
 	Posts      int     `json:"posts"`
 	Measured   int     `json:"measured,omitempty"`
+	FromStart  int     `json:"from_start,omitempty"` // of Measured, first post of a session
 	CostTotal  float64 `json:"cost_total,omitempty"`
 	OKs        int     `json:"oks,omitempty"`
 	Haunted    int     `json:"haunted,omitempty"`
@@ -58,16 +59,18 @@ func cmdMirror(args []string) error {
 	if err != nil {
 		return err
 	}
-	m := reflect(all, *actor, since, *sinceS)
+	m := mirrorOf(all, *actor, since, *sinceS)
 	if *asJSON {
 		return json.NewEncoder(os.Stdout).Encode(m)
 	}
-	fmt.Println(m.line())
+	if line := m.line(); line != "" {
+		fmt.Println(line)
+	}
 	return nil
 }
 
-// reflect reads one actor's window out of the whole wall.
-func reflect(all []wall.Event, actor string, since time.Time, window string) mirror {
+// mirrorOf reads one actor's window out of the whole wall.
+func mirrorOf(all []wall.Event, actor string, since time.Time, window string) mirror {
 	m := mirror{Actor: actor, Since: window}
 	units := wall.UnitCosts(all)
 	mine := func(e wall.Event) bool { return e.Actor == actor && !e.TS.Before(since) }
@@ -79,6 +82,9 @@ func reflect(all []wall.Event, actor string, since time.Time, window string) mir
 		if u, ok := units[e.ID()]; ok {
 			m.Measured++
 			m.CostTotal += u.CostUSD
+			if u.FromStart {
+				m.FromStart++
+			}
 		}
 		if e.Outcome == wall.OutcomeOK {
 			m.OKs++
@@ -104,11 +110,20 @@ func reflect(all []wall.Event, actor string, since time.Time, window string) mir
 }
 
 // line renders the mirror; a segment whose source is empty is left out,
-// never printed as 0 — an actor nobody measured did not work for free.
+// never printed as 0 — an actor nobody measured did not work for free. An
+// actor with no post in the window gets no line at all: the recap prints
+// this, and a line that is always there teaches the reader to skip it.
 func (m mirror) line() string {
+	if m.Posts == 0 {
+		return ""
+	}
 	parts := []string{"mirror " + m.Actor, m.Since, plural(m.Posts, "post")}
 	if m.Measured > 0 {
-		parts = append(parts, fmt.Sprintf("%s per unit over %d measured", wall.FmtUSD(m.CostTotal/float64(m.Measured)), m.Measured))
+		seg := fmt.Sprintf("%s per unit over %d measured", wall.FmtUSD(m.CostTotal/float64(m.Measured)), m.Measured)
+		if m.FromStart > 0 {
+			seg += fmt.Sprintf(" (%d from session start)", m.FromStart)
+		}
+		parts = append(parts, seg)
 	}
 	if m.OKs > 0 {
 		parts = append(parts, fmt.Sprintf("%d of %d oks haunted", m.Haunted, m.OKs))

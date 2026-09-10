@@ -31,17 +31,26 @@ func cmdAudit(args []string) error {
 	if err != nil {
 		return err
 	}
-	evs, rstats, err := wall.ReadLast(dir, 0, flt.match)
+	// the whole wall, then the window: a unit cost is the delta to the
+	// session's previous post, and a session does not end where --since cuts
+	all, rstats, err := wall.ReadLast(dir, 0, nil)
 	if err != nil {
 		return err
 	}
 	reportStats(rstats)
-	haunted := wall.Hauntings(evs)
+	evs := make([]wall.Event, 0, len(all))
+	for _, e := range all {
+		if flt.match(e) {
+			evs = append(evs, e)
+		}
+	}
+	units := wall.UnitCosts(all)
+	haunted := wall.HauntingsWith(evs, units)
 	if *asJSON {
 		return json.NewEncoder(os.Stdout).Encode(haunted)
 	}
 
-	sum := wall.Summarize(evs, haunted, time.Now())
+	sum := wall.SummarizeWith(evs, haunted, time.Now(), units)
 	if len(haunted) == 0 {
 		fmt.Printf("no haunted oks in the last %s (%d ok posts) — either they held, or nothing was posted honestly enough to check\n", *sinceS, sum.OKs)
 		if line := namedHeldLine(sum); line != "" {

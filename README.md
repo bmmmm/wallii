@@ -725,7 +725,9 @@ every number with its denominator, no percentage, nobody else in the line;
 a segment nobody measured is left out. Half a reading (no `cost`, no
 `session_id`, a stale file) stores none of the four fields; replies carry
 none; `WALLII_SQUEEZE=off` switches this off with the squeeze, because it
-is the same file. The flight recorder stays untouched — a post reads the
+is the same file — and so does a file that lost its two limit lines: the
+cost is read as part of the budget reading, and a budget with one window
+missing is no reading at all. The flight recorder stays untouched — a post reads the
 small cache and nothing else, and a guard test keeps it that way.
 
 ### Follow-up sessions

@@ -75,9 +75,14 @@ type AuditSummary struct {
 // from the same evs, which is why both are passed rather than recomputed:
 // the audit prints the pairs and the sums from one pass over one record.
 func Summarize(evs []Event, haunted []Haunting, now time.Time) AuditSummary {
+	return SummarizeWith(evs, haunted, now, UnitCosts(evs))
+}
+
+// SummarizeWith is Summarize with the unit readings taken elsewhere; see
+// HauntingsWith. CostWindow sums the units of the posts in evs only.
+func SummarizeWith(evs []Event, haunted []Haunting, now time.Time, units map[string]Unit) AuditSummary {
 	var s AuditSummary
 	byID := map[string]struct{}{}
-	units := UnitCosts(evs)
 	for _, h := range haunted {
 		byID[h.OK.ID()] = struct{}{}
 		if h.Measured {
@@ -92,8 +97,10 @@ func Summarize(evs []Event, haunted []Haunting, now time.Time) AuditSummary {
 			s.CostFixesN++
 		}
 	}
-	for _, u := range units {
-		s.CostWindow += u.CostUSD
+	for _, e := range evs {
+		if u, ok := units[e.ID()]; ok {
+			s.CostWindow += u.CostUSD
+		}
 	}
 	s.Haunted = len(haunted)
 	for _, e := range evs {
@@ -154,9 +161,14 @@ func hauntTokens(e Event) map[string]struct{} {
 // within hauntProximity, sharing at least hauntMinShared significant words.
 // evs oldest-first; each ok is reported at most once, against its earliest
 // haunting fix.
-func Hauntings(evs []Event) []Haunting {
+func Hauntings(evs []Event) []Haunting { return HauntingsWith(evs, UnitCosts(evs)) }
+
+// HauntingsWith pairs with unit readings taken elsewhere — over the whole
+// wall when evs is a window cut out of it, for the reason ComputeWith
+// gives: a unit is the delta to the session's previous post, and the
+// session does not end where --since cuts.
+func HauntingsWith(evs []Event, units map[string]Unit) []Haunting {
 	var out []Haunting
-	units := UnitCosts(evs)
 	for i, p := range evs {
 		if p.Kind != "" || p.Outcome != OutcomeOK {
 			continue

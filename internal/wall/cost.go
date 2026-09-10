@@ -57,9 +57,10 @@ func UnitCosts(evs []Event) map[string]Unit {
 }
 
 // UnitNote is the line `wallii post` prints after the append: what the
-// unit just posted cost, read against the actor's own earlier posts. Empty
-// when the post carries no reading — no file, a stale one, half a reading —
-// so a session without the statusline hears nothing rather than a zero.
+// unit just posted cost, read against the session's earlier posts (prior:
+// every post of the same Sess, any actor, any month). Empty when the post
+// carries no reading — no file, a stale one, half a reading — so a session
+// without the statusline hears nothing rather than a zero.
 func UnitNote(prior []Event, e Event) string {
 	if e.CostSrc == "" {
 		return ""
@@ -75,11 +76,14 @@ func UnitNote(prior []Event, e Event) string {
 	return fmt.Sprintf("this unit ≈ %s · %s tok %s (cost_cum %.2f)", FmtUSD(u.CostUSD), FmtTok(u.Tok), since, e.CostCum)
 }
 
-// FmtUSD renders a spend the way it is read: cents under a dollar, two
-// decimals under a hundred, whole dollars above.
+// FmtUSD renders a spend the way it is read: two decimals under a hundred
+// dollars, whole dollars above. A measured spend under half a cent is
+// "<$0.01", never "$0.00" — a zero would say free, and it was not.
 func FmtUSD(usd float64) string {
 	switch {
-	case usd >= 100:
+	case usd > 0 && usd < 0.005:
+		return "<$0.01"
+	case usd >= 99.995:
 		return fmt.Sprintf("$%.0f", usd)
 	default:
 		return fmt.Sprintf("$%.2f", usd)
@@ -89,7 +93,7 @@ func FmtUSD(usd float64) string {
 // FmtTok renders a token count: 812, 9.8k, 1.3M.
 func FmtTok(n int64) string {
 	switch {
-	case n >= 1_000_000:
+	case n >= 999_950:
 		return fmt.Sprintf("%.1fM", float64(n)/1e6)
 	case n >= 1000:
 		return fmt.Sprintf("%.1fk", float64(n)/1e3)

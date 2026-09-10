@@ -37,7 +37,7 @@ func TestMirrorReflectsOneActorOutOfTheWholeWall(t *testing.T) {
 	// a challenge against the actor's ok, unanswered
 	all = append(all, wall.Event{TS: at(29), Repo: "shop", Actor: "codex/auto", Kind: wall.KindChallenge, Parent: all[1].ID(), Msg: "held how, exactly?"})
 
-	m := reflect(all, "claude/main", at(12), "7d")
+	m := mirrorOf(all, "claude/main", at(12), "7d")
 	if m.Posts != 2 || m.Measured != 1 || m.CostTotal < 0.299 || m.CostTotal > 0.301 || m.OKs != 2 || m.Haunted != 1 || m.Graded != 2 || m.RoughStuck != 1 || m.Open != 1 {
 		t.Errorf("mirror = %+v", m)
 	}
@@ -52,7 +52,7 @@ func TestMirrorReflectsOneActorOutOfTheWholeWall(t *testing.T) {
 	}
 	// the other actor: no cost reading, no open challenge — neither printed
 	// as 0 — while its one ok is a count with a denominator and stays
-	other := reflect(all, "codex/auto", at(12), "7d").line()
+	other := mirrorOf(all, "codex/auto", at(12), "7d").line()
 	for _, banned := range []string{"per unit", "challenge"} {
 		if strings.Contains(other, banned) {
 			t.Errorf("unmeasured segment printed: %q", other)
@@ -60,5 +60,14 @@ func TestMirrorReflectsOneActorOutOfTheWholeWall(t *testing.T) {
 	}
 	if !strings.Contains(other, "0 of 1 oks haunted") {
 		t.Errorf("codex line %q", other)
+	}
+	// nothing in the window: no line, not "0 posts"
+	if empty := mirrorOf(all, "nobody/here", at(12), "7d").line(); empty != "" {
+		t.Errorf("an actor with no posts printed %q", empty)
+	}
+	// a first-of-session unit is marked, not averaged in silently
+	all[0].TS = at(20)
+	if marked := mirrorOf(all, "claude/main", at(12), "7d").line(); !strings.Contains(marked, "(1 from session start)") || !strings.Contains(marked, "over 2 measured") {
+		t.Errorf("from-start unit unmarked: %q", marked)
 	}
 }

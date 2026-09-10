@@ -45,7 +45,7 @@ func TestUnitCostsReadTheDeltaPerSession(t *testing.T) {
 	}
 	for id, w := range want {
 		g, ok := got[id]
-		if !ok || !close(g.CostUSD, w.CostUSD) || g.Tok != w.Tok || g.FromStart != w.FromStart {
+		if !ok || !nearly(g.CostUSD, w.CostUSD) || g.Tok != w.Tok || g.FromStart != w.FromStart {
 			t.Errorf("unit %s = %+v (present %v), want %+v", id, g, ok, w)
 		}
 	}
@@ -56,7 +56,7 @@ func TestUnitCostsReadTheDeltaPerSession(t *testing.T) {
 	}
 }
 
-func close(a, b float64) bool { d := a - b; return d < 1e-9 && d > -1e-9 }
+func nearly(a, b float64) bool { d := a - b; return d < 1e-9 && d > -1e-9 }
 
 // The note names the delta, says what it is a delta to, and stays silent
 // when there is nothing measured to say.
@@ -84,7 +84,10 @@ func TestFmtTokAndUSD(t *testing.T) {
 			t.Errorf("FmtTok(%d) = %q, want %q", n, got, want)
 		}
 	}
-	for v, want := range map[float64]string{0.31: "$0.31", 41.2: "$41.20", 250: "$250"} {
+	if got := FmtTok(999_999); got != "1.0M" {
+		t.Errorf("FmtTok(999999) = %q, want 1.0M", got)
+	}
+	for v, want := range map[float64]string{0.31: "$0.31", 41.2: "$41.20", 250: "$250", 0.004: "<$0.01", 0: "$0.00", 99.996: "$100"} {
 		if got := FmtUSD(v); got != want {
 			t.Errorf("FmtUSD(%g) = %q, want %q", v, got, want)
 		}
@@ -102,7 +105,7 @@ func TestStatsFoldTheUnitCosts(t *testing.T) {
 		costPost(5, "claude/main", "", 0, 0),
 	}
 	s := Compute(evs)
-	if s.CostPosts != 3 || !close(s.CostTotal, 3.50) || s.TokTotal != 4400 || s.CostFromStart != 2 {
+	if s.CostPosts != 3 || !nearly(s.CostTotal, 3.50) || s.TokTotal != 4400 || s.CostFromStart != 2 {
 		t.Errorf("stats = posts %d total %g tok %d fromStart %d, want 3 3.50 4400 2",
 			s.CostPosts, s.CostTotal, s.TokTotal, s.CostFromStart)
 	}
@@ -136,7 +139,7 @@ func TestHauntingsCarryTheUnitCost(t *testing.T) {
 	if len(haunted) != 2 {
 		t.Fatalf("fixture must haunt exactly two oks, got %+v", haunted)
 	}
-	if c := haunted[0].Cost; c == nil || !close(c.OK.CostUSD, 0.31) || !close(c.Fix.CostUSD, 0.44) {
+	if c := haunted[0].Cost; c == nil || !nearly(c.OK.CostUSD, 0.31) || !nearly(c.Fix.CostUSD, 0.44) {
 		t.Errorf("measured pair cost = %+v, want ok 0.31 fix 0.44", c)
 	}
 	if c := haunted[1].Cost; c != nil {
@@ -148,7 +151,41 @@ func TestHauntingsCarryTheUnitCost(t *testing.T) {
 	if s.CostHauntedN != 1 || s.CostFixesN != 2 {
 		t.Errorf("summary counts = haunted %d fixes %d, want 1 2", s.CostHauntedN, s.CostFixesN)
 	}
-	if !close(s.CostHaunted, 0.31) || !close(s.CostFixes, 0.49) || !close(s.CostWindow, 1.30) {
+	if !nearly(s.CostHaunted, 0.31) || !nearly(s.CostFixes, 0.49) || !nearly(s.CostWindow, 1.30) {
 		t.Errorf("summary cost = haunted %g fixes %g window %g, want 0.31 0.49 1.30", s.CostHaunted, s.CostFixes, s.CostWindow)
+	}
+}
+
+// A window cut through a session must not price its first post inside the
+// window as the whole session: the audit reads its units off the whole
+// wall, and the window only decides which posts are summed.
+func TestAuditUnitsSurviveTheWindowEdge(t *testing.T) {
+	ts := time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)
+	mk := func(h int, topic, msg string, cost float64, ok bool) Event {
+		e := Event{TS: ts.Add(time.Duration(h) * time.Hour), Repo: "shop", Actor: "bot", Topic: topic, Msg: msg,
+			Sess: "aaaaaaaa", CostSrc: CostSession, CostCum: cost, TokCum: int64(cost * 1000)}
+		if ok {
+			e.Outcome = OutcomeOK
+		}
+		return e
+	}
+	all := []Event{
+		mk(0, "docs", "readme lists every flag", 4.24, true),
+		mk(1, "feature", "cart totals stable across discount rounds", 5.44, true),     // unit 1.20
+		mk(2, "fix", "cart totals drifted on discount rounds once more", 5.50, false), // unit 0.06
+	}
+	window := all[1:] // --since cuts after the first post
+	units := UnitCosts(all)
+	haunted := HauntingsWith(window, units)
+	if len(haunted) != 1 || haunted[0].Cost == nil || !nearly(haunted[0].Cost.OK.CostUSD, 1.20) {
+		t.Fatalf("haunted = %+v, want one pair priced at 1.20", haunted)
+	}
+	s := SummarizeWith(window, haunted, ts.Add(30*24*time.Hour), units)
+	if !nearly(s.CostHaunted, 1.20) || !nearly(s.CostWindow, 1.26) {
+		t.Errorf("summary = haunted %g window %g, want 1.20 1.26 (the post before the edge is not in the window)", s.CostHaunted, s.CostWindow)
+	}
+	// the cut alone would have said 5.44: the regression this guards
+	if cut := Hauntings(window); cut[0].Cost == nil || !nearly(cut[0].Cost.OK.CostUSD, 5.44) {
+		t.Errorf("fixture no longer shows the cut reading, got %+v", cut[0].Cost)
 	}
 }

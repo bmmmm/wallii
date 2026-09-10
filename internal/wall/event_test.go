@@ -279,6 +279,8 @@ func TestCostFieldsValidate(t *testing.T) {
 		"reply with cost": {func(e *Event) {
 			e.Kind, e.Parent, e.CostSrc, e.Sess = KindReact, "abcd123", CostSession, "efff5d73"
 		}, "dialogue"},
+		"reply with a source alone": {func(e *Event) { e.Kind, e.Parent, e.CostSrc = KindReact, "abcd123", CostSession }, "dialogue"},
+		"reply with a spend alone":  {func(e *Event) { e.Kind, e.Parent, e.CostCum = KindReact, "abcd123", 1 }, "dialogue"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := base

@@ -31,7 +31,7 @@ wallii triggers --since <window> --json    # optional evidence: did the Stop hoo
 Output shapes (verified against wallii v0.5.1-0.20260903 (e42a547), 2026-09-03 — grader, signals, lint challenges, pulse, squeeze, coverage, triggers and actor families included):
 
 - `tail --json` → NDJSON, one event per line:
-  `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach|react|challenge"?,"parent":"<id>"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?,"grader":"…"?,"signals":["<path>: <line>"]?,"signal_src":"hook"?,"pulse_ms":n?,"pulse_src":"session|probe|none"?,"squeeze_p":n?,"squeeze_5h":n?,"squeeze_src":"session"?}`
+  `{"ts":"<RFC3339 UTC>","repo":"…","actor":"…","topic":"…","msg":"…","refs":["…"]?,"kind":"attach|detach|react|challenge"?,"parent":"<id>"?,"outcome":"ok|partial|failed"?,"took_s":n?,"mood":"great|good|ok|rough|stuck"?,"grader":"…"?,"signals":["<path>: <line>"]?,"signal_src":"hook"?,"pulse_ms":n?,"pulse_src":"session|probe|none"?,"squeeze_p":n?,"squeeze_5h":n?,"squeeze_src":"session"?,"cost_cum":n?,"tok_cum":n?,"sess":"<8 hex>"?,"cost_src":"session"?}`
   Events with a `kind` are registrations or dialogue, not work — report
   them as "agent X attached/detached" or as a reply, not as activity. Use
   `outcome`/`mood` when present: lead the digest with failures and stuck
@@ -58,6 +58,17 @@ Output shapes (verified against wallii v0.5.1-0.20260903 (e42a547), 2026-09-03 �
   Context beside a mood, never applied to it: mention them only when a
   post's story needs them ("posted at 90 % of the week"). An absent field
   means nobody measured — never write it as 0.
+- `cost_cum`/`tok_cum`/`sess`/`cost_src` (since 2026-09-10) are the session's
+  cumulative spend when the post was written, keyed by the session. They are
+  raw: what one unit cost is the delta to the previous post of the same
+  `sess`, and the first post of a session counts from its start. Do not
+  subtract them yourself — `stats --json` carries `cost_posts`,
+  `cost_total`, `tok_total`, `cost_from_start` already folded, and
+  `wallii mirror --actor x [--json]` is the one-line reading per actor
+  (posts, measured, cost_total, oks, haunted, graded, rough_stuck,
+  open_challenges — every count with its denominator). Report sums with
+  their denominator, never a percentage and never a ranking of actors by
+  cost; an absent field means nobody measured, never "free".
 - `coverage --json` → one `Cov` object (or two under `--split`): `days[]`
   with `commits`, `posts`, `blind`; `blind_days`, `work_days`, `measured`,
   `unresolved[]` (repo + why), `repos[]`. Rule of the house: **blind days may

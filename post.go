@@ -149,11 +149,19 @@ func cmdPost(args []string) error {
 		return err
 	}
 	// What this unit cost, read the way stats will read it later: the delta
-	// to the actor's previous post of the same session. A note after the
+	// to the session's previous post, whoever posted it and whatever month
+	// it landed in — so the session's own posts are read here, not the
+	// actor's history above (one actor, this month). A note after the
 	// append, never a gate before it — the number is for the agent that is
 	// still in the session, the next unit is the one it can still change.
-	if note := wall.UnitNote(prior, e); note != "" {
-		fmt.Fprintln(os.Stderr, "wallii:", note)
+	if e.CostSrc != "" {
+		same, _, serr := wall.ReadLast(dir, 0, func(o wall.Event) bool { return o.Sess == e.Sess && o.ID() != e.ID() })
+		if serr != nil {
+			fmt.Fprintln(os.Stderr, "wallii: reading the session's posts (non-fatal):", serr)
+		}
+		if note := wall.UnitNote(same, e); note != "" {
+			fmt.Fprintln(os.Stderr, "wallii:", note)
+		}
 	}
 	// The doubt outlives the moment: the lint's first note becomes a
 	// challenge on the wall (challenge.go), written after the post and never
