@@ -2,6 +2,7 @@
 package wall
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -255,5 +256,42 @@ func TestActorFamily(t *testing.T) {
 		if got := ActorFamily(actor); got != want {
 			t.Errorf("ActorFamily(%q) = %q, want %q", actor, got, want)
 		}
+	}
+}
+
+// The cost fields obey the house rule for telemetry: a value without a
+// source is a guess, a negative spend is a broken counter, and dialogue
+// carries none of it.
+func TestCostFieldsValidate(t *testing.T) {
+	base := Event{TS: time.Now(), Repo: "x", Msg: "m"}
+	for name, tc := range map[string]struct {
+		mut  func(*Event)
+		want string
+	}{
+		"value without source": {func(e *Event) { e.CostCum = 1 }, "without a source"},
+		"tok without source":   {func(e *Event) { e.TokCum = 1 }, "without a source"},
+		"sess without source":  {func(e *Event) { e.Sess = "efff5d73" }, "without a source"},
+		"negative cost":        {func(e *Event) { e.CostSrc = CostSession; e.CostCum = -1 }, "cost_cum"},
+		"negative tok":         {func(e *Event) { e.CostSrc = CostSession; e.TokCum = -1 }, "tok_cum"},
+		"NaN cost":             {func(e *Event) { e.CostSrc = CostSession; e.CostCum = math.NaN() }, "cost_cum"},
+		"unknown source":       {func(e *Event) { e.CostSrc = "probe" }, "cost_src"},
+		"source without sess":  {func(e *Event) { e.CostSrc = CostSession }, "sess"},
+		"reply with cost": {func(e *Event) {
+			e.Kind, e.Parent, e.CostSrc, e.Sess = KindReact, "abcd123", CostSession, "efff5d73"
+		}, "dialogue"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := base
+			tc.mut(&e)
+			err := e.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Validate() = %v, want an error mentioning %q", err, tc.want)
+			}
+		})
+	}
+	ok := base
+	ok.CostSrc, ok.Sess, ok.CostCum, ok.TokCum = CostSession, "efff5d73", 0, 0
+	if err := ok.Validate(); err != nil {
+		t.Errorf("a zero spend with a source is a reading, got %v", err)
 	}
 }

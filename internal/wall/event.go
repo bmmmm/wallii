@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -149,6 +150,23 @@ type Event struct {
 	SqueezeP   float64 `json:"squeeze_p,omitempty"`
 	Squeeze5h  float64 `json:"squeeze_5h,omitempty"`
 	SqueezeSrc string  `json:"squeeze_src,omitempty"`
+	// CostCum and TokCum are what the session had spent when this post was
+	// written — cumulative USD and tokens off the same statusline cache the
+	// squeeze comes from — and Sess is the first characters of the session
+	// id they belong to. Raw and cumulative on purpose: what one unit of
+	// work cost is the delta to the previous post of the same session, and
+	// that is a reading (UnitCosts, cost.go), not a stored number. Stored at
+	// post time, a delta would depend on who posted before; the cumulative
+	// pair reads the same however often it is read back.
+	//
+	// Measured, never asked; reported, never applied. Nothing on this wall
+	// moves a grade for what it cost, and there is no gate on it either.
+	// CostSrc says who measured; absent, nobody did — and an absent field
+	// must never read as a unit that cost nothing.
+	CostCum float64 `json:"cost_cum,omitempty"`
+	TokCum  int64   `json:"tok_cum,omitempty"`
+	Sess    string  `json:"sess,omitempty"`
+	CostSrc string  `json:"cost_src,omitempty"`
 }
 
 // ID derives a short stable address for an event from fields that never
@@ -217,8 +235,8 @@ func (e Event) Validate() error {
 		// into nothing (stats skips kinds) and only invite confusion. The
 		// grader is about the work too — a reply has no cheap path to name,
 		// and no diff for the hook to have measured.
-		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 || e.PulseSrc != "" || e.Grader != "" || e.SignalSrc != "" || len(e.Signals) > 0 || e.SqueezeSrc != "" {
-			return fmt.Errorf("a %s is dialogue — outcome/mood/took/pulse/grader/signals/squeeze belong on posts", e.Kind)
+		if e.Outcome != "" || e.Mood != "" || e.TookS != 0 || e.PulseSrc != "" || e.Grader != "" || e.SignalSrc != "" || len(e.Signals) > 0 || e.SqueezeSrc != "" || e.CostSrc != "" || e.CostCum != 0 || e.TokCum != 0 || e.Sess != "" {
+			return fmt.Errorf("a %s is dialogue — outcome/mood/took/pulse/grader/signals/squeeze/cost belong on posts", e.Kind)
 		}
 	default:
 		return fmt.Errorf("unknown kind %q — one of attach, detach, react, challenge, or empty", e.Kind)
@@ -285,6 +303,28 @@ func (e Event) Validate() error {
 	// could never say that.
 	if (e.SqueezeP != 0 || e.Squeeze5h != 0) && e.SqueezeSrc == "" {
 		return errors.New("squeeze is set without a source — a budget nobody claims cannot be told from a guess")
+	}
+	if e.CostSrc != "" && e.CostSrc != CostSession {
+		return fmt.Errorf("unknown cost_src %q — %q or empty (nobody measured)", e.CostSrc, CostSession)
+	}
+	// a range, not two bounds, for the same NaN reason as the squeeze
+	if !(e.CostCum >= 0 && !math.IsInf(e.CostCum, 0)) {
+		return fmt.Errorf("cost_cum is %v — a spend in USD, 0 or more", e.CostCum)
+	}
+	if e.TokCum < 0 {
+		return fmt.Errorf("tok_cum is %d — a token count, 0 or more", e.TokCum)
+	}
+	if n := len(e.Sess); n > 0 && (n > MaxFieldRunes || strings.TrimLeft(e.Sess, "0123456789abcdef-") != "") {
+		return fmt.Errorf("sess %q is not a session key (lowercase hex)", e.Sess)
+	}
+	// A source without a spend is legal: a session that has cost nothing
+	// yet is a reading. A spend or a key without a source is not — and a
+	// source without its key would be a delta nothing can be read against.
+	if (e.CostCum != 0 || e.TokCum != 0 || e.Sess != "") && e.CostSrc == "" {
+		return errors.New("cost is set without a source — a spend nobody claims cannot be told from a guess")
+	}
+	if e.CostSrc != "" && e.Sess == "" {
+		return errors.New("cost_src is set without a sess — a spend with no session cannot be read as a unit")
 	}
 	if e.SignalSrc != "" && e.SignalSrc != SignalHook {
 		return fmt.Errorf("unknown signal_src %q — %q or empty (nobody measured)", e.SignalSrc, SignalHook)

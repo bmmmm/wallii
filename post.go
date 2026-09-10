@@ -118,7 +118,12 @@ func cmdPost(args []string) error {
 	// beside it is megabytes that nothing here needs: the density only
 	// matters to a live reading, and what a post has to carry is the two
 	// percentages. Never fatal, and never applied to the grade below.
-	squeezeP, squeeze5h, squeezeSrc := wall.SessionBudget(now).Fields()
+	bud := wall.SessionBudget(now)
+	squeezeP, squeeze5h, squeezeSrc := bud.Fields()
+	// And what the session had spent by then — the same file, two more of
+	// its lines. Stored raw and cumulative; what this unit cost is read off
+	// it below, beside the grade and never inside it.
+	costCum, tokCum, sess, costSrc := bud.CostFields()
 
 	// one read serves both post-time lints: the actor's own history is the
 	// clock for --took and the evidence for the calibration warning. A
@@ -138,9 +143,17 @@ func cmdPost(args []string) error {
 	e := wall.Event{TS: now.UTC(), Repo: *repo, Actor: who, Topic: *topic, Msg: msg, Refs: refs,
 		Outcome: *outcome, TookS: tookS, TookSrc: tookSrc, Mood: *mood, Grader: *grader,
 		PulseMS: pulseMS, PulseSrc: pulseSrc, Signals: signals, SignalSrc: signalSrc,
-		SqueezeP: squeezeP, Squeeze5h: squeeze5h, SqueezeSrc: squeezeSrc}
+		SqueezeP: squeezeP, Squeeze5h: squeeze5h, SqueezeSrc: squeezeSrc,
+		CostCum: costCum, TokCum: tokCum, Sess: sess, CostSrc: costSrc}
 	if err := wall.Append(dir, e); err != nil {
 		return err
+	}
+	// What this unit cost, read the way stats will read it later: the delta
+	// to the actor's previous post of the same session. A note after the
+	// append, never a gate before it — the number is for the agent that is
+	// still in the session, the next unit is the one it can still change.
+	if note := wall.UnitNote(prior, e); note != "" {
+		fmt.Fprintln(os.Stderr, "wallii:", note)
 	}
 	// The doubt outlives the moment: the lint's first note becomes a
 	// challenge on the wall (challenge.go), written after the post and never

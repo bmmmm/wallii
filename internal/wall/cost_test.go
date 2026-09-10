@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package wall
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func costPost(min int, actor, sess string, cost float64, tok int64) Event {
+	e := Event{TS: time.Date(2026, 9, 10, 12, min, 0, 0, time.UTC), Repo: "x", Actor: actor, Msg: "u" + sess + string(rune('0'+min))}
+	if sess != "" {
+		e.Sess, e.CostSrc, e.CostCum, e.TokCum = sess, CostSession, cost, tok
+	}
+	return e
+}
+
+// Two sessions interleaved on the wall read as two separate ledgers; an
+// actor switch inside one session is still one ledger; a counter that went
+// backwards yields no reading at all.
+func TestUnitCostsReadTheDeltaPerSession(t *testing.T) {
+	a1 := costPost(1, "claude/main", "aaaaaaaa", 1.00, 1000)
+	b1 := costPost(2, "codex/auto", "bbbbbbbb", 5.00, 9000)
+	a2 := costPost(3, "claude/main", "aaaaaaaa", 1.50, 1400)
+	b2 := costPost(4, "codex/auto", "bbbbbbbb", 5.25, 9100)
+	a3 := costPost(5, "claude/ops", "aaaaaaaa", 2.00, 1900) // actor switch, same session
+	a4 := costPost(6, "claude/ops", "aaaaaaaa", 0.10, 50)   // cache reset: negative delta
+	a5 := costPost(7, "claude/ops", "aaaaaaaa", 0.40, 120)  // reads against the reset
+	none := costPost(8, "claude/main", "", 0, 0)            // nobody measured
+	reply := costPost(9, "claude/main", "aaaaaaaa", 9, 9)
+	reply.Kind, reply.Parent = KindReact, "abcd123"
+
+	// deliberately out of order: the reader sorts
+	got := UnitCosts([]Event{b2, a3, a1, b1, a2, none, a4, a5, reply})
+	want := map[string]Unit{
+		a1.ID(): {1.00, 1000, true},
+		b1.ID(): {5.00, 9000, true},
+		a2.ID(): {0.50, 400, false},
+		b2.ID(): {0.25, 100, false},
+		a3.ID(): {0.50, 500, false},
+		a5.ID(): {0.30, 70, false},
+	}
+	if len(got) != len(want) {
+		t.Errorf("%d units read, want %d: %+v", len(got), len(want), got)
+	}
+	for id, w := range want {
+		g, ok := got[id]
+		if !ok || !close(g.CostUSD, w.CostUSD) || g.Tok != w.Tok || g.FromStart != w.FromStart {
+			t.Errorf("unit %s = %+v (present %v), want %+v", id, g, ok, w)
+		}
+	}
+	for _, e := range []Event{a4, none, reply} {
+		if u, ok := got[e.ID()]; ok {
+			t.Errorf("%q read as %+v, want no entry", e.Msg, u)
+		}
+	}
+}
+
+func close(a, b float64) bool { d := a - b; return d < 1e-9 && d > -1e-9 }
+
+// The note names the delta, says what it is a delta to, and stays silent
+// when there is nothing measured to say.
+func TestUnitNote(t *testing.T) {
+	first := costPost(1, "claude/main", "aaaaaaaa", 3.84, 111961)
+	if got := UnitNote(nil, first); !strings.Contains(got, "$3.84") || !strings.Contains(got, "112.0k tok since session start") {
+		t.Errorf("first post: %q", got)
+	}
+	second := costPost(2, "claude/main", "aaaaaaaa", 4.15, 121800)
+	got := UnitNote([]Event{first}, second)
+	if !strings.Contains(got, "$0.31") || !strings.Contains(got, "9.8k tok since your last post in this session") || !strings.Contains(got, "cost_cum 4.15") {
+		t.Errorf("second post: %q", got)
+	}
+	if got := UnitNote([]Event{first}, costPost(3, "claude/main", "", 0, 0)); got != "" {
+		t.Errorf("unmeasured post got a note: %q", got)
+	}
+	if got := UnitNote([]Event{second}, costPost(4, "claude/main", "aaaaaaaa", 0.05, 10)); got != "" {
+		t.Errorf("negative delta got a note: %q", got)
+	}
+}
+
+func TestFmtTokAndUSD(t *testing.T) {
+	for n, want := range map[int64]string{812: "812", 9800: "9.8k", 1_300_000: "1.3M"} {
+		if got := FmtTok(n); got != want {
+			t.Errorf("FmtTok(%d) = %q, want %q", n, got, want)
+		}
+	}
+	for v, want := range map[float64]string{0.31: "$0.31", 41.2: "$41.20", 250: "$250"} {
+		if got := FmtUSD(v); got != want {
+			t.Errorf("FmtUSD(%g) = %q, want %q", v, got, want)
+		}
+	}
+}

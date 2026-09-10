@@ -197,3 +197,84 @@ func TestMoodDayColumnFoldsTheSqueeze(t *testing.T) {
 		t.Errorf("day inspector = %q, want the mean marked as one", got)
 	}
 }
+
+// The cost of a unit is measured, never asked: the same cache file carries
+// the session's cumulative spend, and a post stores that raw pair beside the
+// budget. Absent when the file lacks either half — a cost with no session to
+// key the delta on is a number nobody can read back.
+func TestAPostCarriesTheSessionCost(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	t.Setenv("WALLII_SQUEEZE", "")
+	t.Setenv(wall.SqueezeFileEnv, fakeStatusline(t,
+		"rate_5h=12\nrate_7d=34\ncost=3.84\ntok=111961\nsession_id=efff5d73-e2ee-47a1-b5b5-9c0d0ff3afdc\n"))
+
+	if err := cmdPost([]string{"-r", "x", "-t", "fix", "measured, not asked"}); err != nil {
+		t.Fatal(err)
+	}
+	e := readWall(t, dir)[0]
+	if e.CostCum != 3.84 || e.TokCum != 111961 || e.Sess != "efff5d73" || e.CostSrc != wall.CostSession {
+		t.Errorf("post carries cost %g tok %d sess %q src %q, want 3.84 111961 efff5d73 %q",
+			e.CostCum, e.TokCum, e.Sess, e.CostSrc, wall.CostSession)
+	}
+	for _, k := range []string{`"cost_cum":3.84`, `"tok_cum":111961`, `"sess":"efff5d73"`, `"cost_src":"session"`} {
+		if !strings.Contains(rawWall(t, dir), k) {
+			t.Errorf("stored line lacks %s", k)
+		}
+	}
+}
+
+// Half a reading is no reading: without cost or without session_id none of
+// the four fields is stored — not as 0, not at all.
+func TestHalfACostReadingStoresNothing(t *testing.T) {
+	for name, body := range map[string]string{
+		"no cost":       "rate_5h=12\nrate_7d=34\ntok=5\nsession_id=efff5d73-e2ee-47a1-b5b5-9c0d0ff3afdc\n",
+		"no session_id": "rate_5h=12\nrate_7d=34\ncost=3.84\ntok=5\n",
+		"cost NaN":      "rate_5h=12\nrate_7d=34\ncost=NaN\ntok=5\nsession_id=efff5d73-e2ee-47a1-b5b5-9c0d0ff3afdc\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("WALLII_DIR", dir)
+			t.Setenv("WALLII_SQUEEZE", "")
+			t.Setenv(wall.SqueezeFileEnv, fakeStatusline(t, body))
+			if err := cmdPost([]string{"-r", "x", "-t", "fix", "half a reading"}); err != nil {
+				t.Fatal(err)
+			}
+			raw := rawWall(t, dir)
+			for _, k := range []string{"cost_cum", "tok_cum", `"sess"`, "cost_src"} {
+				if strings.Contains(raw, k) {
+					t.Errorf("stored line carries %s on a half reading: %s", k, raw)
+				}
+			}
+			// the budget half still stands on its own
+			if !strings.Contains(raw, `"squeeze_src":"session"`) {
+				t.Errorf("the squeeze went missing with the cost: %s", raw)
+			}
+		})
+	}
+}
+
+// A stale file is no reading for the cost either — the same clock as the
+// squeeze's, because it is the same file.
+func TestAStaleCacheCarriesNoCost(t *testing.T) {
+	for _, tc := range []struct {
+		age  time.Duration
+		want bool
+	}{{16 * time.Minute, false}, {14 * time.Minute, true}} {
+		dir := t.TempDir()
+		t.Setenv("WALLII_DIR", dir)
+		t.Setenv("WALLII_SQUEEZE", "")
+		p := fakeStatusline(t, "rate_5h=12\nrate_7d=34\ncost=1\ntok=5\nsession_id=efff5d73-e2ee-47a1-b5b5-9c0d0ff3afdc\n")
+		old := time.Now().Add(-tc.age)
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(wall.SqueezeFileEnv, p)
+		if err := cmdPost([]string{"-r", "x", "-t", "fix", "aged"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(rawWall(t, dir), "cost_src"); got != tc.want {
+			t.Errorf("file %v old: cost stored %v, want %v", tc.age, got, tc.want)
+		}
+	}
+}

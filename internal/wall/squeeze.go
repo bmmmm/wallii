@@ -60,6 +60,27 @@ const (
 	squeezeKeyReset7d = "reset_7d"
 )
 
+// The same file carries what the session has spent so far: cost is
+// `.cost.total_cost_usd` and tok the session's input plus output tokens,
+// both cumulative since the session began, and session_id the session's
+// full UUID. A post stores the raw cumulative pair keyed by the first eight
+// characters of the id; what one unit of work cost is a reading taken later
+// (cost.go), never a number written at post time — a delta stored then would
+// depend on who happened to post before, a cumulative reading does not.
+const (
+	squeezeKeyCost    = "cost"
+	squeezeKeyTok     = "tok"
+	squeezeKeySession = "session_id"
+	// SessKeyLen is how much of the session id a post keeps: enough to tell
+	// two sessions of one day apart, short enough to read beside a grade.
+	SessKeyLen = 8
+)
+
+// CostSession is the only source a cost reading has: the same statusline
+// cache the squeeze is read from. Absent means nobody measured, and must
+// never read as a unit that cost nothing.
+const CostSession = "session"
+
 // The two windows the limits are drawn on. 5h is the one that is felt — a
 // cooldown really acts inside it — and 7d is the slow background nothing you
 // do this afternoon repairs.
@@ -87,6 +108,14 @@ type Budget struct {
 	Reset5h time.Time // when the five-hour window refills; zero when unknown
 	Reset7d time.Time
 	Src     string
+	// The session's spend so far, read beside the limits: cumulative USD and
+	// tokens, and the first SessKeyLen characters of the session id they
+	// belong to. HaveCost separates a reading from a file that carries no
+	// cost lines — the older statusline writes the limits alone.
+	CostUSD  float64
+	Tok      int64
+	Sess     string
+	HaveCost bool
 }
 
 // Known reports whether this Budget is a reading at all.
@@ -99,6 +128,17 @@ func (b Budget) Fields() (p7, p5 float64, src string) {
 		return 0, 0, ""
 	}
 	return b.Pct7d, b.Pct5h, b.Src
+}
+
+// CostFields are the four a post stores for the cost: the cumulative pair,
+// the session key, and the source. All empty unless the file carried both a
+// parseable cost and a session id — a spend with no session to key the
+// delta on cannot be read back, and half a reading is stored as none.
+func (b Budget) CostFields() (costCum float64, tokCum int64, sess, src string) {
+	if !b.Known() || !b.HaveCost {
+		return 0, 0, "", ""
+	}
+	return b.CostUSD, b.Tok, b.Sess, CostSession
 }
 
 // Elapsed5h says how far the five-hour window has already run: 0 at its
@@ -301,7 +341,7 @@ func SessionBudget(now time.Time) Budget {
 // the level still stands, it just carries no position inside its window.
 func parseBudget(s string) (Budget, bool) {
 	var b Budget
-	var have5h, have7d bool
+	var have5h, have7d, haveCost bool
 	for _, line := range strings.Split(s, "\n") {
 		k, v, found := strings.Cut(line, "=")
 		if !found {
@@ -316,9 +356,52 @@ func parseBudget(s string) (Budget, bool) {
 			b.Reset5h = squeezeStamp(v)
 		case squeezeKeyReset7d:
 			b.Reset7d = squeezeStamp(v)
+		case squeezeKeyCost:
+			b.CostUSD, haveCost = squeezeCost(v)
+		case squeezeKeyTok:
+			b.Tok = squeezeCount(v)
+		case squeezeKeySession:
+			b.Sess = sessKey(v)
 		}
 	}
+	// the cost is a reading only with the session it belongs to; tok is
+	// optional beside it — a missing count reads 0 and a delta of 0, which
+	// is what an absent statusline key honestly measured
+	b.HaveCost = haveCost && b.Sess != ""
+	if !b.HaveCost {
+		b.CostUSD, b.Tok, b.Sess = 0, 0, ""
+	}
 	return b, have5h && have7d
+}
+
+// squeezeCost parses the cumulative spend. Finite and non-negative, like
+// the percentages; there is no upper bound worth naming — a long session
+// on a large model does run past what a limit would suggest.
+func squeezeCost(v string) (float64, bool) {
+	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
+		return 0, false
+	}
+	return f, true
+}
+
+// squeezeCount parses a token count; anything unparseable or negative is 0.
+func squeezeCount(v string) int64 {
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// sessKey shortens a session id to what a post keeps. Anything that is not
+// plain hex and dashes is not an id, and yields no key.
+func sessKey(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) < SessKeyLen || strings.TrimLeft(v, "0123456789abcdef-") != "" {
+		return ""
+	}
+	return v[:SessKeyLen]
 }
 
 // squeezePct parses one percentage. Non-finite values are rejected rather
