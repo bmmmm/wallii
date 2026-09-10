@@ -61,9 +61,21 @@ func cmdAudit(args []string) error {
 		for _, sig := range h.OK.Signals {
 			fmt.Printf("    signal %s\n", sig)
 		}
-		fmt.Printf("    fix %s  %s  %s — shared: %s\n", h.Fix.ID(), h.Fix.TS.Local().Format("01-02 15:04"), h.Fix.Msg, strings.Join(h.Shared, ", "))
+		fix := fmt.Sprintf("    fix %s  %s  %s — shared: %s", h.Fix.ID(), h.Fix.TS.Local().Format("01-02 15:04"), h.Fix.Msg, strings.Join(h.Shared, ", "))
+		// what each side cost, when both were measured: the ok that did
+		// not hold and the fix it drew — two readings, no ratio
+		if c := h.Cost; c != nil {
+			fix += fmt.Sprintf(" · ok cost %s · fix cost %s", wall.FmtUSD(c.OK.CostUSD), wall.FmtUSD(c.Fix.CostUSD))
+		}
+		fmt.Println(fix)
 	}
 	fmt.Printf("%d of %d ok posts drew a fix on the same ground within 7d — ok must hold, not just land.\n", len(haunted), sum.OKs)
+	// only once a haunted side was measured: a window where nothing haunted
+	// carried a reading has no cost to report, and "$0.00" would say free
+	if sum.CostHauntedN > 0 || sum.CostFixesN > 0 {
+		fmt.Printf("haunted oks cost %s (%d of %d measured) of %s measured in the window — the fixes another %s (%d measured).\n",
+			wall.FmtUSD(sum.CostHaunted), sum.CostHauntedN, len(haunted), wall.FmtUSD(sum.CostWindow), wall.FmtUSD(sum.CostFixes), sum.CostFixesN)
+	}
 	if sum.Measured > 0 {
 		fmt.Printf("%d of them came out of a session the hook had measured a shortcut in — read the signal beside the post, it may sit in another file.\n", sum.Measured)
 	} else {

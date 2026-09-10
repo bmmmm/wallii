@@ -51,6 +51,18 @@ type Stats struct {
 	SqueezePTotal  float64 `json:"squeeze_p_total,omitempty"`
 	Squeeze5hTotal float64 `json:"squeeze_5h_total,omitempty"`
 
+	// Cost: what the measured units of work added up to, read off the
+	// cumulative pair each post stores (UnitCosts). Sums with their count,
+	// the same way the squeeze is folded, and for the same reason. From-
+	// start units are the first post of a session — they also paid for
+	// what the session did before it posted, and are counted apart so the
+	// per-unit figure can be read with that in mind. No per-actor split:
+	// reported, not compared.
+	CostPosts     int     `json:"cost_posts,omitempty"`
+	CostTotal     float64 `json:"cost_total,omitempty"`
+	TokTotal      int64   `json:"tok_total,omitempty"`
+	CostFromStart int     `json:"cost_from_start,omitempty"`
+
 	WithRefs int `json:"with_refs"`
 	// Contradicting counts posts whose grade disagrees with their own
 	// message. Nothing stops those from being posted — this is where they
@@ -176,6 +188,7 @@ func Compute(evs []Event) Stats {
 	// said twice, not two ways of saying it
 	graders := map[string]struct{}{}
 	signals := map[signalKey]bool{}
+	units := UnitCosts(evs)
 
 	// id → actor of the challenged event, so ByChallenged can name whose
 	// posts draw doubt (the parent may be any kind, including a reply)
@@ -276,6 +289,14 @@ func Compute(evs []Event) Stats {
 			s.SqueezePosts++
 			s.SqueezePTotal += e.SqueezeP
 			s.Squeeze5hTotal += e.Squeeze5h
+		}
+		if u, ok := units[e.ID()]; ok {
+			s.CostPosts++
+			s.CostTotal += u.CostUSD
+			s.TokTotal += u.Tok
+			if u.FromStart {
+				s.CostFromStart++
+			}
 		}
 		if len(e.Refs) > 0 {
 			s.WithRefs++

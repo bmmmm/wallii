@@ -35,6 +35,15 @@ type Haunting struct {
 	Fix      Event    `json:"fix"`
 	Shared   []string `json:"shared"`
 	Measured bool     `json:"measured,omitempty"`
+	// Cost is what each side of the pair cost, present only when both were
+	// measured: the ok that did not hold, and the fix that had to follow.
+	Cost *PairCost `json:"unit_cost,omitempty"`
+}
+
+// PairCost is the two unit readings of a haunted pair.
+type PairCost struct {
+	OK  Unit `json:"ok"`
+	Fix Unit `json:"fix"`
 }
 
 // AuditSummary is what the window's oks add up to once Hauntings has paired
@@ -51,6 +60,15 @@ type AuditSummary struct {
 	Haunted   int `json:"haunted"`
 	Measured  int `json:"measured"`
 	NamedHeld int `json:"named_held"`
+	// The cost side, over the measured units only: what the haunted oks
+	// cost, what their fixes cost on top, and what every measured unit in
+	// the window cost — the denominator, printed beside the sums and never
+	// turned into a percentage.
+	CostHaunted  float64 `json:"cost_haunted,omitempty"`
+	CostHauntedN int     `json:"cost_haunted_n,omitempty"` // haunted oks with a reading
+	CostFixes    float64 `json:"cost_fixes,omitempty"`
+	CostFixesN   int     `json:"cost_fixes_n,omitempty"` // their fixes with a reading
+	CostWindow   float64 `json:"cost_window,omitempty"`
 }
 
 // Summarize counts the window behind a Hauntings result. haunted must come
@@ -59,11 +77,23 @@ type AuditSummary struct {
 func Summarize(evs []Event, haunted []Haunting, now time.Time) AuditSummary {
 	var s AuditSummary
 	byID := map[string]struct{}{}
+	units := UnitCosts(evs)
 	for _, h := range haunted {
 		byID[h.OK.ID()] = struct{}{}
 		if h.Measured {
 			s.Measured++
 		}
+		if u, ok := units[h.OK.ID()]; ok {
+			s.CostHaunted += u.CostUSD
+			s.CostHauntedN++
+		}
+		if u, ok := units[h.Fix.ID()]; ok {
+			s.CostFixes += u.CostUSD
+			s.CostFixesN++
+		}
+	}
+	for _, u := range units {
+		s.CostWindow += u.CostUSD
 	}
 	s.Haunted = len(haunted)
 	for _, e := range evs {
@@ -126,6 +156,7 @@ func hauntTokens(e Event) map[string]struct{} {
 // haunting fix.
 func Hauntings(evs []Event) []Haunting {
 	var out []Haunting
+	units := UnitCosts(evs)
 	for i, p := range evs {
 		if p.Kind != "" || p.Outcome != OutcomeOK {
 			continue
@@ -149,7 +180,13 @@ func Hauntings(evs []Event) []Haunting {
 			}
 			if len(shared) >= hauntMinShared {
 				sort.Strings(shared)
-				out = append(out, Haunting{OK: p, Fix: q, Shared: shared, Measured: len(p.Signals) > 0})
+				h := Haunting{OK: p, Fix: q, Shared: shared, Measured: len(p.Signals) > 0}
+				if uo, ok := units[p.ID()]; ok {
+					if uf, ok := units[q.ID()]; ok {
+						h.Cost = &PairCost{OK: uo, Fix: uf}
+					}
+				}
+				out = append(out, h)
 				break
 			}
 		}

@@ -72,6 +72,9 @@ func cmdStats(args []string) error {
 	if line := squeezeLine(s); line != "" {
 		fmt.Println(line)
 	}
+	if line := costLine(s); line != "" {
+		fmt.Println(line)
+	}
 	if calib := calibLine(s, *sinceS); calib != "" {
 		fmt.Println(calib)
 	}
@@ -244,6 +247,22 @@ func squeezeLine(s wall.Stats) string {
 	n := float64(s.SqueezePosts)
 	return fmt.Sprintf("squeeze  5h %.0f%% · 7d %.0f%% of the limits spent, on average across %s — recorded beside the grades, never in them",
 		s.Squeeze5hTotal/n, s.SqueezePTotal/n, plural(s.SqueezePosts, "post"))
+}
+
+// costLine reports what the measured units cost, with the denominator
+// beside every sum and no percentage anywhere: a cost figure with a dial
+// on it would be a budget, and the wall keeps budgets (squeeze) and spend
+// (this) as two readings that nothing adds up.
+func costLine(s wall.Stats) string {
+	if s.CostPosts == 0 {
+		return ""
+	}
+	line := fmt.Sprintf("cost     %s · %s tok across %s — %s per unit",
+		wall.FmtUSD(s.CostTotal), wall.FmtTok(s.TokTotal), plural(s.CostPosts, "measured post"), wall.FmtUSD(s.CostTotal/float64(s.CostPosts)))
+	if s.CostFromStart > 0 {
+		line += fmt.Sprintf(" · %d counted from session start", s.CostFromStart)
+	}
+	return line + " · recorded beside the grades, never in them"
 }
 
 // graderLine counts the posts that name the cheap path they saw, without
