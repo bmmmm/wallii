@@ -22,7 +22,11 @@ func cmdAudit(args []string) error {
 	asJSON := fs.Bool("json", false, "JSON output")
 	fs.Parse(args)
 
-	since, err := parseSince(*sinceS, time.Now())
+	loc, err := reportZone()
+	if err != nil {
+		return err
+	}
+	since, err := parseSince(*sinceS, time.Now(), loc)
 	if err != nil {
 		return err
 	}

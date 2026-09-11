@@ -280,11 +280,15 @@ func TestDashCutsItsWindowAtLocalMidnightLikeCoverage(t *testing.T) {
 	// git against whatever checkouts this machine happens to have
 	t.Setenv("WALLII_REPO_ROOTS", t.TempDir())
 	now := time.Now()
-	since, err := parseSince("3d", now)
+	loc, err := reportZone()
 	if err != nil {
 		t.Fatal(err)
 	}
-	day := wall.DayStart(since, time.Local)
+	since, err := parseSince("3d", now, loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := wall.DayStart(since, loc)
 	// At exactly local midnight the two cuts coincide and this fixture tells
 	// them apart no better than any other — one millisecond out of a day. It
 	// still passes there; it just proves less, which is why it says so here

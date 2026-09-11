@@ -63,11 +63,11 @@ func (f filter) match(e wall.Event) bool {
 	return true
 }
 
-func parseSince(s string, now time.Time) (time.Time, error) {
+func parseSince(s string, now time.Time, loc *time.Location) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
 	}
-	if t, err := time.ParseInLocation("2006-01-02", s, time.Local); err == nil {
+	if t, err := time.ParseInLocation("2006-01-02", s, loc); err == nil {
 		return t, nil
 	}
 	if d, err := parseDur(s); err == nil {
@@ -93,7 +93,11 @@ func cmdTail(args []string) error {
 	asJSON := fs.Bool("json", false, "raw NDJSON output")
 	fs.Parse(args)
 
-	since, err := parseSince(*sinceS, time.Now())
+	loc, err := reportZone()
+	if err != nil {
+		return err
+	}
+	since, err := parseSince(*sinceS, time.Now(), loc)
 	if err != nil {
 		return err
 	}

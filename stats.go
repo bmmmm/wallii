@@ -22,7 +22,11 @@ func cmdStats(args []string) error {
 	asJSON := fs.Bool("json", false, "JSON output")
 	fs.Parse(args)
 
-	since, err := parseSince(*sinceS, time.Now())
+	loc, err := reportZone()
+	if err != nil {
+		return err
+	}
+	since, err := parseSince(*sinceS, time.Now(), loc)
 	if err != nil {
 		return err
 	}
@@ -57,7 +61,7 @@ func cmdStats(args []string) error {
 
 	window := "all time"
 	if *sinceS != "" {
-		if _, err := time.ParseInLocation("2006-01-02", *sinceS, time.Local); err == nil {
+		if _, err := time.ParseInLocation("2006-01-02", *sinceS, loc); err == nil {
 			window = "since " + *sinceS
 		} else {
 			window = "last " + *sinceS

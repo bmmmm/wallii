@@ -43,7 +43,11 @@ func cmdMirror(args []string) error {
 		return errors.New("mirror needs --actor <name> — it reflects one actor, never the room")
 	}
 	now := time.Now()
-	since, err := parseSince(*sinceS, now)
+	loc, err := reportZone()
+	if err != nil {
+		return err
+	}
+	since, err := parseSince(*sinceS, now, loc)
 	if err != nil {
 		return err
 	}

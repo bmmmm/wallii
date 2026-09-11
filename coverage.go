@@ -36,7 +36,10 @@ func cmdCoverage(args []string) error {
 	fs.Parse(args)
 
 	now := coverageClock()
-	loc := time.Local
+	loc, err := reportZone()
+	if err != nil {
+		return err
+	}
 	since, split, err := coverageWindow(*sinceS, *splitS, now, loc)
 	if err != nil {
 		return err
@@ -122,7 +125,7 @@ var coverageClock = time.Now
 // judged whole or not at all, and the head line's first date is the date
 // the window really starts on.
 func coverageWindow(sinceS, splitS string, now time.Time, loc *time.Location) (since, split time.Time, err error) {
-	since, err = parseSince(sinceS, now)
+	since, err = parseSince(sinceS, now, loc)
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}

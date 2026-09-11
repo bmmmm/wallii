@@ -82,8 +82,7 @@ type dashCoverage struct {
 // for. git runs here and in cmdCoverage only — both are commands a person
 // types. Returns nil when no repo could be measured, which is the honest
 // answer and the one the card knows how to render.
-func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time) *dashCoverage {
-	loc := time.Local
+func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time, loc *time.Location) *dashCoverage {
 	from := since
 	if from.IsZero() {
 		// no --since: the window is the wall itself, starting at its first post
@@ -146,7 +145,11 @@ func cmdDash(args []string) error {
 	openIt := fs.Bool("open", false, "open the dashboard in the browser")
 	fs.Parse(args)
 
-	since, err := parseSince(*sinceS, time.Now())
+	loc, err := reportZone()
+	if err != nil {
+		return err
+	}
+	since, err := parseSince(*sinceS, time.Now(), loc)
 	if err != nil {
 		return err
 	}
@@ -158,7 +161,7 @@ func cmdDash(args []string) error {
 	// day as blind that `wallii coverage --since 3d` read as covered, off
 	// the same wall and the same window.
 	if !since.IsZero() {
-		since = wall.DayStart(since, time.Local)
+		since = wall.DayStart(since, loc)
 	}
 	dir, err := wall.Dir()
 	if err != nil {
@@ -222,7 +225,7 @@ func cmdDash(args []string) error {
 	}
 	// json.Marshal of a nil *dashCoverage is the literal null the card reads
 	// as "nobody measured"
-	cov, err := json.Marshal(collectDashCoverage(evs, wallStart, since, time.Now()))
+	cov, err := json.Marshal(collectDashCoverage(evs, wallStart, since, time.Now(), loc))
 	if err != nil {
 		return err
 	}
