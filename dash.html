@@ -18,6 +18,12 @@
     --accent: #2a78d6; --track: #cde2fb;
     --up: #006300; --down: #d03b3b;
     --h1: #cde2fb; --h2: #9ec5f4; --h3: #6da7ec; --h4: #3987e5; --h5: #256abf; --h6: #184f95;
+    /* Text ON the ramp. The heatmap never needed this — it labels its axes,
+       never its cells — but a treemap writes inside the tile. The ramp runs
+       light→dark here and dark→light in the dark theme, so the readable ink
+       flips with it; the crossing sits between h4 and h5 in both, measured
+       by relative luminance, which is why two variables do and not twelve. */
+    --ht-lo: #0b0b0b; --ht-hi: #ffffff;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
@@ -31,6 +37,7 @@
       --accent: #3987e5; --track: #0d366b;
       --up: #0ca30c; --down: #d03b3b;
       --h1: #0d366b; --h2: #104281; --h3: #1c5cab; --h4: #256abf; --h5: #3987e5; --h6: #6da7ec;
+      --ht-lo: #ffffff; --ht-hi: #0b0b0b;
     }
   }
   :root[data-theme="dark"] {
@@ -44,6 +51,7 @@
     --accent: #3987e5; --track: #0d366b;
     --up: #0ca30c; --down: #d03b3b;
     --h1: #0d366b; --h2: #104281; --h3: #1c5cab; --h4: #256abf; --h5: #3987e5; --h6: #6da7ec;
+    --ht-lo: #ffffff; --ht-hi: #0b0b0b;
   }
 
   * { box-sizing: border-box; }
@@ -150,17 +158,21 @@
   <div class="filters" id="families"></div>
   <div class="tiles" id="tiles"></div>
 
+  <!-- The order you see is this list, not the order renderAll() fills it in:
+       every card is an empty container here and JS only replaces its children.
+       The feed leads because the newest posts are what the page is opened for;
+       the charts answer questions you have to go looking for. -->
   <div class="grid">
+    <div class="card wide" id="c-feed"></div>
     <div class="card wide" id="c-activity"></div>
     <div class="card wide" id="c-blind"></div>
     <div class="card" id="c-outcome"></div>
     <div class="card" id="c-mood"></div>
     <div class="card" id="c-heat"></div>
     <div class="card" id="c-coverage"></div>
-    <div class="card" id="c-repos"></div>
+    <div class="card wide" id="c-repos"></div>
     <div class="card" id="c-topics"></div>
     <div class="card wide" id="c-agents"></div>
-    <div class="card wide" id="c-feed"></div>
   </div>
 
   <footer>every value in the charts is also in each card's table view · outcome / took / mood are optional post flags — the coverage card shows how much of the wall carries them</footer>
@@ -668,6 +680,109 @@ function renderHeat(agg) {
     agg.heat.flatMap((row, d) => row.map((v, h) => v ? [`${WDAYS[d]} ${h}:00`, v] : null).filter(Boolean))));
 }
 
+/* ---------- treemap: every repo, no fold ----------
+   The bar chart below folds everything past rank 9 into one "Other" row. On
+   topics that is honest — the top eight carry 86% of the posts. On repos it
+   is not: 39 repos, the largest holding 10.7%, ranks 1-9 all between 5.4%
+   and 10.7%, and "Other (30)" standing for 42% of the wall in a single bar
+   four times longer than any real one. There is no tail to cut here, so the
+   chart stops cutting: area is the count, every repo gets its own tile, and
+   the proportion is the picture instead of a footnote contradicting it. */
+
+/* worst is the squarified-treemap cost function: the worst aspect ratio a
+   row would have if this item joined it. Lower is squarer, and squarer tiles
+   are the ones you can compare by eye and write a label into. */
+function worstRatio(row, side) {
+  const s = row.reduce((a, b) => a + b, 0);
+  if (!s) return Infinity;
+  const mx = Math.max(...row), mn = Math.min(...row);
+  return Math.max((side * side * mx) / (s * s), (s * s) / (side * side * mn));
+}
+
+/* squarify lays areas into x,y,w,h rectangles, largest first. Areas must
+   already sum to w*h — the caller scales — and none may be zero: a zero area
+   divides by zero in worstRatio and would swallow the row it lands in. */
+function squarify(areas, x, y, w, h) {
+  const out = [];
+  for (let i = 0; i < areas.length;) {
+    const side = Math.min(w, h);
+    let row = [areas[i]], best = worstRatio(row, side), j = i + 1;
+    while (j < areas.length) {
+      const next = row.concat(areas[j]);
+      const r = worstRatio(next, side);
+      if (r > best) break; // adding this one makes the row worse — close it
+      row = next; best = r; j++;
+    }
+    const sum = row.reduce((a, b) => a + b, 0);
+    if (w >= h) {
+      const rw = sum / h;
+      let cy = y;
+      for (const a of row) { const rh = a / rw; out.push({ x, y: cy, w: rw, h: rh }); cy += rh; }
+      x += rw; w -= rw;
+    } else {
+      const rh = sum / w;
+      let cx = x;
+      for (const a of row) { const rw = a / rh; out.push({ x: cx, y, w: rw, h: rh }); cx += rw; }
+      y += rh; h -= rh;
+    }
+    i = j;
+  }
+  return out;
+}
+
+function renderTreemap(agg) {
+  const c = card("c-repos", "Where the work happens", "posts per repo — area is the count, every repo has its own tile");
+  const items = Object.entries(agg.repoCounts)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (!items.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
+  const total = items.reduce((s, r) => s + r[1], 0);
+  // The viewBox is the card's real width in CSS pixels, so the SVG is never
+  // scaled and 10px type renders as 10px type. A fixed viewBox would be
+  // squeezed to 0.39x at phone width — measured: labels at 3.9px, tiles at
+  // 3.8px, a picture of a treemap rather than one. The `|| 840` catches a
+  // container that cannot measure itself (the node harness' stub DOM answers
+  // 0), and the floor keeps the layout sane in a very narrow card.
+  const W = Math.max(360, Math.round(c.clientWidth - 34) || 840);
+  const H = Math.max(220, Math.min(320, Math.round(W * 0.36)));
+  const areas = items.map(([, v]) => v / total * W * H);
+  const boxes = squarify(areas, 0, 0, W, H);
+  // no .narrow here: that cap exists so a small viewBox does not upscale its
+  // type across a full-width card, and this viewBox is already the full width
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+  items.forEach(([name, v], i) => {
+    const b = boxes[i];
+    // rank, not value, picks the shade: with a flat distribution the values
+    // crowd into two steps and the ramp stops saying anything
+    const shade = Math.min(6, Math.max(1, 6 - Math.floor(i / items.length * 6)));
+    const g = svgEl("g", { tabindex: "0" });
+    g.append(svgEl("rect", {
+      x: b.x + 0.5, y: b.y + 0.5, width: Math.max(b.w - 1, 0.5), height: Math.max(b.h - 1, 0.5),
+      rx: 3, fill: `var(--h${shade})`,
+    }));
+    // A label is written only where it fits. Everything else says its name on
+    // hover and in the table view below — a clipped name is worse than none.
+    if (b.w >= 56 && b.h >= 22) {
+      const ink = shade >= 5 ? "var(--ht-hi)" : "var(--ht-lo)";
+      const room = Math.floor((b.w - 12) / 5.6); // ~5.6px per char at 10px
+      svg.append(g);
+      svg.append(svgEl("text", {
+        x: b.x + 6, y: b.y + 14, "font-size": 10, fill: ink,
+        text: name.length > room ? name.slice(0, Math.max(1, room - 1)) + "…" : name,
+      }));
+      if (b.h >= 34) {
+        svg.append(svgEl("text", { x: b.x + 6, y: b.y + 26, "font-size": 10, fill: ink, "fill-opacity": 0.75, text: String(v) }));
+      }
+    } else {
+      svg.append(g);
+    }
+    hover(g, `<div class="l">${esc(name)} · ${v} post${v === 1 ? "" : "s"} · ${Math.round(v / total * 100)}%</div>`);
+  });
+  c.append(svg);
+  c.append(el("div", { class: "sub", text: `${items.length} repos · ${total} posts · nothing is folded away` }));
+  c.append(tableView(["", "posts"], items.map(([n, v]) => [n, v])));
+}
+
 function renderBars(id, title, sub, counts) {
   const c = card(id, title, sub);
   const items = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
@@ -727,27 +842,50 @@ function renderCoverage(agg) {
   }
 }
 
+/* Actors below this many posts are folded away — never dropped. Measured over
+   a 30-day window: 25 of 40 actors sit under it and carry 4.7% of the posts
+   between them, so the table was three quarters scrolling past one-offs. The
+   opposite of the repo card above, and for the opposite reason: here there is
+   almost nothing BUT tail. */
+const AGENT_FOLD_MIN = 5;
+
 function renderAgents(agg) {
   const c = card("c-agents", "The agents", "per actor, across all repos in range · the swatch is the family's color · landed % is over outcome-reporting posts");
   const names = Object.keys(agg.actors).sort((a, b) => agg.actors[b].posts - agg.actors[a].posts || a.localeCompare(b));
   if (!names.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
-  const table = el("table", { class: "agents" },
-    el("tr", {}, el("th", { text: "actor" }), el("th", { text: "posts", class: "n" }), el("th", { text: "repos", class: "n" }),
-      el("th", { text: "landed", class: "n" }), el("th", { text: "mood", class: "n" }), el("th", { text: "refs", class: "n" }), el("th", { text: "last post", class: "n" })));
-  for (const name of names) {
-    const a = agg.actors[name];
-    const rep = a.ok + a.partial + a.failed;
-    const swatch = el("span", { class: "sw", style: `display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px;background:var(${slotOfActor(name)})` });
-    table.append(el("tr", {},
-      el("td", {}, swatch, el("span", { text: name })),
-      el("td", { text: String(a.posts), class: "n" }),
-      el("td", { text: String(Object.keys(a.repos).length), class: "n" }),
-      el("td", { text: rep ? pct(a.ok, rep) + "%" : "—", class: "n" }),
-      el("td", { text: a.moodN ? (a.moodSum / a.moodN).toFixed(1) : "—", class: "n" }),
-      el("td", { text: pct(a.refs, a.posts) + "%", class: "n" }),
-      el("td", { text: fmtDay(a.last), class: "n" })));
+  const agentTable = list => {
+    const t = el("table", { class: "agents" },
+      el("tr", {}, el("th", { text: "actor" }), el("th", { text: "posts", class: "n" }), el("th", { text: "repos", class: "n" }),
+        el("th", { text: "landed", class: "n" }), el("th", { text: "mood", class: "n" }), el("th", { text: "refs", class: "n" }), el("th", { text: "last post", class: "n" })));
+    for (const name of list) {
+      const a = agg.actors[name];
+      const rep = a.ok + a.partial + a.failed;
+      const swatch = el("span", { class: "sw", style: `display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px;background:var(${slotOfActor(name)})` });
+      t.append(el("tr", {},
+        el("td", {}, swatch, el("span", { text: name })),
+        el("td", { text: String(a.posts), class: "n" }),
+        el("td", { text: String(Object.keys(a.repos).length), class: "n" }),
+        el("td", { text: rep ? pct(a.ok, rep) + "%" : "—", class: "n" }),
+        el("td", { text: a.moodN ? (a.moodSum / a.moodN).toFixed(1) : "—", class: "n" }),
+        el("td", { text: pct(a.refs, a.posts) + "%", class: "n" }),
+        el("td", { text: fmtDay(a.last), class: "n" })));
+    }
+    return t;
+  };
+  const named = names.filter(n => agg.actors[n].posts >= AGENT_FOLD_MIN);
+  const rest = names.filter(n => agg.actors[n].posts < AGENT_FOLD_MIN);
+  // Every actor under the threshold, and no actor above it, would both leave a
+  // table that says nothing: show the lot unfolded rather than an empty one
+  // with a disclosure underneath.
+  if (!named.length) { c.append(agentTable(names)); return; }
+  c.append(agentTable(named));
+  if (rest.length) {
+    // the summary carries both numbers, or the fold hides an unknown quantity
+    const posts = rest.reduce((s, n) => s + agg.actors[n].posts, 0);
+    c.append(el("details", { class: "tv" },
+      el("summary", { text: `${rest.length} more agent${rest.length === 1 ? "" : "s"} with fewer than ${AGENT_FOLD_MIN} posts · ${posts} post${posts === 1 ? "" : "s"}` }),
+      agentTable(rest)));
   }
-  c.append(table);
 }
 
 function renderFeed(agg) {
@@ -837,16 +975,16 @@ let currentRange = 30;
 function renderAll() {
   const agg = aggregate(currentRange);
   renderTiles(agg);
+  renderFeed(agg);
   renderActivity(agg);
   renderBlind(agg);
   renderOutcome(agg);
   renderMood(agg);
   renderHeat(agg);
   renderCoverage(agg);
-  renderBars("c-repos", "Where the work happens", "posts per repo", agg.repoCounts);
+  renderTreemap(agg);
   renderBars("c-topics", "What kind of work", "posts per topic", agg.topicCounts);
   renderAgents(agg);
-  renderFeed(agg);
 }
 function renderFilters() {
   const f = $("filters");
