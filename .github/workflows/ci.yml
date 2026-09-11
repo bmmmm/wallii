@@ -28,7 +28,14 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
-      - run: go test ./...
+      # WALLII_TEST_BIND turns on the one thing httptest.NewRecorder cannot
+      # cover: `dash --serve` on a real listener. It skips where nothing may
+      # bind (the sandbox this was written in), so it is asked for here for
+      # the same reason node is. -race because the watcher goroutine and the
+      # handlers share state.
+      - run: go test -race ./...
+        env:
+          WALLII_TEST_BIND: '1'
       - run: go build .
 
   # The Stop hook is the measuring half of the self-report: what it finds gets
