@@ -58,6 +58,44 @@ func TestUnitCostsReadTheDeltaPerSession(t *testing.T) {
 
 func nearly(a, b float64) bool { d := a - b; return d < 1e-9 && d > -1e-9 }
 
+// A statusline that read the same numbers twice is the unreadable case, not
+// a free one. Two posts inside one turn (or a file that stopped updating)
+// move neither the cost nor the tokens, and an entry for that would cost
+// nothing while still taking a place in the denominator — every per-unit
+// average dragged toward zero by work nobody measured. Measured on the real
+// wall the day the feature landed: 5 of 37 units read $0.00 · 0 tok, and
+// dropping them moved the average from $14.09 to $16.29.
+//
+// A cost that stood still while tokens moved is a different thing — a unit
+// under the cent rounding — and it has to survive, or the fix would swallow
+// cheap work along with the phantoms.
+func TestUnitCostsDropTheReadingWhereNothingMoved(t *testing.T) {
+	first := costPost(1, "claude/main", "aaaaaaaa", 3.84, 40000)
+	same := costPost(2, "claude/main", "aaaaaaaa", 3.84, 40000)  // same turn: nothing moved
+	cheap := costPost(3, "claude/main", "aaaaaaaa", 3.84, 40242) // under the rounding, but tokens moved
+	after := costPost(4, "claude/main", "aaaaaaaa", 4.10, 41000)
+
+	got := UnitCosts([]Event{first, same, cheap, after})
+	if u, ok := got[same.ID()]; ok {
+		t.Errorf("a reading where neither number moved was stored as %+v, want no entry", u)
+	}
+	u, ok := got[cheap.ID()]
+	if !ok {
+		t.Fatal("a unit that moved tokens but no cents was dropped — that one was measured")
+	}
+	if !nearly(u.CostUSD, 0) || u.Tok != 242 {
+		t.Errorf("cheap unit = %+v, want 0 USD and 242 tok", u)
+	}
+	// the post after the standstill still reads against its true
+	// predecessor, so the dropped reading costs nothing downstream
+	if u := got[after.ID()]; !nearly(u.CostUSD, 0.26) || u.Tok != 758 {
+		t.Errorf("unit after the standstill = %+v, want 0.26 USD and 758 tok", u)
+	}
+	if len(got) != 3 {
+		t.Errorf("%d units read, want 3 (first, cheap, after): %+v", len(got), got)
+	}
+}
+
 // The note names the delta, says what it is a delta to, and stays silent
 // when there is nothing measured to say.
 func TestUnitNote(t *testing.T) {
@@ -153,6 +191,46 @@ func TestHauntingsCarryTheUnitCost(t *testing.T) {
 	}
 	if !nearly(s.CostHaunted, 0.31) || !nearly(s.CostFixes, 0.49) || !nearly(s.CostWindow, 1.30) {
 		t.Errorf("summary cost = haunted %g fixes %g window %g, want 0.31 0.49 1.30", s.CostHaunted, s.CostFixes, s.CostWindow)
+	}
+}
+
+// One fix can close two oks. The pairs are the unit of the listing — both
+// are printed, both are real — but the post is the unit of the spend, and
+// it was paid for once. Summing it per pair reports money that was never
+// spent, and the count beside the sum ("the fixes another $X (N measured)")
+// inflates with it.
+func TestOneFixClosingTwoOksIsPaidForOnce(t *testing.T) {
+	ts := time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)
+	mk := func(h int, topic, msg string, cost float64, tok int64, ok bool) Event {
+		e := Event{TS: ts.Add(time.Duration(h) * time.Hour), Repo: "webshop", Actor: "bot", Topic: topic, Msg: msg,
+			Sess: "aaaaaaaa", CostSrc: CostSession, CostCum: cost, TokCum: tok}
+		if ok {
+			e.Outcome = OutcomeOK
+		}
+		return e
+	}
+	evs := []Event{
+		mk(0, "docs", "readme lists every flag", 1.00, 1000, true),
+		// two oks on the same ground, and one fix that answers both
+		mk(1, "feature", "voucher totals stable across discount rounds", 1.40, 1500, true),
+		mk(2, "feature", "voucher totals verified for discount rounds", 1.70, 1900, true),
+		mk(3, "fix", "voucher totals drifted on discount rounds after all", 2.20, 2500, false), // unit 0.50
+	}
+	haunted := Hauntings(evs)
+	if len(haunted) != 2 {
+		t.Fatalf("fixture must pair one fix with two oks, got %d pairs", len(haunted))
+	}
+	if haunted[0].Fix.ID() != haunted[1].Fix.ID() {
+		t.Fatalf("fixture must reuse the same fix, got %s and %s", haunted[0].Fix.ID(), haunted[1].Fix.ID())
+	}
+	s := Summarize(evs, haunted, ts.Add(30*24*time.Hour))
+	if s.CostFixesN != 1 || !nearly(s.CostFixes, 0.50) {
+		t.Errorf("fixes = %g over %d measured, want 0.50 over 1 — the fix post cost 0.50 once",
+			s.CostFixes, s.CostFixesN)
+	}
+	// the oks are genuinely two posts and two spends, so that side stays
+	if s.CostHauntedN != 2 || !nearly(s.CostHaunted, 0.70) {
+		t.Errorf("haunted oks = %g over %d measured, want 0.70 over 2", s.CostHaunted, s.CostHauntedN)
 	}
 }
 

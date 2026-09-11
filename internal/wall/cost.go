@@ -28,7 +28,8 @@ type Unit struct {
 // posted it — a session is one agent's, and an actor switch inside it is
 // still the same spend. A negative delta (a cache that started over, two
 // sessions sharing a key) yields no entry, never a zero: absent means
-// unreadable, zero would mean free.
+// unreadable, zero would mean free. A delta where neither number moved at
+// all says the same thing and is dropped for the same reason.
 func UnitCosts(evs []Event) map[string]Unit {
 	bySess := map[string][]Event{}
 	for _, e := range evs {
@@ -48,6 +49,17 @@ func UnitCosts(evs []Event) map[string]Unit {
 			prev := run[i-1]
 			dc, dt := e.CostCum-prev.CostCum, e.TokCum-prev.TokCum
 			if dc < 0 || dt < 0 {
+				continue
+			}
+			// Neither number moved: the statusline was read twice and said
+			// the same thing — two posts inside one turn, or a file that
+			// stopped updating. That is the unreadable case, not a free
+			// one, and the comment above forbids storing it as a zero. An
+			// entry here would cost nothing and still take a place in the
+			// denominator, pulling every per-unit average toward zero. A
+			// cost that stood still while tokens moved is a different
+			// thing — a unit under the rounding — and it stays.
+			if dc == 0 && dt == 0 {
 				continue
 			}
 			out[e.ID()] = Unit{CostUSD: dc, Tok: dt}

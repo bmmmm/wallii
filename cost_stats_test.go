@@ -64,3 +64,66 @@ func TestTailJSONCarriesTheUnitCost(t *testing.T) {
 		t.Errorf("first post lacks the from-start reading: %s", full)
 	}
 }
+
+// edgeWall writes a session whose baseline post sits OUTSIDE the window the
+// commands below ask for: a post ten days back, then two inside the last
+// three days. The units are 1.20 and 0.06 — but only if they were read off
+// the whole wall. Read off the window instead, the first post inside it has
+// no predecessor and gets priced as the whole session (5.44), which is 4.4×
+// the truth and still a perfectly plausible number.
+func edgeWall(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	now := time.Now()
+	for _, e := range []wall.Event{
+		{TS: now.AddDate(0, 0, -10), Repo: "webshop", Actor: "bot/builder", Topic: "docs", Outcome: wall.OutcomeOK,
+			Msg: "readme lists every flag", Sess: "aaaaaaaa", CostSrc: wall.CostSession, CostCum: 4.24, TokCum: 4240},
+		{TS: now.Add(-36 * time.Hour), Repo: "webshop", Actor: "bot/builder", Topic: "feature", Outcome: wall.OutcomeOK,
+			Msg: "cart totals stable across discount rounds", Sess: "aaaaaaaa", CostSrc: wall.CostSession, CostCum: 5.44, TokCum: 5440},
+		{TS: now.Add(-35 * time.Hour), Repo: "webshop", Actor: "bot/builder", Topic: "fix",
+			Msg: "cart totals drifted on discount rounds once more", Sess: "aaaaaaaa", CostSrc: wall.CostSession, CostCum: 5.50, TokCum: 5500},
+	} {
+		if err := wall.Append(dir, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// `wallii stats --since` reads the units off the whole wall and windows
+// only which of them it sums. The library half of this is pinned in
+// internal/wall; this is the command half, and it was the half nobody
+// guarded: turning stats.go's wall.UnitCosts(all) back into UnitCosts(evs)
+// left the whole suite green while the reported spend went from $1.26 to
+// $5.50 and the per-unit figure from $0.63 to $2.75.
+func TestStatsReadsUnitsOffTheWholeWallNotTheWindow(t *testing.T) {
+	edgeWall(t)
+	out := captureStdout(t, func() error { return cmdStats([]string{"--since", "3d"}) })
+	for _, want := range []string{"$1.26", "across 2 measured posts", "$0.63 per unit"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stats is missing %q — the units were read off the window, not the wall:\n%s", want, out)
+		}
+	}
+	// the post at the window's edge has a predecessor on the wall, so
+	// nothing inside the window counts from a session start
+	if strings.Contains(out, "from session start") {
+		t.Errorf("a post at the window edge was priced as a whole session:\n%s", out)
+	}
+}
+
+// The same for `wallii audit --since`: the pair's two readings and both
+// sums come off the whole wall. Under UnitCosts(evs) the haunted ok reads
+// $5.44 instead of $1.20 — the audit's whole point is what a shortcut cost,
+// and that number would be the session's, not the unit's.
+func TestAuditReadsUnitsOffTheWholeWallNotTheWindow(t *testing.T) {
+	edgeWall(t)
+	out := captureStdout(t, func() error { return cmdAudit([]string{"--since", "3d"}) })
+	for _, want := range []string{"ok cost $1.20", "fix cost $0.06", "haunted oks cost $1.20", "of $1.26 measured in the window"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("audit is missing %q — the units were read off the window, not the wall:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "$5.44") || strings.Contains(out, "$5.50") {
+		t.Errorf("audit priced a post at the window edge as a whole session:\n%s", out)
+	}
+}

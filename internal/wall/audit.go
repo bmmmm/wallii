@@ -83,6 +83,11 @@ func Summarize(evs []Event, haunted []Haunting, now time.Time) AuditSummary {
 func SummarizeWith(evs []Event, haunted []Haunting, now time.Time, units map[string]Unit) AuditSummary {
 	var s AuditSummary
 	byID := map[string]struct{}{}
+	// One fix can close two oks — HauntingsWith pairs per ok and stops at
+	// the first fix, so the ok side is unique here but the fix side is not.
+	// The pair is the unit of the listing; the post is the unit of the
+	// spend, and a post was paid for once however many oks it answered.
+	paidFix := map[string]struct{}{}
 	for _, h := range haunted {
 		byID[h.OK.ID()] = struct{}{}
 		if h.Measured {
@@ -92,6 +97,10 @@ func SummarizeWith(evs []Event, haunted []Haunting, now time.Time, units map[str
 			s.CostHaunted += u.CostUSD
 			s.CostHauntedN++
 		}
+		if _, seen := paidFix[h.Fix.ID()]; seen {
+			continue
+		}
+		paidFix[h.Fix.ID()] = struct{}{}
 		if u, ok := units[h.Fix.ID()]; ok {
 			s.CostFixes += u.CostUSD
 			s.CostFixesN++
