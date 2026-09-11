@@ -442,6 +442,16 @@ func TestDashPlaceholdersSurviveAPostNamedAfterThem(t *testing.T) {
 				t.Fatal(err)
 			}
 			html := string(b)
+			// Positive control, and it is the whole test: the odd name only
+			// reaches the output through the commits JSON, and that struct
+			// is nil — inlined as `null` — whenever no repo could be
+			// measured. No git on the runner, a git that outran
+			// gitTimeout(), a checkout that moved: all of them leave the
+			// assertions below with nothing to find and pass in silence.
+			if !strings.Contains(html, `"unresolved":["`+ph+`"]`) {
+				t.Fatalf("the fixture did not carry %s into the commits JSON — this test would pass on a broken substitution:\n%s",
+					ph, firstLineWith(html, "const COMMITS"))
+			}
 			// the name is allowed to appear as data — inside a JSON string.
 			// What must not survive is the placeholder in the position the
 			// template put it in, waiting to be read as a value.

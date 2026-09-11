@@ -240,56 +240,7 @@ func TestDashCardAggregatesWhatTheGoSideCounted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	start, end := strings.Index(dashTemplate, "<script>"), strings.LastIndex(dashTemplate, "</script>")
-	if start < 0 || end < 0 {
-		t.Fatal("dash.html has no <script> block to run")
-	}
-	script := dashTemplate[start+len("<script>") : end]
-	script = strings.Replace(script, "__GENERATED__", "fixture", 1)
-	script = strings.Replace(script, "__WALLII_COMMITS__", string(cov), 1)
-	script = strings.Replace(script, "__WALLII_FAMILIES__", "{}", 1)
-	script = strings.Replace(script, "__WALLII_DATA__", string(evs), 1)
-	// a DOM that accepts everything and answers with itself, so the page's
-	// own top-level rendering runs to the end without a browser
-	harness := `const stub = new Proxy(function () {}, {
-  get: (_, k) => k === Symbol.toPrimitive ? () => 0 : k === Symbol.iterator ? function* () {} : k === "then" ? undefined : stub,
-  set: () => true, apply: () => stub, construct: () => stub, has: () => true,
-});
-for (const g of ["document", "window", "localStorage", "navigator", "matchMedia", "location", "requestAnimationFrame"]) globalThis[g] = stub;
-` + script + `
-const agg = aggregate(7);
-console.log("RESULT " + JSON.stringify({
-  days: agg.days,
-  buckets: agg.buckets.map(b => ({ t0: b.t0, cov: b.cov, commits: b.commits, mposts: b.mposts })),
-}));
-`
-	path := filepath.Join(t.TempDir(), "dash-harness.js")
-	if err := os.WriteFile(path, []byte(harness), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command(node, path).CombinedOutput()
-	if err != nil {
-		t.Fatalf("the dashboard script did not run under node: %v\n%s", err, out)
-	}
-	var res struct {
-		Days []struct {
-			T0             int64
-			Commits, Posts int
-			Cov            bool
-		}
-		Buckets []struct {
-			T0              int64
-			Commits, Mposts int
-			Cov             bool
-		}
-	}
-	_, payload, ok := strings.Cut(string(out), "RESULT ")
-	if !ok {
-		t.Fatalf("no result line from node:\n%s", out)
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(payload)), &res); err != nil {
-		t.Fatalf("cannot read the aggregate back: %v\n%s", err, out)
-	}
+	res := runDashAggregate(t, node, string(cov), string(evs), 7)
 	if len(res.Days) != 7 || len(res.Buckets) != 7 {
 		t.Fatalf("a 7-day range walked %d days into %d buckets", len(res.Days), len(res.Buckets))
 	}
@@ -325,6 +276,9 @@ console.log("RESULT " + JSON.stringify({
 func TestDashCutsItsWindowAtLocalMidnightLikeCoverage(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("WALLII_DIR", dir)
+	// an empty roots dir, or cmdDash falls back to defaultRepoRoots and forks
+	// git against whatever checkouts this machine happens to have
+	t.Setenv("WALLII_REPO_ROOTS", t.TempDir())
 	now := time.Now()
 	since, err := parseSince("3d", now)
 	if err != nil {
@@ -401,10 +355,15 @@ func TestDashAllReachesBackToTheCollectedWindow(t *testing.T) {
 	if len(res.Days) == 0 {
 		t.Fatal(`"all" walked no days at all`)
 	}
+	// compared as a calendar day, not as an instant: this test is about which
+	// day the walk opens on, and where local midnight does not exist — a DST
+	// jump at 00:00, as in America/Santiago — Go's time.Date and the
+	// browser's setHours each land an hour to one side of the boundary. An
+	// instant comparison would then report two identical dates as unequal
+	// and say nothing about the thing being tested.
 	first := time.UnixMilli(res.Days[0].T0).In(loc)
-	if !first.Equal(from) {
-		t.Errorf(`"all" starts its walk at %s, want %s — the collected window opens there and its commits have to be walked`,
-			first.Format("2006-01-02"), from.Format("2006-01-02"))
+	if got, want := first.Format("2006-01-02"), from.Format("2006-01-02"); got != want {
+		t.Errorf(`"all" starts its walk at %s, want %s — the collected window opens there and its commits have to be walked`, got, want)
 	}
 	var commits int
 	for _, day := range res.Days {
@@ -431,6 +390,8 @@ func runDashAggregate(t *testing.T, node, cov, evs string, rangeDays int) dashAg
 		"__WALLII_FAMILIES__", "{}",
 		"__WALLII_DATA__", evs,
 	).Replace(dashTemplate[start+len("<script>") : end])
+	// a DOM that accepts everything and answers with itself, so the page's
+	// own top-level rendering runs to the end without a browser
 	harness := `const stub = new Proxy(function () {}, {
   get: (_, k) => k === Symbol.toPrimitive ? () => 0 : k === Symbol.iterator ? function* () {} : k === "then" ? undefined : stub,
   set: () => true, apply: () => stub, construct: () => stub, has: () => true,
@@ -438,7 +399,10 @@ func runDashAggregate(t *testing.T, node, cov, evs string, rangeDays int) dashAg
 for (const g of ["document", "window", "localStorage", "navigator", "matchMedia", "location", "requestAnimationFrame"]) globalThis[g] = stub;
 ` + script + `
 const agg = aggregate(` + strconv.Itoa(rangeDays) + `);
-console.log("RESULT " + JSON.stringify({ days: agg.days }));
+console.log("RESULT " + JSON.stringify({
+  days: agg.days,
+  buckets: agg.buckets.map(b => ({ t0: b.t0, cov: b.cov, commits: b.commits, mposts: b.mposts })),
+}));
 `
 	path := filepath.Join(t.TempDir(), "dash-harness.js")
 	if err := os.WriteFile(path, []byte(harness), 0o600); err != nil {
@@ -464,6 +428,11 @@ type dashAggResult struct {
 		T0             int64
 		Commits, Posts int
 		Cov            bool
+	}
+	Buckets []struct {
+		T0              int64
+		Commits, Mposts int
+		Cov             bool
 	}
 }
 

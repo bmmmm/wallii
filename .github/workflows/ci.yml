@@ -17,6 +17,14 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: 'stable'
+      # The dash tests run dash.html's own script under node — the only
+      # coverage the browser half has. They t.Skip without it, so a runner
+      # that happens not to carry node would turn that coverage off without
+      # saying anything. Asked for explicitly rather than inherited from
+      # whatever the image ships.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...

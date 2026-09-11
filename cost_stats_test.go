@@ -90,6 +90,38 @@ func edgeWall(t *testing.T) {
 	}
 }
 
+// The same argument the commit above makes, applied to itself: the standstill
+// guard lives in internal/wall, and dropping it leaves this package's suite
+// green. This is the half a person reads — the per-unit figure in `wallii
+// stats` is what the session recap quotes, and a phantom unit moves it
+// without moving a single dollar.
+func TestStatsDoesNotCountAStandstillAsAMeasuredUnit(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	now := time.Now()
+	for i, e := range []wall.Event{
+		{Repo: "webshop", Actor: "bot/builder", Msg: "retry loop waits for the fsync now",
+			Sess: "aaaaaaaa", CostSrc: wall.CostSession, CostCum: 3.84, TokCum: 40000},
+		// second post of the same turn: the statusline had not moved
+		{Repo: "webshop", Actor: "bot/builder", Msg: "and the readme says so",
+			Sess: "aaaaaaaa", CostSrc: wall.CostSession, CostCum: 3.84, TokCum: 40000},
+		{Repo: "webshop", Actor: "bot/builder", Msg: "invoice numbering holds under retries",
+			Sess: "aaaaaaaa", CostSrc: wall.CostSession, CostCum: 4.10, TokCum: 41000},
+	} {
+		e.TS = now.Add(time.Duration(i-3) * time.Hour)
+		if err := wall.Append(dir, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := captureStdout(t, func() error { return cmdStats(nil) })
+	for _, want := range []string{"$4.10", "across 2 measured posts", "$2.05 per unit"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stats is missing %q — a post where nothing moved was counted as a measured unit:\n%s",
+				want, firstLineWith(out, "cost "))
+		}
+	}
+}
+
 // `wallii stats --since` reads the units off the whole wall and windows
 // only which of them it sums. The library half of this is pinned in
 // internal/wall; this is the command half, and it was the half nobody

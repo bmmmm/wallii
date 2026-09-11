@@ -245,7 +245,14 @@ Because the page is self-contained, it is also directly servable: point a
 static web server at the file and the dashboard works as-is, no wallii on that
 host. Treat that as a publishing decision rather than a convenience — the file
 carries the full text of every post, so whoever reaches the URL reads the wall.
-`--since` bounds what goes in; the file grows with the wall otherwise.
+`--since` bounds what goes in; the file grows with the wall otherwise. It
+bounds by *day*, not by the hour you named: the window is rounded down to
+local midnight, the way `coverage --since` rounds it, because git is asked
+for whole days and a day bucket holding a full day of commits against half a
+day of posts reads as blind when it was not. So `--since 1h` at noon inlines
+everything back to 00:00, and a snapshot meant for a web server carries that
+whole day. The file's own header line names the day it starts on — read it
+before publishing, not the flag you typed.
 
 Outcomes use `ok | partial | failed` (the fix-loop STATUS vocabulary),
 moods use `great | good | ok | rough | stuck` — averaged as 5…1, so an
