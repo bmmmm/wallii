@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	// tzdata so a zone name resolves the same everywhere, including images
+	// that ship without /usr/share/zoneinfo. ~450 KB in a 12 MB binary.
+	_ "time/tzdata"
 )
 
 // version is overridable via -ldflags; `go install module@vX` builds report

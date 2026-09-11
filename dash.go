@@ -113,7 +113,7 @@ func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time) *das
 	if c.WallStart.After(fromDay) {
 		fromDay = wall.DayStart(c.WallStart, loc)
 	}
-	toDay := wall.DayStart(now, loc).AddDate(0, 0, 1)
+	toDay := wall.NextDay(now, loc)
 	out := &dashCoverage{
 		From: fromDay.UnixMilli(), To: toDay.UnixMilli(), Days: map[string]int{},
 		Repos:        make([]string, 0, len(c.Repos)),

@@ -250,7 +250,7 @@ func Coverage(evs []Event, commits map[string]RepoCommits, loc *time.Location, f
 
 	// One row per local calendar day, walked as dates rather than added as
 	// milliseconds — a DST transition must not merge two days into one.
-	for d := DayStart(from, loc); !d.After(DayStart(to.Add(-time.Nanosecond), loc)); d = d.AddDate(0, 0, 1) {
+	for d := DayStart(from, loc); !d.After(DayStart(to.Add(-time.Nanosecond), loc)); d = NextDay(d, loc) {
 		key := d.Format("2006-01-02")
 		if d.Before(floor) {
 			// shown, judged by nothing: there was no wall to miss this day
@@ -271,12 +271,53 @@ func Coverage(evs []Event, commits map[string]RepoCommits, loc *time.Location, f
 	return c
 }
 
-// DayStart is midnight of t's local calendar day in loc — the one boundary a
-// coverage window may start on. Exported so the commands that build a window
+// DayStart is the first instant of t's calendar day in loc — the one boundary
+// a coverage window may start on. Exported so the commands that build a window
 // (coverage, dash) share it instead of spelling the date arithmetic out.
+//
+// Where local midnight does not exist — a DST jump at 00:00, as in
+// America/Santiago — time.Date normalizes backwards to 23:00 of the day
+// before, which is a day start carrying the previous day's date. We detect
+// that by asking what date the result actually fell on and step forward in
+// 15-minute increments until we land on the requested day; 15 minutes is the
+// smallest step any zone has ever shifted by.
+//
+// The ambiguous case — midnight happening twice, as in America/Havana when
+// the clocks go back — is deliberately left alone: time.Date returns the
+// first occurrence, and the first occurrence is the day's first instant.
 func DayStart(t time.Time, loc *time.Location) time.Time {
 	y, m, d := t.In(loc).Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, loc)
+	return dayStartOn(y, m, d, loc)
+}
+
+// NextDay is the first instant of the calendar day after t's in loc.
+//
+// DayStart(t).AddDate(0, 0, 1) is not enough and cannot be patched up by a
+// second DayStart: where the following day has no midnight, AddDate itself
+// normalizes backwards and hands back an instant whose date is the day we
+// started from — DayStart would then dutifully return that day again and the
+// walk would stand still. The target date is therefore computed on the
+// calendar, in UTC where every day has a midnight, and only then resolved.
+func NextDay(t time.Time, loc *time.Location) time.Time {
+	y, m, d := t.In(loc).Date()
+	next := time.Date(y, m, d+1, 12, 0, 0, 0, time.UTC) // normalizes the date only
+	ny, nm, nd := next.Date()
+	return dayStartOn(ny, nm, nd, loc)
+}
+
+// dayStartOn resolves a calendar date to its first instant in loc. Where
+// midnight is missing it walks forward in 15-minute steps until it lands on
+// the requested date — 15 minutes is the smallest step any zone has ever
+// shifted by, and a day cannot lose more than a day.
+func dayStartOn(y int, m time.Month, d int, loc *time.Location) time.Time {
+	start := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	for i := 0; i < 4*24; i++ {
+		if sy, sm, sd := start.Date(); sy == y && sm == m && sd == d {
+			return start
+		}
+		start = start.Add(15 * time.Minute)
+	}
+	return start
 }
 
 // inWindow keeps a per-repo day inside the fold's own bounds. The collector
@@ -287,7 +328,10 @@ func inWindow(day string, loc *time.Location, from, to time.Time) bool {
 	if err != nil {
 		return false
 	}
-	return !d.Add(24*time.Hour-time.Nanosecond).Before(from) && d.Before(to)
+	// The day's own bounds, not parse + 24h: a 23-hour day would overshoot
+	// its end and a 25-hour one would fall short of it.
+	start := DayStart(d, loc)
+	return NextDay(start, loc).After(from) && start.Before(to)
 }
 
 // DashDayKey renders a day the way dash.html's dayKey() builds its bucket
