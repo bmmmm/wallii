@@ -27,7 +27,7 @@ import (
 // a gate, a lint or a challenge, and none of it appears in `wallii stats`.
 func cmdCoverage(args []string) error {
 	fs := flag.NewFlagSet("coverage", flag.ExitOnError)
-	sinceS := fs.String("since", "30d", "window: 2006-01-02, 36h or 3d — begins at local midnight of its first day")
+	sinceS := fs.String("since", "30d", "window: 2006-01-02, 36h or 3d — begins at midnight of its first day, in the zone WALLII_TZ names")
 	splitS := fs.String("split", "", "print both halves, before and after this date (2006-01-02)")
 	blindCommits := fs.Int("blind-commits", wall.DefaultBlindCommits, "a day counts as worked from this many commits")
 	blindPosts := fs.Int("blind-posts", wall.DefaultBlindPosts, "a worked day is blind at or below this many posts")

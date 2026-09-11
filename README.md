@@ -241,13 +241,26 @@ one, which keeps counting every family's posts because a blind day is a
 repo's day and the ratio is never split by actor. Light/dark follow the OS
 with a manual toggle; every chart has a table view.
 
+**One timezone travels with the file.** Every day boundary, every hour and
+every label is computed in the zone `WALLII_TZ` names (see *Environment*;
+unset, wallii reads `$TZ` and then the machine), and the axis is written into
+the page as a list of day starts. The browser does no calendar arithmetic of
+its own, so the same file reads identically wherever it is opened — the header
+names the zone it was written in. It used to not: the same dashboard said "0
+blind of 1 worked, 12 commits" opened in Berlin and "0 of 0 worked" opened in
+Auckland. A consequence worth knowing: **a range counts back from the day the
+file was written**, not from the reader's clock, which is what the filter bar
+says. `7d` on a file from last Tuesday means that file's last seven days. A
+file from before this change still carries the old script — run `wallii dash`
+once after upgrading.
+
 Because the page is self-contained, it is also directly servable: point a
 static web server at the file and the dashboard works as-is, no wallii on that
 host. Treat that as a publishing decision rather than a convenience — the file
 carries the full text of every post, so whoever reaches the URL reads the wall.
 `--since` bounds what goes in; the file grows with the wall otherwise. It
 bounds by *day*, not by the hour you named: the window is rounded down to
-local midnight, the way `coverage --since` rounds it, because git is asked
+midnight in the report zone, the way `coverage --since` rounds it, because git is asked
 for whole days and a day bucket holding a full day of commits against half a
 day of posts reads as blind when it was not. So `--since 1h` at noon inlines
 everything back to 00:00, and a snapshot meant for a web server carries that
@@ -345,8 +358,9 @@ is counted, so work on a branch that never merged is not in these numbers
 exists). Merges are skipped. Authors are split on each repo's own `git
 config user.email`; everyone else — bots included, and they were a quarter
 of the raw count — is reported *beside* the count as `others`, never hidden
-and never inside it. Dates are committer dates on both sides, in local time,
-because a blind day is a human day, and the window begins at local midnight
+and never inside it. Dates are committer dates on both sides, in the report
+zone (`WALLII_TZ`, see *Environment*),
+because a blind day is a human day, and the window begins at midnight
 of its first day whatever the clock read when `--since 30d` was typed: a day
 is judged whole or not at all. Days older than the wall's first post are
 shown and judged by nothing: "no wall yet" and "nobody posted" are the same
@@ -825,7 +839,12 @@ or RFC3339; the clock for the first post of a run — export it from whatever
 starts the agent, since a hook cannot set variables for a session already
 running), `WALLII_REPO_ROOTS` and `WALLII_SPAWN_CMD` (follow-up sessions and
 the coverage reading, see above), `WALLII_GIT_TIMEOUT` (how long `coverage`
-and `dash` wait for git in total, default 5s), `WALLII_PULSE_MS`, `WALLII_PULSE_FILE`, `WALLII_PULSE_URL` and
+and `dash` wait for git in total, default 5s), `WALLII_TZ` (the timezone every
+report is written in — an IANA name like `Europe/Berlin`; a name that does not
+load is an error and never a silent fallback. Unset, wallii reads `$TZ` and then
+the machine itself, via `/etc/localtime` and `/etc/timezone`; a machine that
+cannot name its own zone is an error too, because `time.Local` has no name a
+browser could be handed), `WALLII_PULSE_MS`, `WALLII_PULSE_FILE`, `WALLII_PULSE_URL` and
 `WALLII_PULSE=off` (the latency reading, see above — `WALLII_PULSE_MS` hands
 wallii this session's own number or `none`, `WALLII_PULSE_FILE` names the file
 that already holds it, and the probe behind `WALLII_PULSE_URL` is the only

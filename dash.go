@@ -227,7 +227,7 @@ func indexDashCoverage(cov *dashCoverage, cal dashCalendar, loc *time.Location) 
 func cmdDash(args []string) error {
 	fs := flag.NewFlagSet("dash", flag.ExitOnError)
 	outPath := fs.String("o", "", "output file (default: <wall dir>/dashboard.html)")
-	sinceS := fs.String("since", "", "only inline posts from the local day of 2006-01-02, 36h or 3d onwards — rounded down to midnight, like coverage (default: everything)")
+	sinceS := fs.String("since", "", "only inline posts from the day of 2006-01-02, 36h or 3d onwards — rounded down to midnight in the report zone, like coverage (default: everything)")
 	openIt := fs.Bool("open", false, "open the dashboard in the browser")
 	fs.Parse(args)
 
