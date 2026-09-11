@@ -37,17 +37,25 @@ var reportZone = sync.OnceValues(func() (*time.Location, error) {
 // for the life of the process, which is right for a command and useless for a
 // table test.
 func resolveZone(getenv func(string) string) (*time.Location, error) {
-	for _, key := range []string{"WALLII_TZ", "TZ"} {
-		// A leading colon is allowed in TZ and is not part of the name.
-		v := strings.TrimPrefix(strings.TrimSpace(getenv(key)), ":")
-		if v == "" || v == "Local" {
-			continue
-		}
+	// WALLII_TZ is ours: it is set to configure wallii, so a name that does
+	// not load is a mistake and says so.
+	if v := strings.TrimPrefix(strings.TrimSpace(getenv("WALLII_TZ")), ":"); v != "" && v != "Local" {
 		loc, err := time.LoadLocation(v)
 		if err != nil {
-			return nil, fmt.Errorf("%s=%q: unknown timezone — an IANA name like Europe/Berlin", key, v)
+			return nil, fmt.Errorf("WALLII_TZ=%q: unknown timezone — an IANA name like Europe/Berlin", v)
 		}
 		return loc, nil
+	}
+	// TZ is inherited, not chosen for us, and its POSIX forms are legal:
+	// TZ="CET-1CEST,M3.5.0,M10.5.0/3", TZ=UTC0, TZ=/etc/localtime. Go's own
+	// time.Local handles them and LoadLocation does not. Refusing them made
+	// every reading command exit 1 on a perfectly ordinary machine — and
+	// `wallii post` kept writing, so the wall filled while nothing could
+	// read it. An unloadable TZ falls through to the machine instead.
+	if v := strings.TrimPrefix(strings.TrimSpace(getenv("TZ")), ":"); v != "" && v != "Local" {
+		if loc, err := time.LoadLocation(v); err == nil {
+			return loc, nil
+		}
 	}
 	if name, ok := zoneFromLocaltimeLink(); ok {
 		if loc, err := time.LoadLocation(name); err == nil {
@@ -69,17 +77,34 @@ func resolveZone(getenv func(string) string) (*time.Location, error) {
 // went through here, so `wallii tail` and `wallii dash` cannot print two
 // different hours for the same post.
 //
-// A zone that cannot be resolved is fatal where a measurement depends on it,
-// but not here: tail runs inside the Stop hook's ten-second budget and a
-// dashboard's stamp is not worth a failed command. It falls back to UTC and
-// says so once, which is not the same as saying nothing.
+// Every command resolves the zone up front and returns the error, so this
+// lenient path is unreachable from the CLI. The TUI is the exception: it
+// never returns to a caller who could print an error, and dying mid-screen
+// over a timezone is worse than a banner. reportLoc() is what it uses, and
+// it is the one caller that sees the fallback.
 func inZone(t time.Time) time.Time {
+	return t.In(reportLoc())
+}
+
+// reportLoc is the zone without the error, for the TUI and for the folds it
+// hands a loc to. It warns once and falls back to UTC — never to time.Local,
+// which is the thing with no name.
+func reportLoc() *time.Location {
 	loc, err := reportZone()
 	if err != nil {
 		warnNoZone(err)
-		return t.UTC()
+		return time.UTC
 	}
-	return t.In(loc)
+	return loc
+}
+
+// zoneBanner is what the TUI puts on screen when the zone could not be
+// named: stderr is behind the alt-screen and would never be seen.
+func zoneBanner() string {
+	if _, err := reportZone(); err != nil {
+		return "timezone: " + err.Error() + " — times shown in UTC"
+	}
+	return ""
 }
 
 // one warning per process, not one per formatted timestamp

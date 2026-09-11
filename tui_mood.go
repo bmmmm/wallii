@@ -94,7 +94,7 @@ func (st *moodState) load(evs []wall.Event) {
 func (st *moodState) refold() {
 	st.drawn = st.trail.Points
 	if st.daily {
-		st.drawn = wall.MoodDays(st.drawn)
+		st.drawn = wall.MoodDays(st.drawn, reportLoc())
 	}
 	if st.cursor >= len(st.drawn) {
 		st.cursor = len(st.drawn) - 1

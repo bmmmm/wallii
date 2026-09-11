@@ -193,19 +193,35 @@ func buildDashCalendar(evs []wall.Event, cov *dashCoverage, now time.Time, loc *
 		End: end.UnixMilli(),
 		Wd0: (int(start.Weekday()) + 6) % 7, // Go counts from Sunday, the page from Monday
 	}
-	for d := start; d.Before(end); d = wall.NextDay(d, loc) {
+	for d := start; d.Before(end); {
 		cal.T0 = append(cal.T0, d.UnixMilli())
+		next := wall.NextDay(d, loc)
+		if !next.After(d) {
+			// A day boundary that does not advance grows this slice until
+			// the process dies. It cannot happen through NextDay — that is
+			// what NextDay is for — so this is here to make the failure of
+			// a future step function finite and loud instead of an OOM.
+			break
+		}
+		d = next
 	}
 	return cal
 }
 
-// indexDashCoverage lays the collector's per-day counts onto the calendar.
-// Commits ends up the same length as T0 — the one invariant that replaces a
-// day-key string format pinned across two languages.
-func indexDashCoverage(cov *dashCoverage, cal dashCalendar, loc *time.Location) {
-	if cov == nil {
-		return
+// indexedCoverage lays the collector's per-day counts onto a calendar and
+// returns a NEW value. Commits ends up the same length as T0 — the one
+// invariant that replaces a day-key string format pinned across two
+// languages.
+//
+// It copies rather than fills in place because --serve reuses one
+// measurement across rebuilds: the measurement is byDay/from/to, the
+// projection onto today's axis is Commits/FromI/ToI, and writing the
+// projection back into the shared value would change a page already served.
+func indexedCoverage(src *dashCoverage, cal dashCalendar, loc *time.Location) *dashCoverage {
+	if src == nil {
+		return nil
 	}
+	cov := *src
 	cov.Commits = make([]int, len(cal.T0))
 	cov.FromI, cov.ToI = len(cal.T0), len(cal.T0)
 	for i, ms := range cal.T0 {
@@ -219,9 +235,7 @@ func indexDashCoverage(cov *dashCoverage, cal dashCalendar, loc *time.Location) 
 		cov.ToI = i + 1
 		cov.Commits[i] = cov.byDay[day.Format("2006-01-02")]
 	}
-	if cov.FromI > cov.ToI {
-		cov.FromI = cov.ToI
-	}
+	return &cov
 }
 
 func cmdDash(args []string) error {
@@ -229,127 +243,190 @@ func cmdDash(args []string) error {
 	outPath := fs.String("o", "", "output file (default: <wall dir>/dashboard.html)")
 	sinceS := fs.String("since", "", "only inline posts from the day of 2006-01-02, 36h or 3d onwards — rounded down to midnight in the report zone, like coverage (default: everything)")
 	openIt := fs.Bool("open", false, "open the dashboard in the browser")
+	serve := fs.Bool("serve", false, "serve on 127.0.0.1 and reload the page as the wall grows — writes nothing")
+	port := fs.Int("port", 8484, "port for --serve (loopback only)")
+	commitsS := fs.String("commits", "5m", "with --serve: how often git may be asked again (0 = every rebuild, off = never)")
 	fs.Parse(args)
 
 	loc, err := reportZone()
 	if err != nil {
 		return err
 	}
-	// One clock reading for the whole render: the window, the calendar's last
-	// day and the stamp must agree, and three calls to time.Now() straddling
-	// midnight would not.
-	now := time.Now()
-	since, err := parseSince(*sinceS, now, loc)
-	if err != nil {
+	if *serve && *outPath != "" {
+		// The served copy carries the reload snippet. Letting it become the
+		// file somebody publishes would put a page that polls /live on a
+		// static host, where it reloads forever against a 404.
+		return fmt.Errorf("-o and --serve are mutually exclusive — the served page is never written to disk")
+	}
+	if err := serveOptsCheck(*serve, *commitsS); err != nil {
 		return err
 	}
-	// Round the window down to local midnight, the way coverageWindow does,
-	// BEFORE anything is cut with it. git is asked for whole days — that is
-	// what a day bucket is — so a raw timestamp here cuts the posts at noon
-	// and the commits at midnight, and the first day of the window carries a
-	// full day of commits against half a day of posts. `--since 3d` read a
-	// day as blind that `wallii coverage --since 3d` read as covered, off
-	// the same wall and the same window.
-	if !since.IsZero() {
-		since = wall.DayStart(since, loc)
+	// Read once here so a bad --since fails before anything is built or
+	// bound; the render resolves it again per rebuild, because a relative
+	// window must not freeze at the moment the server started.
+	if _, err := parseSince(*sinceS, time.Now(), loc); err != nil {
+		return err
 	}
 	dir, err := wall.Dir()
 	if err != nil {
 		return err
 	}
-	// The whole wall, then the window: the commit card needs the wall's own
-	// first post as the floor under every blind day, and read through the
-	// --since filter that floor would move with the flag.
-	all, rstats, err := wall.ReadLast(dir, 0, func(e wall.Event) bool { return e.Kind == "" })
-	if err != nil {
-		return err
-	}
-	reportStats(rstats)
-	wallStart := firstPost(all)
-	evs := all
-	if !since.IsZero() {
-		evs = all[:0:0]
-		for _, e := range all {
-			if !e.TS.Before(since) {
-				evs = append(evs, e)
+	inlined := 0 // how many posts the written file carries, for the closing line
+
+	// One render, reusable: --serve calls it again for every rebuild, and a
+	// page built two different ways would be two pages. live carries the
+	// reload snippet; version is the build stamp it polls for.
+	//
+	// `since` is re-resolved inside, not captured: a server left running
+	// overnight must not keep cutting "3d" at the day it was started.
+	var cachedCov *dashCoverage
+	var cachedAt time.Time
+	render := func(live bool, version int64) ([]byte, error) {
+		now := time.Now()
+		since, err := parseSince(*sinceS, now, loc)
+		if err != nil {
+			return nil, err
+		}
+		// Round the window down to midnight in the report zone, the way
+		// coverageWindow does, BEFORE anything is cut with it. git is asked
+		// for whole days — that is what a day bucket is — so a raw timestamp
+		// here cuts the posts at noon and the commits at midnight, and the
+		// first day of the window carries a full day of commits against half
+		// a day of posts. `--since 3d` read a day as blind that `wallii
+		// coverage --since 3d` read as covered, off the same wall and the
+		// same window.
+		if !since.IsZero() {
+			since = wall.DayStart(since, loc)
+		}
+		// The whole wall, then the window: the commit card needs the wall's
+		// own first post as the floor under every blind day, and read through
+		// the --since filter that floor would move with the flag.
+		all, rstats, err := wall.ReadLast(dir, 0, func(e wall.Event) bool { return e.Kind == "" })
+		if err != nil {
+			return nil, err
+		}
+		if !live {
+			reportStats(rstats)
+		}
+		wallStart := firstPost(all)
+		evs := all
+		if !since.IsZero() {
+			evs = all[:0:0]
+			for _, e := range all {
+				if !e.TS.Before(since) {
+					evs = append(evs, e)
+				}
 			}
 		}
+
+		out := make([]dashEvent, 0, len(evs))
+		for _, e := range evs {
+			vs := 0
+			if len(wall.Contradictions(e)) > 0 {
+				vs = 1
+			}
+			out = append(out, dashEvent{
+				T: e.TS.UnixMilli(), Repo: e.Repo, Actor: e.Actor, Topic: e.Topic,
+				Out: e.Outcome, Mood: e.Mood, Took: e.TookS, Src: e.TookSrc, Vs: vs, Refs: e.Refs, Msg: e.Msg,
+				Grader: e.Grader, Signals: e.Signals,
+			})
+		}
+		// json.Marshal HTML-escapes < > & — safe to inline in a <script> block
+		data, err := json.Marshal(out)
+		if err != nil {
+			return nil, err
+		}
+		// actor → family, so the page colors and filters by family without
+		// carrying the rule that names one: that rule lives in wall.ActorFamily
+		families := map[string]string{}
+		for _, e := range evs {
+			if e.Actor != "" {
+				families[e.Actor] = wall.ActorFamily(e.Actor)
+			}
+		}
+		fam, err := json.Marshal(families)
+		if err != nil {
+			return nil, err
+		}
+
+		// The git half forks per repo — 0.42s over 40 repos here, up to
+		// gitTimeout() at worst — so under --serve it keeps its own budget
+		// and the measurement is reused between runs. The reused value is
+		// never written to: indexedCoverage returns a new one.
+		if cachedCov == nil || !live || dashCommitsFresh.Load() {
+			cachedCov = collectDashCoverage(evs, wallStart, since, now, loc)
+			cachedAt = now
+		}
+		cal := buildDashCalendar(evs, cachedCov, now, loc)
+		covv := indexedCoverage(cachedCov, cal, loc)
+		calJSON, err := json.Marshal(cal)
+		if err != nil {
+			return nil, err
+		}
+		// json.Marshal of a nil *dashCoverage is the literal null the card
+		// reads as "nobody measured"
+		cov, err := json.Marshal(covv)
+		if err != nil {
+			return nil, err
+		}
+
+		stamp := now.In(loc).Format("2006-01-02 15:04") + " · " + loc.String()
+		if *sinceS != "" {
+			// The range buttons cannot reach past what was inlined — say so,
+			// and name the day the window actually starts on rather than the
+			// flag: `--since 36h` reaches back to the midnight before, and a
+			// reader counting posts against the flag would come up short.
+			stamp += " · only posts since " + since.In(loc).Format("2006-01-02") + " included"
+		}
+		if live {
+			// A served page from 14:22 must not imply a commit measurement
+			// from 14:22 when the last one ran at 14:05.
+			stamp += " · live, commits measured " + cachedAt.In(loc).Format("15:04")
+		}
+
+		live_ := ""
+		if live {
+			live_ = dashLiveSnippet(version, dashLivePollMS)
+		}
+		// One pass over the template, never five in a row. Sequential Replace
+		// calls let a value that came off the wall stand in for a placeholder
+		// that has not been substituted yet: the commits JSON carries repo
+		// names (Repos, Unresolved), it goes in before the families and sits
+		// ahead of them in the file, so a repo named "__WALLII_FAMILIES__"
+		// captured that placeholder — `const FAMILIES = __WALLII_FAMILIES__;`
+		// stayed in the output, the whole script block died of a SyntaxError,
+		// and one post was enough to leave every later dashboard permanently
+		// blank. NewReplacer walks the template once and copies replacement
+		// text out verbatim, so nothing it inserts can be read as a
+		// placeholder.
+		html := strings.NewReplacer(
+			"__GENERATED__", stamp,
+			"__WALLII_COMMITS__", string(cov),
+			"__WALLII_CAL__", string(calJSON),
+			"__WALLII_FAMILIES__", string(fam),
+			"__WALLII_DATA__", string(data),
+			"__WALLII_LIVE__", live_,
+		).Replace(dashTemplate)
+		if live {
+			return []byte(html), nil
+		}
+		inlined = len(out)
+		return []byte(html), nil
 	}
 
-	out := make([]dashEvent, 0, len(evs))
-	for _, e := range evs {
-		vs := 0
-		if len(wall.Contradictions(e)) > 0 {
-			vs = 1
-		}
-		out = append(out, dashEvent{
-			T: e.TS.UnixMilli(), Repo: e.Repo, Actor: e.Actor, Topic: e.Topic,
-			Out: e.Outcome, Mood: e.Mood, Took: e.TookS, Src: e.TookSrc, Vs: vs, Refs: e.Refs, Msg: e.Msg,
-			Grader: e.Grader, Signals: e.Signals,
-		})
+	if *serve {
+		ctx, stop := dashSignalContext()
+		defer stop()
+		every, off := parseCommitBudget(*commitsS)
+		return serveDash(ctx, dir, dashServeOpts{
+			port: *port, open: *openIt, commitEvery: every, commitsOff: off,
+		}, render)
 	}
-	// json.Marshal HTML-escapes < > & — safe to inline in a <script> block
-	data, err := json.Marshal(out)
-	if err != nil {
-		return err
-	}
-	// actor → family, so the page colors and filters by family without
-	// carrying the rule that names one: that rule lives in wall.ActorFamily
-	families := map[string]string{}
-	for _, e := range evs {
-		if e.Actor != "" {
-			families[e.Actor] = wall.ActorFamily(e.Actor)
-		}
-	}
-	fam, err := json.Marshal(families)
-	if err != nil {
-		return err
-	}
-	// The zone is part of the stamp, not decoration: it is what every day
-	// boundary in this file was cut at, and the one line that tells a reader
-	// which calendar the numbers are counted in.
-	stamp := now.In(loc).Format("2006-01-02 15:04") + " · " + loc.String()
-	if *sinceS != "" {
-		// The range buttons cannot reach past what was inlined — say so, and
-		// name the day the window actually starts on rather than the flag:
-		// `--since 36h` reaches back to the midnight before, and a reader
-		// counting posts against the flag would come up short.
-		stamp += " · only posts since " + since.In(loc).Format("2006-01-02") + " included"
-	}
-	// The calendar is built after the collection, because its span reaches
-	// back to whichever is earlier: the first inlined post or the first day
-	// commits were collected for.
-	covv := collectDashCoverage(evs, wallStart, since, now, loc)
-	cal := buildDashCalendar(evs, covv, now, loc)
-	indexDashCoverage(covv, cal, loc)
-	calJSON, err := json.Marshal(cal)
-	if err != nil {
-		return err
-	}
-	// json.Marshal of a nil *dashCoverage is the literal null the card reads
-	// as "nobody measured"
-	cov, err := json.Marshal(covv)
-	if err != nil {
-		return err
-	}
-	// One pass over the template, never four in a row. Sequential Replace
-	// calls let a value that came off the wall stand in for a placeholder
-	// that has not been substituted yet: the commits JSON carries repo names
-	// (Repos, Unresolved), it goes in before the families and sits ahead of
-	// them in the file, so a repo named "__WALLII_FAMILIES__" captured that
-	// placeholder — `const FAMILIES = __WALLII_FAMILIES__;` stayed in the
-	// output, the whole script block died of a SyntaxError, and one post was
-	// enough to leave every later dashboard permanently blank. NewReplacer
-	// walks the template once and copies replacement text out verbatim, so
-	// nothing it inserts can be read as a placeholder.
-	html := strings.NewReplacer(
-		"__GENERATED__", stamp,
-		"__WALLII_COMMITS__", string(cov),
-		"__WALLII_CAL__", string(calJSON),
-		"__WALLII_FAMILIES__", string(fam),
-		"__WALLII_DATA__", string(data),
-	).Replace(dashTemplate)
 
+	html, err := render(false, 0)
+	if err != nil {
+		return err
+	}
 	path := *outPath
 	if path == "" {
 		path = filepath.Join(dir, "dashboard.html")
@@ -357,10 +434,10 @@ func cmdDash(args []string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(html), 0o600); err != nil {
+	if err := os.WriteFile(path, html, 0o600); err != nil {
 		return err
 	}
-	fmt.Printf("dashboard: %s (%d posts inlined)\n", path, len(out))
+	fmt.Printf("dashboard: %s (%d posts inlined)\n", path, inlined)
 	if *openIt {
 		opener := "xdg-open"
 		if runtime.GOOS == "darwin" {
@@ -369,6 +446,37 @@ func cmdDash(args []string) error {
 		if err := exec.Command(opener, path).Start(); err != nil {
 			return fmt.Errorf("could not open browser (%w) — open %s yourself", err, path)
 		}
+	}
+	return nil
+}
+
+// parseCommitBudget reads --commits: a duration, 0 for "every rebuild", or
+// "off" for never. Validated up front by serveOptsCheck, so anything that
+// reaches here has already been accepted.
+func parseCommitBudget(s string) (every time.Duration, off bool) {
+	s = strings.TrimSpace(s)
+	if s == "off" {
+		return 0, true
+	}
+	if s == "0" || s == "" {
+		return 0, false
+	}
+	d, _ := parseDur(s)
+	return d, false
+}
+
+// serveOptsCheck rejects a --commits value that cannot be read, rather than
+// quietly measuring on a schedule nobody asked for.
+func serveOptsCheck(serve bool, commitsS string) error {
+	if !serve {
+		return nil
+	}
+	s := strings.TrimSpace(commitsS)
+	if s == "off" || s == "0" || s == "" {
+		return nil
+	}
+	if d, err := parseDur(s); err != nil || d <= 0 {
+		return fmt.Errorf("cannot read --commits %q — use a duration like 5m, 0 for every rebuild, or off", commitsS)
 	}
 	return nil
 }

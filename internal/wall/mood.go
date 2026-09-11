@@ -223,18 +223,23 @@ func MoodTrail(evs []Event) MoodSummary {
 	return s
 }
 
-// MoodDays folds points into one per local calendar day, oldest first. The
-// day's outcome is the worst one in it — a single failed must not disappear
-// behind twenty oks — while its contradictions add up, so a day is doubted
-// only when most of it was (see MoodPoint.Contradicts).
-func MoodDays(pts []MoodPoint) []MoodPoint {
+// MoodDays folds points into one per calendar day, oldest first. The day's
+// outcome is the worst one in it — a single failed must not disappear behind
+// twenty oks — while its contradictions add up, so a day is doubted only
+// when most of it was (see MoodPoint.Contradicts).
+//
+// loc is a parameter and never time.Local, for the reason spelled out over
+// Coverage: a day boundary is the measurement here. It used to be
+// time.Local, which meant that with WALLII_TZ set the panel cut its days in
+// one zone and the list beside it filtered them in another — clicking a bar
+// pinned the wrong posts, or none.
+func MoodDays(pts []MoodPoint, loc *time.Location) []MoodPoint {
 	var out []MoodPoint
 	sum := make(map[int]float64)
 	psum := make(map[int]int64)
 	qsum7, qsum5 := make(map[int]float64), make(map[int]float64)
 	for _, p := range pts {
-		d := p.TS.Local()
-		day := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, d.Location())
+		day := DayStart(p.TS, loc)
 		i := len(out) - 1
 		if i < 0 || !out[i].TS.Equal(day) {
 			out = append(out, MoodPoint{TS: day})

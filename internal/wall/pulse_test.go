@@ -395,7 +395,7 @@ func TestMoodDaysAveragesTheConditions(t *testing.T) {
 	evs[3].PulseMS, evs[3].PulseSrc = 170, PulseProbe // must not pull the mean down
 	// evs[4] carries nothing, and must not pull it toward zero either
 
-	days := MoodDays(MoodTrail(evs).Points)
+	days := MoodDays(MoodTrail(evs).Points, time.UTC)
 	if len(days) != 1 {
 		t.Fatalf("folded into %d days, want 1", len(days))
 	}

@@ -305,16 +305,22 @@ func NextDay(t time.Time, loc *time.Location) time.Time {
 }
 
 // dayStartOn resolves a calendar date to its first instant in loc. Where
-// midnight is missing it walks forward in 15-minute steps until it lands on
-// the requested date — 15 minutes is the smallest step any zone has ever
-// shifted by, and a day cannot lose more than a day.
+// midnight is missing it walks forward in one-minute steps until it lands on
+// the requested date.
+//
+// One minute, not fifteen: the modern jumps are whole hours or half hours,
+// but the historical LMT→standard transitions are odd seconds (Amsterdam
+// 1937 moved by 28s), and a step coarser than the shift walks past the day's
+// first instant instead of onto it. A minute over a day is 1440 iterations
+// in the rare case and none in every other, since the first candidate is
+// already right wherever midnight exists.
 func dayStartOn(y int, m time.Month, d int, loc *time.Location) time.Time {
 	start := time.Date(y, m, d, 0, 0, 0, 0, loc)
-	for i := 0; i < 4*24; i++ {
+	for i := 0; i < 24*60; i++ {
 		if sy, sm, sd := start.Date(); sy == y && sm == m && sd == d {
 			return start
 		}
-		start = start.Add(15 * time.Minute)
+		start = start.Add(time.Minute)
 	}
 	return start
 }
@@ -323,12 +329,18 @@ func dayStartOn(y int, m time.Month, d int, loc *time.Location) time.Time {
 // works over the widest window the command asked for; a --split half folds
 // the same map twice and must not carry the other half's commits with it.
 func inWindow(day string, loc *time.Location, from, to time.Time) bool {
-	d, err := time.ParseInLocation("2006-01-02", day, loc)
+	// Parsed in UTC, where every day has a midnight, and only then resolved
+	// in loc. ParseInLocation would normalize a missing local midnight
+	// backwards onto the day before — DayStart would then faithfully return
+	// THAT day, and this function would compute the previous day's bounds.
+	// In America/Santiago on 2022-09-11 that filed the day's 42 commits as
+	// "before the wall existed": not judged, not counted, no symptom.
+	d, err := time.Parse("2006-01-02", day)
 	if err != nil {
 		return false
 	}
 	// The day's own bounds, not parse + 24h: a 23-hour day would overshoot
 	// its end and a 25-hour one would fall short of it.
-	start := DayStart(d, loc)
+	start := dayStartOn(d.Year(), d.Month(), d.Day(), loc)
 	return NextDay(start, loc).After(from) && start.Before(to)
 }

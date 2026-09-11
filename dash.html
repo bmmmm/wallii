@@ -184,12 +184,14 @@
 const RAW = __WALLII_DATA__ || [];
 RAW.sort((a, b) => a.t - b.t);
 
-/* What the wall was posted against: commits per local day, collected by
-   `wallii dash` over the window it inlined posts for. null means nobody
-   measured — deliberately not an empty object, which could not tell that
-   apart from "measured, no commits" and would let the card paint a month of
-   blindness out of nothing. COMMITS.from is the floor: every bucket older
-   than it is a gap labelled "not measured", never a day with no commits. */
+/* What the wall was posted against: commits per day, collected by
+   `wallii dash` over the window it inlined posts for, as an array indexed by
+   CAL.t0 below. null means nobody measured — deliberately not an empty
+   object, which could not tell that apart from "measured, no commits" and
+   would let the card paint a month of blindness out of nothing.
+   COMMITS.from_i and .to_i are the bounds: every bucket outside them is a
+   gap labelled "not measured", never a day with no commits, and the count
+   there is zero and means nothing. */
 const COMMITS = __WALLII_COMMITS__;
 /* The axis, computed in Go and handed over whole: t0 is every day's first
    instant in the zone the file was written in, ascending and gapless, and a
@@ -205,7 +207,7 @@ const FAMILIES = __WALLII_FAMILIES__;
 // own properties only: an actor literally named __proto__ must not read
 // Object.prototype out of the mapping and become a family called [object Object]
 const familyOf = a => { const k = a || "—"; return Object.hasOwn(FAMILIES, k) ? FAMILIES[k] : k; };
-/* The repos whose commits are in COMMITS.days. The card's numerator is the
+/* The repos whose commits are in COMMITS.commits. The card's numerator is the
    posts of these repos and no others — a repo with no checkout leaves both
    sides of the ratio here exactly as it does in `wallii coverage`, or the
    card would print a ratio its own footnote contradicts. */
@@ -266,6 +268,11 @@ try {
   CLOCK = new Intl.DateTimeFormat("en-US", { ...CLOCK_OPTS, timeZone: "UTC" });
 }
 function clockParts(t) {
+  /* formatToParts(undefined) does not throw — it silently formats Date.now()
+     and reads the viewer's clock, which is the exact failure this whole page
+     was rebuilt to remove. It would not trip the no-calendar-arithmetic lint
+     either, because the call still looks correct. */
+  if (typeof t !== "number" || !Number.isFinite(t)) throw new TypeError("clockParts needs an instant, got " + t);
   const o = {};
   for (const p of CLOCK.formatToParts(t)) o[p.type] = p.value;
   return o;
@@ -458,8 +465,12 @@ function aggregate(rangeDays) {
   /* Previous window of equal length, for the tile deltas — cut on the axis
      and not by subtracting milliseconds, which put the earlier window an
      hour out across a DST boundary. */
-  agg.prev = rangeDays && i0 > 0
-    ? RAW.filter(e => e.t >= CAL.t0[Math.max(0, i0 - rangeDays)] && e.t < since && inFamily(e))
+  /* A delta is only honest over a window of the same length. Where the file
+     does not reach back far enough for one, there is no comparison to draw
+     and the tiles say so — a 9-day file on "7d" must not present 7 days
+     against 2 as a trend. */
+  agg.prev = rangeDays && i0 >= rangeDays
+    ? RAW.filter(e => e.t >= CAL.t0[i0 - rangeDays] && e.t < since && inFamily(e))
     : null;
   return agg;
 }
@@ -1006,6 +1017,14 @@ function renderTiles(agg) {
 /* ---------- range filter + boot ---------- */
 const RANGES = [["7d", 7], ["30d", 30], ["90d", 90], ["all", 0]];
 let currentRange = 30;
+{
+  /* Remembered like the family chip three functions down, and validated
+     against RANGES because localStorage hands back whatever it likes. Worth
+     having without --serve too — reopening the file keeps your window — so
+     this is not a serve-only special case. */
+  const saved = +lsGet("wallii-range");
+  if (RANGES.some(([, days]) => days === saved)) currentRange = saved;
+}
 function renderAll() {
   const agg = aggregate(currentRange);
   renderTiles(agg);
@@ -1027,7 +1046,7 @@ function renderFilters() {
     f.append(el("button", {
       class: days === currentRange ? "on" : "",
       text: label,
-      onclick: () => { currentRange = days; renderFilters(); renderAll(); },
+      onclick: () => { currentRange = days; lsSet("wallii-range", String(days)); renderFilters(); renderAll(); },
     }));
   }
   /* Said once, for every card below: a range counts back from the day this
@@ -1087,5 +1106,14 @@ renderFilters();
 renderFamilies();
 renderAll();
 </script>
+<!-- The live-reload snippet, and ONLY in the copy `wallii dash --serve`
+     hands out: in a written file this placeholder is replaced by nothing.
+     It sits outside the script block above on purpose. Two tests cut that
+     block out by searching for its opening and closing tags and substitute
+     the placeholders themselves; a sixth placeholder inside would survive
+     there as literal text and kill both with a SyntaxError. For the same
+     reason this comment does not spell those tags out — writing them here
+     moves the very boundary it is describing. -->
+__WALLII_LIVE__
 </body>
 </html>

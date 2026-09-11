@@ -125,7 +125,7 @@ func dayEvents() []Event {
 }
 
 func TestMoodDaysFolds(t *testing.T) {
-	days := MoodDays(MoodTrail(dayEvents()).Points)
+	days := MoodDays(MoodTrail(dayEvents()).Points, time.UTC)
 	if len(days) != 2 {
 		t.Fatalf("days = %d, want 2", len(days))
 	}
@@ -145,7 +145,7 @@ func TestMoodDaysFolds(t *testing.T) {
 
 // One failed must not vanish behind the oks it shares a day with.
 func TestMoodDaysKeepTheWorstOutcome(t *testing.T) {
-	days := MoodDays(MoodTrail(dayEvents()).Points)
+	days := MoodDays(MoodTrail(dayEvents()).Points, time.UTC)
 	if days[0].Outcome != OutcomeFailed {
 		t.Errorf("day outcome = %q, want %q", days[0].Outcome, OutcomeFailed)
 	}
@@ -155,7 +155,7 @@ func TestMoodDaysKeepTheWorstOutcome(t *testing.T) {
 }
 
 func TestMoodDaysFoldNamesOnlyWhenTheyAgree(t *testing.T) {
-	days := MoodDays(MoodTrail(dayEvents()).Points)
+	days := MoodDays(MoodTrail(dayEvents()).Points, time.UTC)
 	if days[0].Repo != "—" {
 		t.Errorf("mixed day claims repo %q", days[0].Repo)
 	}
@@ -176,7 +176,7 @@ func TestMoodDaysSumContradictions(t *testing.T) {
 		{TS: d, Repo: "alpha", Msg: "clean", Mood: "good"},
 		{TS: d.Add(time.Hour), Repo: "alpha", Msg: "war eine Sackgasse, dann ging es", Mood: "great"},
 	}
-	days := MoodDays(MoodTrail(evs).Points)
+	days := MoodDays(MoodTrail(evs).Points, time.UTC)
 	if len(days) != 1 || days[0].ContraN != 1 {
 		t.Errorf("a day holding a contradicting post does not carry the mark: %+v", days)
 	}
@@ -215,7 +215,7 @@ func TestMoodActorsWeighFoldedDays(t *testing.T) {
 		{TS: d, Repo: "a", Actor: "one", Msg: "x", Mood: "great"},
 		{TS: d.Add(24 * time.Hour), Repo: "a", Actor: "one", Msg: "x", Mood: "stuck"},
 	}
-	days := MoodDays(MoodTrail(evs).Points)
+	days := MoodDays(MoodTrail(evs).Points, time.UTC)
 	as := MoodActors(days)
 	if want := (5.0*3 + 1) / 4; as[0].Avg != want {
 		t.Errorf("avg over folded days = %.3f, want %.3f", as[0].Avg, want)

@@ -50,6 +50,12 @@ func cmdTUI(args []string) error {
 	if stats.BadLines > 0 || len(stats.SkippedFiles) > 0 {
 		m.note = fmt.Sprintf("skipped: %d bad line(s), %d unreadable file(s)", stats.BadLines, len(stats.SkippedFiles))
 	}
+	// The TUI is the one place that renders times without having resolved
+	// the zone through an error return. stderr is behind the alt-screen, so
+	// if the zone could not be named it has to be said here.
+	if b := zoneBanner(); b != "" {
+		m.note = b
+	}
 	_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
@@ -491,7 +497,10 @@ func truncLines(s string, n int) string {
 func (m *tuiModel) header() string {
 	today := 0
 	repos := map[string]struct{}{}
-	now := time.Now()
+	// the clock in the report zone, so "today" means the same day the rows
+	// are labelled with — comparing against a machine-local now put the
+	// count and the dates on screen one day apart
+	now := inZone(time.Now())
 	for _, ei := range m.view {
 		e := m.events[ei]
 		repos[e.Repo] = struct{}{}
@@ -532,7 +541,7 @@ func sameDay(a, b time.Time) bool {
 func (m *tuiModel) line(e wall.Event, sel bool) string {
 	ts := inZone(e.TS)
 	tstr := ts.Format("01-02 15:04")
-	if sameDay(ts, time.Now()) {
+	if sameDay(ts, inZone(time.Now())) {
 		tstr = "      " + ts.Format("15:04")
 	}
 	refs := ""

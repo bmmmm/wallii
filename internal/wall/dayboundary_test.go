@@ -84,6 +84,74 @@ func TestNextDayAdvancesExactlyOneCalendarDay(t *testing.T) {
 	}
 }
 
+// inWindow decides which day a per-repo commit count belongs to, and it
+// takes the day as a string. Parsed in the zone, a date whose local midnight
+// does not exist normalizes backwards onto the day before — and the whole
+// day is then judged by the previous day's bounds. Found in review: in
+// America/Santiago the commits of 2022-09-11 were filed as "before the wall
+// existed", counted into nothing and judged by nothing.
+func TestInWindowKeepsADayWithoutMidnightInsideItsOwnWindow(t *testing.T) {
+	loc, err := time.LoadLocation("America/Santiago")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the window the day sits squarely inside
+	from := DayStart(time.Date(2022, 9, 5, 12, 0, 0, 0, loc), loc)
+	to := NextDay(time.Date(2022, 9, 14, 12, 0, 0, 0, loc), loc)
+	if !inWindow("2022-09-11", loc, from, to) {
+		t.Error("2022-09-11 fell out of a window containing it — its commits are counted into nothing")
+	}
+	// and the edges still hold: the day before the window opens is out, the
+	// day the window closes on is out
+	if inWindow("2022-09-04", loc, from, to) {
+		t.Error("the day before the window was let in")
+	}
+	if inWindow("2022-09-15", loc, from, to) {
+		t.Error("the day after the window was let in")
+	}
+	// the first and last day of the window are in
+	for _, day := range []string{"2022-09-05", "2022-09-14"} {
+		if !inWindow(day, loc, from, to) {
+			t.Errorf("%s is the window's own edge and fell out", day)
+		}
+	}
+
+	// The edge that catches the backwards normalization: a window that OPENS
+	// on the missing-midnight day. Shifted onto 09-10, the day's end lands
+	// exactly on `from` and `After` says no — the day leaves the window it
+	// starts. This is the case `--since 2022-09-11` would hit.
+	opens := DayStart(time.Date(2022, 9, 11, 12, 0, 0, 0, loc), loc)
+	if !inWindow("2022-09-11", loc, opens, to) {
+		t.Error("2022-09-11 fell out of a window that opens on it")
+	}
+	// and the mirror case at the other end: a window that CLOSES on it must
+	// not let it in
+	if inWindow("2022-09-11", loc, from, opens) {
+		t.Error("2022-09-11 was let into a window that ends where it begins")
+	}
+}
+
+// Every day of a missing-midnight month belongs to exactly one window half —
+// no day may fall out of a --split, and none may land in both.
+func TestInWindowSplitsEveryDayExactlyOnce(t *testing.T) {
+	for _, name := range []string{"America/Santiago", "America/Havana", "Europe/Berlin"} {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		from := DayStart(time.Date(2022, 9, 1, 12, 0, 0, 0, loc), loc)
+		split := DayStart(time.Date(2022, 9, 15, 12, 0, 0, 0, loc), loc)
+		to := NextDay(time.Date(2022, 9, 30, 12, 0, 0, 0, loc), loc)
+		for d := from; d.Before(to); d = NextDay(d, loc) {
+			day := d.Format("2006-01-02")
+			first, second := inWindow(day, loc, from, split), inWindow(day, loc, split, to)
+			if first == second {
+				t.Errorf("%s: %s is in %v halves, want exactly one", name, day, map[bool]string{true: "both", false: "neither"}[first])
+			}
+		}
+	}
+}
+
 // TestDayStartKeepsTheFirstOfTwoMidnights pins the case that must NOT be
 // "fixed": when the clocks go back through 00:00, midnight happens twice and
 // the earlier one is the day's start. Havana did this on 2021-11-07.

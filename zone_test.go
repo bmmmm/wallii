@@ -45,16 +45,39 @@ func TestResolveZonePrefersWalliiTZThenTZ(t *testing.T) {
 	}
 }
 
-// A misspelled zone is an error and never a silent fallback: a dashboard
-// stamped with the wrong zone reports wrong days and says nothing about it.
-func TestResolveZoneRejectsAnUnknownName(t *testing.T) {
-	for _, key := range []string{"WALLII_TZ", "TZ"} {
-		_, err := resolveZone(envOf(map[string]string{key: "Europe/Berln"}))
-		if err == nil {
-			t.Fatalf("%s=Europe/Berln resolved without error", key)
+// A misspelled WALLII_TZ is an error and never a silent fallback: it was set
+// to configure wallii, so a name that does not load is a mistake, and a
+// dashboard stamped with the wrong zone reports wrong days without saying so.
+func TestResolveZoneRejectsAnUnknownWalliiTZ(t *testing.T) {
+	_, err := resolveZone(envOf(map[string]string{"WALLII_TZ": "Europe/Berln"}))
+	if err == nil {
+		t.Fatal("WALLII_TZ=Europe/Berln resolved without error")
+	}
+	if !strings.Contains(err.Error(), "Europe/Berlin") || !strings.Contains(err.Error(), "WALLII_TZ") {
+		t.Fatalf("the error %q names neither the variable nor a usable example", err)
+	}
+}
+
+// $TZ is the opposite case and it took a review to see it: TZ is inherited
+// rather than chosen for wallii, and its POSIX forms are legal — Go's own
+// time.Local reads them, LoadLocation does not. Treated as a hard error,
+// every reading command exited 1 on an ordinary machine while `wallii post`
+// kept writing: the wall filled and nothing could read it. An unusable TZ
+// falls through to the machine.
+func TestResolveZoneFallsThroughAnUnusableTZ(t *testing.T) {
+	for _, v := range []string{
+		"CET-1CEST,M3.5.0,M10.5.0/3", // the POSIX form, entirely legal
+		"UTC0",
+		"/etc/localtime",
+		"Europe/Berln", // and a plain typo in a variable that is not ours
+	} {
+		loc, err := resolveZone(envOf(map[string]string{"TZ": v}))
+		if err != nil {
+			t.Errorf("TZ=%q made wallii unusable: %v", v, err)
+			continue
 		}
-		if !strings.Contains(err.Error(), "Europe/Berlin") || !strings.Contains(err.Error(), key) {
-			t.Fatalf("%s error %q names neither the variable nor a usable example", key, err)
+		if loc == nil {
+			t.Errorf("TZ=%q resolved to no zone at all", v)
 		}
 	}
 }

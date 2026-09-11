@@ -46,6 +46,7 @@ Usage:
                   [--blind-commits 10] [--blind-posts 2]
   wallii triggers [--since d] [--json]
   wallii dash [-o path] [--since d] [--open]
+  wallii dash --serve [--port 8484] [--commits 5m|0|off] [--open]   # live on 127.0.0.1, writes nothing
   wallii agents [--repo x] [--stale 7d] [--json]
   wallii attach [-r repo] [-a actor] [--persona "voice line"] [note]
   wallii detach [-r repo] [-a actor] [note]

@@ -99,13 +99,28 @@ func TestPostNeverAsksGitForALog(t *testing.T) {
 // the doubled midnight break: a gap, a duplicate, or a day start that is not
 // one.
 func TestDashCalendarAndCommitsAreAligned(t *testing.T) {
-	for _, name := range []string{"Europe/Berlin", "America/Santiago", "America/Havana", "Pacific/Auckland", "UTC"} {
+	// Each zone is walked over a window that contains ITS OWN transition —
+	// naming the hard zones is not the same as exercising them. Found in
+	// review: the window here used to be October/November for everybody,
+	// which misses Santiago's 2022-09-11 midnight jump and Auckland's
+	// 2022-09-25 one entirely, and a reverted NextDay stayed green.
+	for _, tc := range []struct {
+		name string
+		end  time.Time // a day shortly after that zone's transition
+	}{
+		{"Europe/Berlin", time.Date(2022, time.November, 20, 15, 0, 0, 0, time.UTC)},
+		{"America/Santiago", time.Date(2022, time.September, 20, 15, 0, 0, 0, time.UTC)}, // midnight jump 09-11
+		{"America/Havana", time.Date(2022, time.November, 20, 15, 0, 0, 0, time.UTC)},    // midnight happens twice 11-06
+		{"Pacific/Auckland", time.Date(2022, time.October, 5, 15, 0, 0, 0, time.UTC)},    // 09-25
+		{"America/Asuncion", time.Date(2022, time.October, 20, 15, 0, 0, 0, time.UTC)},   // midnight jump 10-02
+		{"UTC", time.Date(2022, time.November, 20, 15, 0, 0, 0, time.UTC)},
+	} {
+		name := tc.name
 		loc, err := time.LoadLocation(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		// a window that contains a DST transition in every one of them
-		now := time.Date(2022, time.November, 20, 15, 0, 0, 0, loc)
+		now := tc.end.In(loc)
 		evs := []wall.Event{
 			{TS: now.AddDate(0, 0, -40), Repo: "webshop", Actor: "bot/builder", Msg: "first"},
 			{TS: now.Add(-2 * time.Hour), Repo: "webshop", Actor: "bot/builder", Msg: "last"},
@@ -115,7 +130,11 @@ func TestDashCalendarAndCommitsAreAligned(t *testing.T) {
 			byDay: map[string]int{now.Format("2006-01-02"): 7},
 		}
 		cal := buildDashCalendar(evs, cov, now, loc)
-		indexDashCoverage(cov, cal, loc)
+		src := *cov // to prove the measurement is not written back into
+		cov = indexedCoverage(cov, cal, loc)
+		if src.Commits != nil || src.FromI != 0 || src.ToI != 0 {
+			t.Fatalf("%s: indexing wrote the projection back into the measurement — under --serve that changes a page already served", name)
+		}
 
 		if len(cov.Commits) != len(cal.T0) {
 			t.Fatalf("%s: %d commit slots for %d days — the browser indexes one by the other", name, len(cov.Commits), len(cal.T0))
@@ -144,6 +163,15 @@ func TestDashCalendarAndCommitsAreAligned(t *testing.T) {
 		}
 		if cal.End <= cal.T0[len(cal.T0)-1] {
 			t.Fatalf("%s: end %d is not after the last day", name, cal.End)
+		}
+		// The axis reaches End, it does not merely stay below it: a walk
+		// that stalls on a day without midnight produces a calendar that is
+		// internally consistent and simply stops early — every day after it
+		// silently missing from the page.
+		lastDay := time.UnixMilli(cal.T0[len(cal.T0)-1]).In(loc)
+		if got := wall.NextDay(lastDay, loc).UnixMilli(); got != cal.End {
+			t.Fatalf("%s: the calendar's last day is %s, whose day ends at %s — but end is %s: the walk stopped early",
+				name, lastDay, time.UnixMilli(got).In(loc), time.UnixMilli(cal.End).In(loc))
 		}
 		if !(0 <= cov.FromI && cov.FromI <= cov.ToI && cov.ToI <= len(cal.T0)) {
 			t.Fatalf("%s: from_i=%d to_i=%d out of bounds for %d days", name, cov.FromI, cov.ToI, len(cal.T0))
@@ -176,7 +204,18 @@ func TestDashHtmlDoesNoLocalCalendarArithmetic(t *testing.T) {
 	if i < 0 || j < i {
 		t.Fatal("dash.html has no script block")
 	}
-	script := dashTemplate[i:j]
+	// Code, not prose: the rule is worth explaining next to the calls that
+	// follow it, and explaining it means naming what is forbidden.
+	var b strings.Builder
+	for _, line := range strings.Split(dashTemplate[i:j], "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "//") || strings.HasPrefix(t, "/*") || strings.HasPrefix(t, "*") {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	script := b.String()
 	for _, banned := range []string{
 		"getFullYear(", "getMonth(", "getDate(", "getDay(", "getHours(", "getMinutes(",
 		"setHours(", "setDate(", "new Date(", "toLocale",
@@ -643,7 +682,7 @@ func makeDashFixture(t *testing.T, loc *time.Location, now time.Time, cov *dashC
 		posts = append(posts, wall.Event{TS: time.UnixMilli(e.T)})
 	}
 	cal := buildDashCalendar(posts, cov, now, loc)
-	indexDashCoverage(cov, cal, loc)
+	cov = indexedCoverage(cov, cal, loc)
 	calJSON, err := json.Marshal(cal)
 	if err != nil {
 		t.Fatal(err)
