@@ -63,7 +63,7 @@ func cmdAudit(args []string) error {
 		return nil
 	}
 	for _, h := range haunted {
-		line := fmt.Sprintf("haunted %s  %s  ✓ %s  ·%s", h.OK.ID(), h.OK.TS.Local().Format("01-02 15:04"), h.OK.Msg, orDash(h.OK.Actor))
+		line := fmt.Sprintf("haunted %s  %s  ✓ %s  ·%s", h.OK.ID(), inZone(h.OK.TS).Format("01-02 15:04"), h.OK.Msg, orDash(h.OK.Actor))
 		// the one case where the wall can show a shortcut instead of
 		// suspecting one: the line the diff carried, beside an ok that did
 		// not hold. Which of the two the fix answered, nobody measured.
@@ -74,7 +74,7 @@ func cmdAudit(args []string) error {
 		for _, sig := range h.OK.Signals {
 			fmt.Printf("    signal %s\n", sig)
 		}
-		fix := fmt.Sprintf("    fix %s  %s  %s — shared: %s", h.Fix.ID(), h.Fix.TS.Local().Format("01-02 15:04"), h.Fix.Msg, strings.Join(h.Shared, ", "))
+		fix := fmt.Sprintf("    fix %s  %s  %s — shared: %s", h.Fix.ID(), inZone(h.Fix.TS).Format("01-02 15:04"), h.Fix.Msg, strings.Join(h.Shared, ", "))
 		// what each side cost, when both were measured: the ok that did
 		// not hold and the fix it drew — two readings, no ratio
 		if c := h.Cost; c != nil {

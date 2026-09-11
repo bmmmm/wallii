@@ -211,7 +211,7 @@ func printCov(c wall.Cov, label string) {
 		// shown and judged by nothing: "no wall yet" and "nobody posted" are
 		// the same silence in the data and the opposite finding.
 		fmt.Printf("before the wall  %d day(s) older than the first post (%s) carry %s — not judged, not counted\n",
-			c.PreWallDays, c.WallStart.Local().Format("2006-01-02"), plural(c.PreWallCommits, "commit"))
+			c.PreWallDays, inZone(c.WallStart).Format("2006-01-02"), plural(c.PreWallCommits, "commit"))
 	}
 
 	if c.WorkDays == 0 {

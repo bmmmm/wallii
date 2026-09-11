@@ -1000,7 +1000,7 @@ func moodAxis(pts []wall.MoodPoint) string {
 		if p.N > 1 {
 			return p.TS.Format("01-02")
 		}
-		return p.TS.Local().Format("01-02 15:04")
+		return inZone(p.TS).Format("01-02 15:04")
 	}
 	from, to := f(pts[0]), f(pts[len(pts)-1])
 	if from == to {
@@ -1041,7 +1041,7 @@ func moodInspect(st moodState, width int) string {
 		line = fmt.Sprintf(" › %s · %s · %s %.1f · worst %s · %s%s%s", p.TS.Format("01-02"),
 			plural(p.N, "post"), moodWord(p.Avg), p.Avg, orDash(strings.TrimSpace(glyph)), orDash(p.Repo), api, mark)
 	} else {
-		line = fmt.Sprintf(" › %s · %s · %s · %s %s%s%s — %s", p.TS.Local().Format("01-02 15:04"),
+		line = fmt.Sprintf(" › %s · %s · %s · %s %s%s%s — %s", inZone(p.TS).Format("01-02 15:04"),
 			orDash(p.Repo), orDash(p.Topic), orDash(strings.TrimSpace(glyph)), p.Mood, api, mark, p.Msg)
 	}
 	return lipgloss.NewStyle().MaxWidth(width).Render(line)

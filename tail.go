@@ -156,7 +156,7 @@ func cmdTail(args []string) error {
 			continue
 		}
 		if fold {
-			if d := e.TS.Local().Format("2006-01-02"); d != day {
+			if d := inZone(e.TS).Format("2006-01-02"); d != day {
 				flushFolds()
 				day = d
 				slot = map[string]int{}
@@ -320,7 +320,7 @@ func replyGlyph(kind string) (string, int) {
 // 0 means the parent is not in the rendered window (or -f streamed it in), so
 // the line names what it answers instead of hanging in the air.
 func (r *renderer) printReply(w io.Writer, e wall.Event, depth int) {
-	r.dayHeader(w, e.TS.Local())
+	r.dayHeader(w, inZone(e.TS))
 	indent := strings.Repeat("  ", depth)
 	glyph, gc := replyGlyph(e.Kind)
 	orphan := ""
@@ -332,7 +332,7 @@ func (r *renderer) printReply(w io.Writer, e wall.Event, depth int) {
 		id = e.ID() + "  "
 	}
 	if !r.color {
-		line := fmt.Sprintf("%s%s         %s%s %s: %s%s", id, e.TS.Local().Format("15:04"), indent, glyph, orDash(e.Actor), e.Msg, orphan)
+		line := fmt.Sprintf("%s%s         %s%s %s: %s%s", id, inZone(e.TS).Format("15:04"), indent, glyph, orDash(e.Actor), e.Msg, orphan)
 		if len(e.Refs) > 0 {
 			line += "  " + strings.Join(e.Refs, " ")
 		}
@@ -354,7 +354,7 @@ func (r *renderer) printReply(w io.Writer, e wall.Event, depth int) {
 		refs += fmt.Sprintf("  \x1b]8;;%s\x1b\\\x1b[4;34m↗%d\x1b[0m\x1b]8;;\x1b\\", u, i+1)
 	}
 	fmt.Fprintf(w, "%s\x1b[2m%s\x1b[0m         %s%s \x1b[2m%s:\x1b[0m %s%s%s\n",
-		id, e.TS.Local().Format("15:04"), indent, mark, orDash(e.Actor), e.Msg, orphan, refs)
+		id, inZone(e.TS).Format("15:04"), indent, mark, orDash(e.Actor), e.Msg, orphan, refs)
 }
 
 func (r *renderer) dayHeader(w io.Writer, ts time.Time) {
@@ -422,7 +422,7 @@ func (r *renderer) printAt(w io.Writer, e wall.Event, asJSON bool, depth int) {
 			}
 		}
 	}()
-	ts := e.TS.Local()
+	ts := inZone(e.TS)
 	r.dayHeader(w, ts)
 	id := ""
 	if r.showIDs {

@@ -63,7 +63,7 @@ func cmdTriggers(args []string) error {
 	fmt.Printf("%-8s %d of %s reached the trigger block (%d%%) — the rest exited above it\n",
 		"reached", t.Reached, plural(t.Stops, "stop"), pct(t.Reached, t.Stops))
 	fmt.Printf("%-8s %s → %s · %s\n", "window",
-		t.First.Local().Format("2006-01-02 15:04"), t.Last.Local().Format("2006-01-02 15:04"),
+		inZone(t.First).Format("2006-01-02 15:04"), inZone(t.Last).Format("2006-01-02 15:04"),
 		plural(read.Files, "protocol file"))
 	for _, row := range []struct {
 		label  string

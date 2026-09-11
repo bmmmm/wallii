@@ -56,7 +56,7 @@ func aiCmd() string {
 // followUpPrompt is the first prompt for a session opened from a wall post.
 func followUpPrompt(e wall.Event) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Context: wall post from %s, repo %s", e.TS.Local().Format("2006-01-02 15:04"), e.Repo)
+	fmt.Fprintf(&b, "Context: wall post from %s, repo %s", inZone(e.TS).Format("2006-01-02 15:04"), e.Repo)
 	if e.Topic != "" {
 		fmt.Fprintf(&b, ", topic %s", e.Topic)
 	}

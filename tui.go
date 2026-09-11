@@ -116,7 +116,7 @@ func (m *tuiModel) passes(e wall.Event, since time.Time, q string, withDayPin bo
 	if !since.IsZero() && e.TS.Before(since) {
 		return false
 	}
-	if withDayPin && !m.dayF.IsZero() && !sameDay(e.TS.Local(), m.dayF) {
+	if withDayPin && !m.dayF.IsZero() && !sameDay(inZone(e.TS), m.dayF) {
 		return false
 	}
 	if m.repoF != "" && !strings.EqualFold(e.Repo, m.repoF) {
@@ -495,7 +495,7 @@ func (m *tuiModel) header() string {
 	for _, ei := range m.view {
 		e := m.events[ei]
 		repos[e.Repo] = struct{}{}
-		if sameDay(e.TS.Local(), now) {
+		if sameDay(inZone(e.TS), now) {
 			today++
 		}
 	}
@@ -530,7 +530,7 @@ func sameDay(a, b time.Time) bool {
 }
 
 func (m *tuiModel) line(e wall.Event, sel bool) string {
-	ts := e.TS.Local()
+	ts := inZone(e.TS)
 	tstr := ts.Format("01-02 15:04")
 	if sameDay(ts, time.Now()) {
 		tstr = "      " + ts.Format("15:04")
@@ -618,7 +618,7 @@ func (m *tuiModel) viewDetail() string {
 			b.WriteString(fmt.Sprintf("  %s %s\n", styleDim.Render(pad(k, 7)), v))
 		}
 	}
-	field("when", e.TS.Local().Format("2006-01-02 15:04:05 MST"))
+	field("when", inZone(e.TS).Format("2006-01-02 15:04:05 MST"))
 	field("repo", e.Repo)
 	field("topic", e.Topic)
 	field("actor", e.Actor)

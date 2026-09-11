@@ -605,7 +605,7 @@ func TestMoodJumpPinsTheListToADay(t *testing.T) {
 		t.Errorf("list shows %d posts, want the 3 of that day", len(m.view))
 	}
 	for _, ei := range m.view {
-		if !sameDay(m.events[ei].TS.Local(), m.dayF) {
+		if !sameDay(inZone(m.events[ei].TS), m.dayF) {
 			t.Errorf("post from %v survived the day pin %v", m.events[ei].TS, m.dayF)
 		}
 	}
