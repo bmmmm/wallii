@@ -409,7 +409,9 @@ func cmdDash(args []string) error {
 			if !sameDay(cachedAt.In(loc), now.In(loc)) {
 				when = cachedAt.In(loc).Format("2006-01-02 15:04")
 			}
-			stamp += " · live · commits and the blind-day card measured " + when
+			stamp += " · live, this page reloads itself · commits and the blind-day card measured " + when
+		} else {
+			stamp += " · snapshot, refresh with `wallii dash`"
 		}
 
 		live_ := ""

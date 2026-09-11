@@ -149,7 +149,12 @@
 <div class="wrap">
   <header>
     <h1>wallii — agent wall dashboard</h1>
-    <span class="stamp">generated __GENERATED__<span id="stale"></span> · snapshot, refresh with <code>wallii dash</code></span>
+    <!-- How to get a newer one is part of the stamp, because the answer
+         differs: a written file is refreshed by running wallii dash again,
+         a served one refreshes itself. Fixed text here said the former on
+         both, and the served page told you to do something it was already
+         doing. -->
+    <span class="stamp">generated __GENERATED__<span id="stale"></span></span>
     <span class="spacer"></span>
     <button id="theme" title="theme">auto</button>
   </header>

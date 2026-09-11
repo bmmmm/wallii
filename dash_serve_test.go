@@ -62,6 +62,16 @@ func TestDashLivePlaceholderSitsOutsideTheScriptBlock(t *testing.T) {
 	}
 }
 
+// The stamp has to say how to get a NEWER page, and the answer differs
+// between the two copies. Found in a browser, not by a test: the served
+// page carried the template's fixed "snapshot, refresh with wallii dash"
+// and told the reader to do the thing it was doing by itself.
+func TestTheStampNeverTellsAServedPageToRefreshItself(t *testing.T) {
+	if strings.Contains(dashTemplate, "refresh with") || strings.Contains(dashTemplate, "snapshot,") {
+		t.Error("dash.html carries a fixed refresh instruction — it must come from the stamp, which knows which copy this is")
+	}
+}
+
 func TestDashLiveSnippetCarriesTheBootVersion(t *testing.T) {
 	s := dashLiveSnippet(1234567890, 1500)
 	if !strings.Contains(s, "const BOOT = 1234567890;") {
