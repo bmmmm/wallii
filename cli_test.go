@@ -391,6 +391,72 @@ func TestCmdDashWritesSubstitutedFile(t *testing.T) {
 	}
 }
 
+// dashPlaceholders are the four the template carries. Each must appear
+// exactly once: cmdDash substitutes all of them in one NewReplacer pass,
+// which fills every occurrence, so a second copy of any of them would be
+// filled too — silently, and with a value meant for one place.
+var dashPlaceholders = []string{"__GENERATED__", "__WALLII_COMMITS__", "__WALLII_FAMILIES__", "__WALLII_DATA__"}
+
+func TestDashTemplateCarriesEachPlaceholderOnce(t *testing.T) {
+	for _, ph := range dashPlaceholders {
+		if n := strings.Count(dashTemplate, ph); n != 1 {
+			t.Errorf("dash.html contains %s %d times, want exactly 1", ph, n)
+		}
+	}
+}
+
+// A post cannot fill a placeholder. The repo name travels into the commits
+// JSON (dashCoverage.Repos/.Unresolved), which is substituted before the
+// families and sits ahead of them in the file — so under four sequential
+// Replace calls a repo named "__WALLII_FAMILIES__" captured that
+// placeholder, `const FAMILIES = __WALLII_FAMILIES__;` stayed in the
+// output, and the whole script block died of a SyntaxError. One post, every
+// later dashboard blank, and no command to take the post back.
+//
+// The name is checked for every placeholder, not just the one that broke:
+// the ordering that makes one of them reachable is an implementation
+// detail, and the next edit to cmdDash may reorder them.
+func TestDashPlaceholdersSurviveAPostNamedAfterThem(t *testing.T) {
+	for _, ph := range dashPlaceholders {
+		t.Run(ph, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("WALLII_DIR", dir)
+			t.Setenv("WALLII_SESSION_START", "")
+			// the odd name has to reach the commits JSON, and it only does
+			// so as a repo nobody found a checkout for — which needs at
+			// least one repo that WAS measured, or the whole struct is nil
+			roots := t.TempDir()
+			repo := newRepo(t, roots, "webshop", "dev@example.invalid")
+			commitAt(t, repo, "a", "dev@example.invalid", time.Now().Add(-2*time.Hour))
+			t.Setenv("WALLII_REPO_ROOTS", roots)
+			for _, repo := range []string{"webshop", ph} {
+				if err := cmdPost([]string{"-r", repo, "-a", "bot/builder", "the retry loop now waits for the fsync"}); err != nil {
+					t.Fatalf("post to %s: %v", repo, err)
+				}
+			}
+			if err := cmdDash(nil); err != nil {
+				t.Fatalf("dash: %v", err)
+			}
+			b, err := os.ReadFile(filepath.Join(dir, "dashboard.html"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			html := string(b)
+			// the name is allowed to appear as data — inside a JSON string.
+			// What must not survive is the placeholder in the position the
+			// template put it in, waiting to be read as a value.
+			for _, decl := range []string{"const COMMITS = " + ph, "const FAMILIES = " + ph, "const RAW = " + ph} {
+				if strings.Contains(html, decl) {
+					t.Errorf("a post named %s left %q unsubstituted", ph, decl)
+				}
+			}
+			if strings.Contains(html, "generated "+ph) {
+				t.Errorf("a post named %s captured the stamp", ph)
+			}
+		})
+	}
+}
+
 // The grader is the poster's own words, like the message — so it renders
 // on every listing with no flag asked for. Whoever moves it back behind a
 // flag turns this red: mood is invisible in tail and gets written only

@@ -307,12 +307,25 @@ function inFamily(e) {
   return f === currentFamily;
 }
 
+/* "all" has to reach back to everything this file knows, which is not the
+   same as its first post: the collected commit window starts at a local
+   midnight, and the first day of it is often a day nobody posted on. Start
+   at the post and that day is never walked at all — and a day that is never
+   walked cannot render as a gap either, so its commits leave without a
+   trace. Measured under --since 3d: "all" showed 0 commits where "7d"
+   showed 12. The floor is whichever of the two reaches further back. */
+function allStart() {
+  const first = RAW.length ? RAW[0].t : null;
+  if (COMMITS && (first === null || COMMITS.from < first)) return COMMITS.from;
+  return first === null ? Date.now() : first;
+}
+
 /* ---------- aggregation for the selected range ---------- */
 function aggregate(rangeDays) {
   const now = Date.now();
   // walk calendar days (not ms arithmetic): a DST transition must neither
   // merge two days into one bucket nor shift every later label
-  const startD = new Date(rangeDays ? now : (RAW.length ? RAW[0].t : now));
+  const startD = new Date(rangeDays ? now : allStart());
   startD.setHours(0, 0, 0, 0);
   if (rangeDays) startD.setDate(startD.getDate() - (rangeDays - 1));
   const today = new Date(now);

@@ -150,6 +150,16 @@ func cmdDash(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Round the window down to local midnight, the way coverageWindow does,
+	// BEFORE anything is cut with it. git is asked for whole days — that is
+	// what a day bucket is — so a raw timestamp here cuts the posts at noon
+	// and the commits at midnight, and the first day of the window carries a
+	// full day of commits against half a day of posts. `--since 3d` read a
+	// day as blind that `wallii coverage --since 3d` read as covered, off
+	// the same wall and the same window.
+	if !since.IsZero() {
+		since = wall.DayStart(since, time.Local)
+	}
 	dir, err := wall.Dir()
 	if err != nil {
 		return err
@@ -204,8 +214,11 @@ func cmdDash(args []string) error {
 	}
 	stamp := time.Now().Format("2006-01-02 15:04")
 	if *sinceS != "" {
-		// the range buttons cannot reach past what was inlined — say so
-		stamp += " · only posts since " + *sinceS + " included"
+		// The range buttons cannot reach past what was inlined — say so, and
+		// name the day the window actually starts on rather than the flag:
+		// `--since 36h` reaches back to the midnight before, and a reader
+		// counting posts against the flag would come up short.
+		stamp += " · only posts since " + since.Format("2006-01-02") + " included"
 	}
 	// json.Marshal of a nil *dashCoverage is the literal null the card reads
 	// as "nobody measured"
@@ -213,14 +226,22 @@ func cmdDash(args []string) error {
 	if err != nil {
 		return err
 	}
-	// substitute the stamp BEFORE the data: once user-controlled message text
-	// is in the string, a literal "__GENERATED__" inside a post could be hit.
-	// The commits and the families go in before the posts for exactly the
-	// same reason — they are the last things in the file that are not a post.
-	html := strings.Replace(dashTemplate, "__GENERATED__", stamp, 1)
-	html = strings.Replace(html, "__WALLII_COMMITS__", string(cov), 1)
-	html = strings.Replace(html, "__WALLII_FAMILIES__", string(fam), 1)
-	html = strings.Replace(html, "__WALLII_DATA__", string(data), 1)
+	// One pass over the template, never four in a row. Sequential Replace
+	// calls let a value that came off the wall stand in for a placeholder
+	// that has not been substituted yet: the commits JSON carries repo names
+	// (Repos, Unresolved), it goes in before the families and sits ahead of
+	// them in the file, so a repo named "__WALLII_FAMILIES__" captured that
+	// placeholder — `const FAMILIES = __WALLII_FAMILIES__;` stayed in the
+	// output, the whole script block died of a SyntaxError, and one post was
+	// enough to leave every later dashboard permanently blank. NewReplacer
+	// walks the template once and copies replacement text out verbatim, so
+	// nothing it inserts can be read as a placeholder.
+	html := strings.NewReplacer(
+		"__GENERATED__", stamp,
+		"__WALLII_COMMITS__", string(cov),
+		"__WALLII_FAMILIES__", string(fam),
+		"__WALLII_DATA__", string(data),
+	).Replace(dashTemplate)
 
 	path := *outPath
 	if path == "" {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -307,6 +308,162 @@ console.log("RESULT " + JSON.stringify({
 		if b := res.Buckets[i]; b.Cov != day.Cov || b.Commits != day.Commits || b.Mposts != day.Posts {
 			t.Errorf("daily bucket %s disagrees with its day: %+v vs %+v", at.Format("2006-01-02"), b, day)
 		}
+	}
+}
+
+// `dash --since` and `coverage --since` have to cut the same window. git is
+// asked for whole days — that is what a day bucket is, and coverageWindow
+// rounds down to local midnight before asking. Cutting the posts at the raw
+// timestamp instead puts a full day of commits against a partial day of
+// posts on the window's first day: measured off one wall, `coverage --since
+// 3d` read 4 posts against 12 commits and called the day covered, while
+// `dash --since 3d` read 1 post against the same 12 and called it blind.
+//
+// The stamp has to name the day the window really opens on, not the flag:
+// `--since 36h` reaches back to the midnight before, and a reader counting
+// posts against "36h" would come up short.
+func TestDashCutsItsWindowAtLocalMidnightLikeCoverage(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("WALLII_DIR", dir)
+	now := time.Now()
+	since, err := parseSince("3d", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := wall.DayStart(since, time.Local)
+	// At exactly local midnight the two cuts coincide and this fixture tells
+	// them apart no better than any other — one millisecond out of a day. It
+	// still passes there; it just proves less, which is why it says so here
+	// rather than skipping and going quiet.
+	early := "cart totals stable across discount rounds"
+	for _, e := range []wall.Event{
+		{TS: day, Repo: "webshop", Actor: "bot/builder", Msg: early},
+		{TS: now.Add(-time.Hour), Repo: "webshop", Actor: "bot/builder", Msg: "invoice numbering holds under retries"},
+	} {
+		if err := wall.Append(dir, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(t.TempDir(), "d.html")
+	if err := cmdDash([]string{"--since", "3d", "-o", out}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	if !strings.Contains(html, early) {
+		t.Errorf("the post at local midnight of the window's first day was cut out — git is asked from that midnight, so the posts have to start there too")
+	}
+	if want := "only posts since " + day.Format("2006-01-02") + " included"; !strings.Contains(html, want) {
+		t.Errorf("the stamp does not say %q — it has to name the day the window opens on, not the flag:\n%s", want, firstLineWith(html, "only posts since"))
+	}
+}
+
+// "all" must reach back to everything the file knows about, not just to its
+// first post. The collected commit window starts at a local midnight, and
+// its first day is regularly a day nobody posted on — with --since it is the
+// normal case. Starting the walk at RAW[0] leaves those days out of the walk
+// entirely, and a day that is never walked cannot render as a gap either:
+// its commits leave without a trace, so "all" showed fewer commits than
+// "7d" off the same file, with nothing on the page saying anything was
+// missing.
+func TestDashAllReachesBackToTheCollectedWindow(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the browser half of the card cannot be executed without it")
+	}
+	loc := time.Local
+	y, m, d := time.Now().In(loc).Date()
+	today := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	from := today.AddDate(0, 0, -5) // the collected window opens here …
+	post := today.AddDate(0, 0, -2) // … but nobody posted until three days later
+	to := today.AddDate(0, 0, 1)
+
+	cov, err := json.Marshal(dashCoverage{
+		From: from.UnixMilli(), To: to.UnixMilli(),
+		Days:         map[string]int{wall.DashDayKey(from): 12},
+		Repos:        []string{"webshop"},
+		BlindCommits: wall.DefaultBlindCommits, BlindPosts: wall.DefaultBlindPosts,
+		Measured: 1, OnWall: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evs, err := json.Marshal([]dashEvent{
+		{T: post.Add(12 * time.Hour).UnixMilli(), Repo: "webshop", Actor: "bot/builder", Msg: "shipped a thing"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := runDashAggregate(t, node, string(cov), string(evs), 0)
+	if len(res.Days) == 0 {
+		t.Fatal(`"all" walked no days at all`)
+	}
+	first := time.UnixMilli(res.Days[0].T0).In(loc)
+	if !first.Equal(from) {
+		t.Errorf(`"all" starts its walk at %s, want %s — the collected window opens there and its commits have to be walked`,
+			first.Format("2006-01-02"), from.Format("2006-01-02"))
+	}
+	var commits int
+	for _, day := range res.Days {
+		commits += day.Commits
+	}
+	if commits != 12 {
+		t.Errorf(`"all" counts %d commits, want 12 — the measured days before the first post fell out of the walk`, commits)
+	}
+}
+
+// runDashAggregate runs dash.html's own script under node with the given
+// data inlined and hands back what aggregate(rangeDays) built. A stub DOM
+// accepts everything and answers with itself, so the page's top-level
+// rendering runs to the end without a browser.
+func runDashAggregate(t *testing.T, node, cov, evs string, rangeDays int) dashAggResult {
+	t.Helper()
+	start, end := strings.Index(dashTemplate, "<script>"), strings.LastIndex(dashTemplate, "</script>")
+	if start < 0 || end < 0 {
+		t.Fatal("dash.html has no <script> block to run")
+	}
+	script := strings.NewReplacer(
+		"__GENERATED__", "fixture",
+		"__WALLII_COMMITS__", cov,
+		"__WALLII_FAMILIES__", "{}",
+		"__WALLII_DATA__", evs,
+	).Replace(dashTemplate[start+len("<script>") : end])
+	harness := `const stub = new Proxy(function () {}, {
+  get: (_, k) => k === Symbol.toPrimitive ? () => 0 : k === Symbol.iterator ? function* () {} : k === "then" ? undefined : stub,
+  set: () => true, apply: () => stub, construct: () => stub, has: () => true,
+});
+for (const g of ["document", "window", "localStorage", "navigator", "matchMedia", "location", "requestAnimationFrame"]) globalThis[g] = stub;
+` + script + `
+const agg = aggregate(` + strconv.Itoa(rangeDays) + `);
+console.log("RESULT " + JSON.stringify({ days: agg.days }));
+`
+	path := filepath.Join(t.TempDir(), "dash-harness.js")
+	if err := os.WriteFile(path, []byte(harness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the dashboard script did not run under node: %v\n%s", err, out)
+	}
+	_, payload, ok := strings.Cut(string(out), "RESULT ")
+	if !ok {
+		t.Fatalf("no result line from node:\n%s", out)
+	}
+	var res dashAggResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(payload)), &res); err != nil {
+		t.Fatalf("cannot read the aggregate back: %v\n%s", err, out)
+	}
+	return res
+}
+
+type dashAggResult struct {
+	Days []struct {
+		T0             int64
+		Commits, Posts int
+		Cov            bool
 	}
 }
 
