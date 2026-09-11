@@ -46,18 +46,36 @@ type dashEvent struct {
 	Signals []string `json:"signals,omitempty"`
 }
 
-// dashCoverage is what the c-blind card draws on: commits per local day,
-// keyed exactly the way dash.html's dayKey() builds its bucket keys.
+// dashCalendar is the axis, computed once in Go and handed over whole. The
+// browser stopped doing calendar arithmetic when this was introduced: Go
+// knows the zone, carries tzdata, and has one tested place where a day
+// boundary is made. Two calendars for one file can never agree — the same
+// dashboard read "12 commits" under Europe/Berlin and "0 of 0 worked" under
+// Pacific/Auckland.
+//
+// T0 is every day's first instant, ascending and gapless, so a day is an
+// index and never a formatted string. A string key is what the old bug was
+// made of; making it cheaper would have preserved the class of error. The
+// invariant is len(commits) == len(t0), checkable in one line.
+type dashCalendar struct {
+	TZ  string  `json:"tz"`  // IANA name — for the label and for Intl
+	T0  []int64 `json:"t0"`  // unix ms, each day's first instant, ascending
+	Wd0 int     `json:"wd0"` // weekday of T0[0], 0 = Monday
+	End int64   `json:"end"` // first instant after the last day
+}
+
+// dashCoverage is what the c-blind card draws on: commits per day, indexed
+// into dashCalendar.T0.
 //
 // The whole struct is nil — inlined as `null`, never as `[]` or `{}` — when
 // nothing was measured. An empty object cannot tell "measured, no commits"
 // from "nobody looked", and the card that cannot tell them apart paints a
 // month of blindness out of nothing.
 //
-// From is mandatory for the same reason one level down: the dashboard's
+// FromI is mandatory for the same reason one level down: the dashboard's
 // range buttons reach past the window these commits were collected for, and
-// every bucket older than From has to render as a gap that says "not
-// measured", never as a day with no commits on it. To closes the same
+// every bucket older than FromI has to render as a gap that says "not
+// measured", never as a day with no commits on it. ToI closes the same
 // contract at the other end — a dashboard opened a week after it was
 // written must not paint the days since as days with no commits.
 //
@@ -66,16 +84,26 @@ type dashEvent struct {
 // of the ratio here exactly as it does in `wallii coverage`, or the card
 // would print a ratio its own footnote contradicts.
 type dashCoverage struct {
-	From         int64          `json:"from"`  // unix ms, local midnight of the collected window's first day
-	To           int64          `json:"to"`    // unix ms, local midnight after its last day
-	Days         map[string]int `json:"days"`  // dayKey() → commits
-	Repos        []string       `json:"repos"` // the measured repos — the card's numerator is their posts
-	BlindCommits int            `json:"blind_commits"`
-	BlindPosts   int            `json:"blind_posts"`
-	Measured     int            `json:"measured"`
-	OnWall       int            `json:"on_wall"`
-	Others       int            `json:"others,omitempty"`
-	Unresolved   []string       `json:"unresolved,omitempty"`
+	// Commits is index-aligned with dashCalendar.T0 and always has the same
+	// length; entries outside [FromI, ToI) are zero and mean nothing, which
+	// is why the bounds and not the value decide whether a day was measured.
+	Commits      []int    `json:"commits"`
+	FromI        int      `json:"from_i"` // first measured day, index into T0
+	ToI          int      `json:"to_i"`   // one past the last measured day
+	Repos        []string `json:"repos"`  // the measured repos — the card's numerator is their posts
+	BlindCommits int      `json:"blind_commits"`
+	BlindPosts   int      `json:"blind_posts"`
+	Measured     int      `json:"measured"`
+	OnWall       int      `json:"on_wall"`
+	Others       int      `json:"others,omitempty"`
+	Unresolved   []string `json:"unresolved,omitempty"`
+
+	// byDay carries the collector's own answer from collectDashCoverage to
+	// the point where the calendar exists and it can be indexed. Never
+	// serialized: the browser gets indices, never date strings.
+	byDay map[string]int
+	from  time.Time
+	to    time.Time
 }
 
 // collectDashCoverage measures the same window the dashboard inlines posts
@@ -114,7 +142,7 @@ func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time, loc 
 	}
 	toDay := wall.NextDay(now, loc)
 	out := &dashCoverage{
-		From: fromDay.UnixMilli(), To: toDay.UnixMilli(), Days: map[string]int{},
+		from: fromDay, to: toDay, byDay: map[string]int{},
 		Repos:        make([]string, 0, len(c.Repos)),
 		BlindCommits: c.BlindCommits, BlindPosts: c.BlindPosts,
 		Measured: c.Measured, OnWall: c.OnWall, Others: c.Others,
@@ -126,16 +154,74 @@ func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time, loc 
 		if d.PreWall {
 			continue
 		}
-		day, err := time.ParseInLocation("2006-01-02", d.Day, loc)
-		if err != nil {
-			continue
-		}
-		out.Days[wall.DashDayKey(day)] = d.Commits
+		out.byDay[d.Day] = d.Commits
 	}
 	for _, u := range c.Unresolved {
 		out.Unresolved = append(out.Unresolved, u.Name)
 	}
 	return out
+}
+
+// buildDashCalendar walks the axis the page is drawn on: every day from the
+// earliest thing the file knows about up to and including the day it was
+// written. It subsumes the browser's old allStart() — "all" has to reach
+// back to the collected commit window and not only to the first post, or the
+// days before that post are never walked and their commits leave without a
+// trace.
+//
+// It ends at the generation day, full stop. A static file cannot contain a
+// post from after it was written, so a day beyond it has no posts, no
+// commits and no measurement — walking it would draw an empty gap column
+// carrying no information, and it is the only thing the page would need a
+// clock for.
+//
+// The calendar always exists, even for an empty wall — then with exactly one
+// day, because the page divides by the number of buckets.
+func buildDashCalendar(evs []wall.Event, cov *dashCoverage, now time.Time, loc *time.Location) dashCalendar {
+	start := wall.DayStart(now, loc)
+	for _, e := range evs { // the events are not guaranteed sorted here
+		if d := wall.DayStart(e.TS, loc); d.Before(start) {
+			start = d
+		}
+	}
+	if cov != nil && cov.from.Before(start) {
+		start = wall.DayStart(cov.from, loc)
+	}
+	end := wall.NextDay(now, loc)
+	cal := dashCalendar{
+		TZ:  loc.String(),
+		End: end.UnixMilli(),
+		Wd0: (int(start.Weekday()) + 6) % 7, // Go counts from Sunday, the page from Monday
+	}
+	for d := start; d.Before(end); d = wall.NextDay(d, loc) {
+		cal.T0 = append(cal.T0, d.UnixMilli())
+	}
+	return cal
+}
+
+// indexDashCoverage lays the collector's per-day counts onto the calendar.
+// Commits ends up the same length as T0 — the one invariant that replaces a
+// day-key string format pinned across two languages.
+func indexDashCoverage(cov *dashCoverage, cal dashCalendar, loc *time.Location) {
+	if cov == nil {
+		return
+	}
+	cov.Commits = make([]int, len(cal.T0))
+	cov.FromI, cov.ToI = len(cal.T0), len(cal.T0)
+	for i, ms := range cal.T0 {
+		day := time.UnixMilli(ms).In(loc)
+		if day.Before(cov.from) || !day.Before(cov.to) {
+			continue
+		}
+		if i < cov.FromI {
+			cov.FromI = i
+		}
+		cov.ToI = i + 1
+		cov.Commits[i] = cov.byDay[day.Format("2006-01-02")]
+	}
+	if cov.FromI > cov.ToI {
+		cov.FromI = cov.ToI
+	}
 }
 
 func cmdDash(args []string) error {
@@ -149,7 +235,11 @@ func cmdDash(args []string) error {
 	if err != nil {
 		return err
 	}
-	since, err := parseSince(*sinceS, time.Now(), loc)
+	// One clock reading for the whole render: the window, the calendar's last
+	// day and the stamp must agree, and three calls to time.Now() straddling
+	// midnight would not.
+	now := time.Now()
+	since, err := parseSince(*sinceS, now, loc)
 	if err != nil {
 		return err
 	}
@@ -215,17 +305,30 @@ func cmdDash(args []string) error {
 	if err != nil {
 		return err
 	}
-	stamp := time.Now().Format("2006-01-02 15:04")
+	// The zone is part of the stamp, not decoration: it is what every day
+	// boundary in this file was cut at, and the one line that tells a reader
+	// which calendar the numbers are counted in.
+	stamp := now.In(loc).Format("2006-01-02 15:04") + " · " + loc.String()
 	if *sinceS != "" {
 		// The range buttons cannot reach past what was inlined — say so, and
 		// name the day the window actually starts on rather than the flag:
 		// `--since 36h` reaches back to the midnight before, and a reader
 		// counting posts against the flag would come up short.
-		stamp += " · only posts since " + since.Format("2006-01-02") + " included"
+		stamp += " · only posts since " + since.In(loc).Format("2006-01-02") + " included"
+	}
+	// The calendar is built after the collection, because its span reaches
+	// back to whichever is earlier: the first inlined post or the first day
+	// commits were collected for.
+	covv := collectDashCoverage(evs, wallStart, since, now, loc)
+	cal := buildDashCalendar(evs, covv, now, loc)
+	indexDashCoverage(covv, cal, loc)
+	calJSON, err := json.Marshal(cal)
+	if err != nil {
+		return err
 	}
 	// json.Marshal of a nil *dashCoverage is the literal null the card reads
 	// as "nobody measured"
-	cov, err := json.Marshal(collectDashCoverage(evs, wallStart, since, time.Now(), loc))
+	cov, err := json.Marshal(covv)
 	if err != nil {
 		return err
 	}
@@ -242,6 +345,7 @@ func cmdDash(args []string) error {
 	html := strings.NewReplacer(
 		"__GENERATED__", stamp,
 		"__WALLII_COMMITS__", string(cov),
+		"__WALLII_CAL__", string(calJSON),
 		"__WALLII_FAMILIES__", string(fam),
 		"__WALLII_DATA__", string(data),
 	).Replace(dashTemplate)

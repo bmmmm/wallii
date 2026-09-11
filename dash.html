@@ -149,7 +149,7 @@
 <div class="wrap">
   <header>
     <h1>wallii — agent wall dashboard</h1>
-    <span class="stamp">generated __GENERATED__ · local snapshot, refresh with <code>wallii dash</code></span>
+    <span class="stamp">generated __GENERATED__<span id="stale"></span> · snapshot, refresh with <code>wallii dash</code></span>
     <span class="spacer"></span>
     <button id="theme" title="theme">auto</button>
   </header>
@@ -191,6 +191,13 @@ RAW.sort((a, b) => a.t - b.t);
    blindness out of nothing. COMMITS.from is the floor: every bucket older
    than it is a gap labelled "not measured", never a day with no commits. */
 const COMMITS = __WALLII_COMMITS__;
+/* The axis, computed in Go and handed over whole: t0 is every day's first
+   instant in the zone the file was written in, ascending and gapless, and a
+   day is an index into it. The browser does no calendar arithmetic at all —
+   two calendars for one file can never agree, and this one read "12 commits"
+   under Europe/Berlin and "0 of 0 worked" under Pacific/Auckland. COMMITS.commits
+   is index-aligned with CAL.t0 and always the same length. */
+const CAL = __WALLII_CAL__;
 /* actor → family, handed over by Go: the rule that names a family lives in
    one place (wall.ActorFamily) and the page only reads the mapping. An actor
    the mapping does not know is its own family. */
@@ -239,9 +246,45 @@ function svgEl(tag, attrs, ...kids) {
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
-function dayStart(t) { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); }
-function dayKey(d) { return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate(); }
-function fmtDay(t) { const d = new Date(t); return MONTHS[d.getMonth()] + " " + d.getDate(); }
+/* One formatter for the whole page, built once: `new Intl.DateTimeFormat` in
+   a loop is a known collapse. The locale is fixed, or separators and month
+   names would follow the browser's language and stop matching MONTHS above.
+   Asking what a clock in zone X shows at instant t is a pure lookup — it is
+   the other question, "when does calendar day D begin in zone X", that needs
+   a fixed point which need not exist, and that one is answered in Go. */
+const CLOCK_OPTS = { hourCycle: "h23", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" };
+/* A browser whose tzdata does not know this name throws in the constructor
+   and would take the whole script with it. Fall back to UTC and say so on
+   the page — a banner is worse than the right hours and far better than a
+   blank page or hours nobody can place. */
+let CLOCK_BROKEN = false;
+let CLOCK;
+try {
+  CLOCK = new Intl.DateTimeFormat("en-US", { ...CLOCK_OPTS, timeZone: CAL.tz });
+} catch (err) {
+  CLOCK_BROKEN = true;
+  CLOCK = new Intl.DateTimeFormat("en-US", { ...CLOCK_OPTS, timeZone: "UTC" });
+}
+function clockParts(t) {
+  const o = {};
+  for (const p of CLOCK.formatToParts(t)) o[p.type] = p.value;
+  return o;
+}
+/* Which calendar day an instant falls on: a binary search over CAL.t0, with
+   CAL.end as the upper bound. Without that bound a post dated after the file
+   was written would stick to the last day and be counted into it; today it
+   falls out, and that property has to survive. */
+function dayIndexOf(t) {
+  if (!CAL.t0.length || t < CAL.t0[0] || t >= CAL.end) return -1;
+  let lo = 0, hi = CAL.t0.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (CAL.t0[mid] <= t) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+function fmtDay(t) { const p = clockParts(t); return MONTHS[+p.month - 1] + " " + +p.day; }
+function fmtTime(t) { const p = clockParts(t); return p.hour + ":" + p.minute; }
 function fmtTook(s) {
   const m = Math.round(s / 60); // round once, then split — never yields 1h60m
   if (m < 60) return m + "m";
@@ -319,60 +362,45 @@ function inFamily(e) {
   return f === currentFamily;
 }
 
-/* "all" has to reach back to everything this file knows, which is not the
-   same as its first post: the collected commit window starts at a local
-   midnight, and the first day of it is often a day nobody posted on. Start
-   at the post and that day is never walked at all — and a day that is never
-   walked cannot render as a gap either, so its commits leave without a
-   trace. Measured under --since 3d: "all" showed 0 commits where "7d"
-   showed 12. The floor is whichever of the two reaches further back. */
-function allStart() {
-  const first = RAW.length ? RAW[0].t : null;
-  if (COMMITS && (first === null || COMMITS.from < first)) return COMMITS.from;
-  return first === null ? Date.now() : first;
-}
-
-/* ---------- aggregation for the selected range ---------- */
+/* ---------- aggregation for the selected range ----------
+   The axis is CAL, so a range is a slice of it and no clock is read: the
+   file ends on the day it was written, and a day after that has no posts, no
+   commits and no measurement. "N days" therefore means the last N days IN
+   THIS FILE, which is what the card subtitles say. "all" reaches back to the
+   whole calendar — which starts at the collected commit window when that is
+   earlier than the first post, so those days render as the gaps they are
+   instead of leaving without a trace. */
 function aggregate(rangeDays) {
-  const now = Date.now();
-  // walk calendar days (not ms arithmetic): a DST transition must neither
-  // merge two days into one bucket nor shift every later label
-  const startD = new Date(rangeDays ? now : allStart());
-  startD.setHours(0, 0, 0, 0);
-  if (rangeDays) startD.setDate(startD.getDate() - (rangeDays - 1));
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const spanDays = Math.round((today - startD) / DAY) + 1;
-  const weekly = spanDays > 60;
-  const since = startD.getTime();
+  const n = CAL.t0.length;
+  const i0 = rangeDays ? Math.max(0, n - rangeDays) : 0;
+  const weekly = (n - i0) > 60;
+  const since = CAL.t0[i0];
   // every post in range feeds the coverage card; the family filter narrows
   // everything else
   const inRange = RAW.filter(e => e.t >= since);
   const evs = inRange.filter(inFamily);
 
   const buckets = [];
-  const dayIdx = {};  // local calendar day → bucket index
-  const days = [];    // the same walk, one entry per day — a blind day is a daily question
-  const dayOf = {};   // local calendar day → that entry
-  const cur = new Date(startD);
-  for (let i = 0; cur <= today; i++) {
-    const bi = weekly ? Math.floor(i / 7) : i;
-    if (!buckets[bi]) buckets.push({ t0: cur.getTime(), byFamily: {}, out: { ok: 0, partial: 0, failed: 0, none: 0 }, moodSum: 0, moodN: 0, posts: 0, commits: 0, mposts: 0, cov: true });
-    dayIdx[dayKey(cur)] = bi;
-    // the commits ride along in the walk that already exists — no second
-    // calendar in the browser, and DST is handled once, here. Measured means
-    // inside the collected window on both ends: a dashboard opened a week
-    // after it was written must not paint the days since as days with no
-    // commits on them
-    const cov = !!COMMITS && cur.getTime() >= COMMITS.from && cur.getTime() < COMMITS.to;
-    const d = { t0: cur.getTime(), commits: cov ? (COMMITS.days[dayKey(cur)] || 0) : 0, posts: 0, cov };
+  const dayIdx = [];  // day index → bucket index
+  const days = [];    // one entry per day — a blind day is a daily question
+  const dayOf = [];   // day index → that entry
+  for (let i = i0; i < n; i++) {
+    const k = i - i0;
+    const bi = weekly ? Math.floor(k / 7) : k;
+    if (!buckets[bi]) buckets.push({ t0: CAL.t0[i], byFamily: {}, out: { ok: 0, partial: 0, failed: 0, none: 0 }, moodSum: 0, moodN: 0, posts: 0, commits: 0, mposts: 0, cov: true });
+    dayIdx[i] = bi;
+    // Measured means inside the collected window on both ends: a dashboard
+    // opened a week after it was written must not paint the days since as
+    // days with no commits on them. The bounds decide, never the value —
+    // outside them the count is zero and means nothing.
+    const cov = !!COMMITS && i >= COMMITS.from_i && i < COMMITS.to_i;
+    const d = { t0: CAL.t0[i], commits: cov ? (COMMITS.commits[i] || 0) : 0, posts: 0, cov };
     days.push(d);
-    dayOf[dayKey(cur)] = d;
+    dayOf[i] = d;
     buckets[bi].commits += d.commits;
     // a bucket is measured only if every day in it was: a week straddling
     // the collection boundary carries a partial count and must read as a gap
     buckets[bi].cov = buckets[bi].cov && cov;
-    cur.setDate(cur.getDate() + 1);
   }
 
   const agg = {
@@ -388,13 +416,14 @@ function aggregate(rangeDays) {
   // posts of measured repos only, per day and per bucket — over every post
   // in range, whatever family is selected
   for (const e of inRange) {
-    const b = buckets[dayIdx[dayKey(new Date(e.t))]];
+    const b = buckets[dayIdx[dayIndexOf(e.t)]];
     if (!b) continue;
-    const dayEntry = dayOf[dayKey(new Date(e.t))];
+    const dayEntry = dayOf[dayIndexOf(e.t)];
     if (dayEntry && MEASURED.has(e.repo)) { dayEntry.posts++; b.mposts++; }
   }
   for (const e of evs) {
-    const b = buckets[dayIdx[dayKey(new Date(e.t))]];
+    const di = dayIndexOf(e.t);
+    const b = buckets[dayIdx[di]];
     if (!b) continue; // future-dated post (clock skew) — feed still shows it
     const actor = e.actor || "—";
     const fam = familyOf(actor);
@@ -413,8 +442,10 @@ function aggregate(rangeDays) {
     if (e.refs && e.refs.length) agg.refsN++;
     agg.repoCounts[e.repo] = (agg.repoCounts[e.repo] || 0) + 1;
     agg.topicCounts[e.topic || "(untagged)"] = (agg.topicCounts[e.topic || "(untagged)"] || 0) + 1;
-    const d = new Date(e.t);
-    agg.heat[(d.getDay() + 6) % 7][d.getHours()]++;
+    /* The weekday comes off the axis, not off a Date: consecutive calendar
+       days always advance the weekday by one, with no DST exception. The
+       hour is a pure lookup and safe through Intl. */
+    agg.heat[(CAL.wd0 + di) % 7][+clockParts(e.t).hour]++;
     let a = agg.actors[actor];
     if (!a) a = agg.actors[actor] = { posts: 0, repos: {}, ok: 0, partial: 0, failed: 0, moodSum: 0, moodN: 0, refs: 0, last: 0 };
     a.posts++;
@@ -424,8 +455,12 @@ function aggregate(rangeDays) {
     if (e.refs && e.refs.length) a.refs++;
     a.last = Math.max(a.last, e.t);
   }
-  // previous window of equal length, for tile deltas
-  agg.prev = rangeDays ? RAW.filter(e => e.t >= since - rangeDays * DAY && e.t < since && inFamily(e)) : null;
+  /* Previous window of equal length, for the tile deltas — cut on the axis
+     and not by subtracting milliseconds, which put the earlier window an
+     hour out across a DST boundary. */
+  agg.prev = rangeDays && i0 > 0
+    ? RAW.filter(e => e.t >= CAL.t0[Math.max(0, i0 - rangeDays)] && e.t < since && inFamily(e))
+    : null;
   return agg;
 }
 
@@ -653,7 +688,7 @@ function renderMood(agg) {
 }
 
 function renderHeat(agg) {
-  const c = card("c-heat", "When they work", "posts by weekday × hour, local time");
+  const c = card("c-heat", "When they work", "posts by weekday × hour in " + CAL.tz);
   if (!agg.evs.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
   const max = Math.max(1, ...agg.heat.flat());
   const cell = 12.5, gap = 2, mL = 32, mT = 4;
@@ -894,7 +929,6 @@ function renderFeed(agg) {
   if (!evs.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
   const feed = el("div", { class: "feed" });
   for (const e of evs) {
-    const d = new Date(e.t);
     const msg = el("span", { class: "msg", text: e.msg });
     // the poster's own words on the cheap path, under the message — quoted as written, never counted
     if (e.grader) msg.append(el("div", { class: "grader", text: "↷ " + e.grader }));
@@ -902,7 +936,7 @@ function renderFeed(agg) {
     // poster did not write: same restraint, no count, no comparison drawn
     for (const s of e.signals || []) msg.append(el("div", { class: "signal", text: "⌇ " + s }));
     const row = el("div", { class: "row" },
-      el("span", { class: "when", text: `${fmtDay(e.t)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` }),
+      el("span", { class: "when", text: `${fmtDay(e.t)} ${fmtTime(e.t)}` }),
       el("span", { class: "repo", text: e.repo }),
       el("span", { class: "topic", text: e.topic || "" }),
       msg);
@@ -996,6 +1030,12 @@ function renderFilters() {
       onclick: () => { currentRange = days; renderFilters(); renderAll(); },
     }));
   }
+  /* Said once, for every card below: a range counts back from the day this
+     file was written, not from the reader's clock. The range describes the
+     data — which is also why two people opening the same file on different
+     days, in different zones, read the same numbers. */
+  f.append(el("span", { class: "sub", style: "margin-left:8px;align-self:center",
+    text: "counted back from " + fmtDay(CAL.t0[CAL.t0.length - 1]) + ", the day this file was written · " + CAL.tz }));
 }
 function renderFamilies() {
   const f = $("families");
@@ -1028,6 +1068,20 @@ themeBtn.addEventListener("click", () => {
   applyTheme(order[(order.indexOf(cur) + 1) % 3]);
 });
 applyTheme(lsGet("wallii-theme") || "auto");
+
+/* How old this file is — the only clock reading left on the page, and it
+   decides nothing that is counted. Everything else is cut on CAL, which was
+   built in Go when the file was written. */
+if (CLOCK_BROKEN) {
+  $("stale").textContent = " · this browser does not know " + CAL.tz + ", times shown in UTC";
+}
+{
+  const written = CAL.t0.length ? CAL.t0[CAL.t0.length - 1] : null;
+  const age = written === null ? 0 : Math.floor((Date.now() - written) / DAY);
+  if (age >= 1) {
+    $("stale").textContent += " · " + age + " day" + (age === 1 ? "" : "s") + " old";
+  }
+}
 
 renderFilters();
 renderFamilies();

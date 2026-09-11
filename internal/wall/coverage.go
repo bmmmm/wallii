@@ -2,7 +2,6 @@
 package wall
 
 import (
-	"fmt"
 	"sort"
 	"time"
 )
@@ -332,14 +331,4 @@ func inWindow(day string, loc *time.Location, from, to time.Time) bool {
 	// its end and a 25-hour one would fall short of it.
 	start := DayStart(d, loc)
 	return NextDay(start, loc).After(from) && start.Before(to)
-}
-
-// DashDayKey renders a day the way dash.html's dayKey() builds its bucket
-// keys: year-monthIndex-day, month 0-based, no leading zeros. A mismatch is
-// not an off-by-one in the card, it is a card with no data at all — every
-// day filed under a key the browser never looks up, and the panel would draw
-// a month of blindness out of nothing.
-func DashDayKey(t time.Time) string {
-	y, m, d := t.Date()
-	return fmt.Sprintf("%d-%d-%d", y, int(m)-1, d)
 }

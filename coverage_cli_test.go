@@ -91,28 +91,102 @@ func TestPostNeverAsksGitForALog(t *testing.T) {
 	}
 }
 
-// The day key Go writes and the day key the browser looks up have to be the
-// same string. They are built by two different languages from two different
-// calendars, and a mismatch is not an off-by-one in the card: every day
-// would be filed under a key the browser never asks for, and the panel would
-// draw a month of blindness out of nothing.
+// There is no day-key string any more: the day IS the index, and the whole
+// seam is the one invariant below. A string format pinned across two
+// languages was what the old bug was made of.
 //
-// The literal below is lifted from dash.html's dayKey(), and the template is
-// checked for it — editing either side alone turns this red.
-func TestDashDayKeyMatchesTheBrowsersDayKey(t *testing.T) {
-	const jsDayKey = `function dayKey(d) { return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate(); }`
-	if !strings.Contains(dashTemplate, jsDayKey) {
-		t.Fatalf("dash.html no longer builds its bucket keys the way Go does — the card would find nothing:\nwant %s", jsDayKey)
-	}
-	cases := map[string]time.Time{
-		"2026-0-5":   time.Date(2026, time.January, 5, 12, 0, 0, 0, time.UTC),  // month 0-based, no leading zero
-		"2026-7-9":   time.Date(2026, time.August, 9, 23, 59, 0, 0, time.UTC),  // the day the live wall started
-		"2026-11-31": time.Date(2026, time.December, 31, 0, 0, 0, 0, time.UTC), // December is 11
-	}
-	for want, at := range cases {
-		if got := wall.DashDayKey(at); got != want {
-			t.Errorf("DashDayKey(%s) = %q, want %q", at.Format("2006-01-02"), got, want)
+// The zone table matters because these are the properties the missing and
+// the doubled midnight break: a gap, a duplicate, or a day start that is not
+// one.
+func TestDashCalendarAndCommitsAreAligned(t *testing.T) {
+	for _, name := range []string{"Europe/Berlin", "America/Santiago", "America/Havana", "Pacific/Auckland", "UTC"} {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			t.Fatal(err)
 		}
+		// a window that contains a DST transition in every one of them
+		now := time.Date(2022, time.November, 20, 15, 0, 0, 0, loc)
+		evs := []wall.Event{
+			{TS: now.AddDate(0, 0, -40), Repo: "webshop", Actor: "bot/builder", Msg: "first"},
+			{TS: now.Add(-2 * time.Hour), Repo: "webshop", Actor: "bot/builder", Msg: "last"},
+		}
+		cov := &dashCoverage{
+			from: wall.DayStart(now.AddDate(0, 0, -30), loc), to: wall.NextDay(now, loc),
+			byDay: map[string]int{now.Format("2006-01-02"): 7},
+		}
+		cal := buildDashCalendar(evs, cov, now, loc)
+		indexDashCoverage(cov, cal, loc)
+
+		if len(cov.Commits) != len(cal.T0) {
+			t.Fatalf("%s: %d commit slots for %d days — the browser indexes one by the other", name, len(cov.Commits), len(cal.T0))
+		}
+		if cal.Wd0 != (int(time.UnixMilli(cal.T0[0]).In(loc).Weekday())+6)%7 {
+			t.Fatalf("%s: wd0 = %d does not match %s", name, cal.Wd0, time.UnixMilli(cal.T0[0]).In(loc))
+		}
+		seen := map[string]bool{}
+		for i, ms := range cal.T0 {
+			at := time.UnixMilli(ms).In(loc)
+			if at != wall.DayStart(at, loc) {
+				t.Fatalf("%s: t0[%d] = %s is not a day start", name, i, at)
+			}
+			key := at.Format("2006-01-02")
+			if seen[key] {
+				t.Fatalf("%s: two entries on %s", name, key)
+			}
+			seen[key] = true
+			if i > 0 {
+				// 23, 24 or 25 hours: exactly the span a gap or a duplicate
+				// day would fall outside of
+				if d := at.Sub(time.UnixMilli(cal.T0[i-1]).In(loc)); d < 23*time.Hour || d > 25*time.Hour {
+					t.Fatalf("%s: t0[%d] follows its predecessor after %v", name, i, d)
+				}
+			}
+		}
+		if cal.End <= cal.T0[len(cal.T0)-1] {
+			t.Fatalf("%s: end %d is not after the last day", name, cal.End)
+		}
+		if !(0 <= cov.FromI && cov.FromI <= cov.ToI && cov.ToI <= len(cal.T0)) {
+			t.Fatalf("%s: from_i=%d to_i=%d out of bounds for %d days", name, cov.FromI, cov.ToI, len(cal.T0))
+		}
+		if cal.TZ != name {
+			t.Fatalf("%s: calendar names the zone %q", name, cal.TZ)
+		}
+	}
+}
+
+// An empty wall still gets a calendar, and it has exactly one day: the page
+// divides by the number of buckets.
+func TestDashCalendarIsNeverEmpty(t *testing.T) {
+	loc := time.UTC
+	now := time.Date(2026, time.March, 4, 9, 0, 0, 0, loc)
+	cal := buildDashCalendar(nil, nil, now, loc)
+	if len(cal.T0) != 1 {
+		t.Fatalf("an empty wall got %d days, want exactly 1", len(cal.T0))
+	}
+	if got := time.UnixMilli(cal.T0[0]).In(loc); got != wall.DayStart(now, loc) {
+		t.Fatalf("the single day is %s, want the generation day %s", got, wall.DayStart(now, loc))
+	}
+}
+
+// The script must not do calendar arithmetic at all: that is the whole point
+// of handing it an axis. One Date.now() survives, for the "N days old" note
+// in the header, and it decides nothing that is counted.
+func TestDashHtmlDoesNoLocalCalendarArithmetic(t *testing.T) {
+	i, j := strings.Index(dashTemplate, "<script>"), strings.LastIndex(dashTemplate, "</script>")
+	if i < 0 || j < i {
+		t.Fatal("dash.html has no script block")
+	}
+	script := dashTemplate[i:j]
+	for _, banned := range []string{
+		"getFullYear(", "getMonth(", "getDate(", "getDay(", "getHours(", "getMinutes(",
+		"setHours(", "setDate(", "new Date(", "toLocale",
+	} {
+		if strings.Contains(script, banned) {
+			t.Errorf("dash.html uses %s — the viewer's calendar must not decide what a day is", banned)
+		}
+	}
+	if n := strings.Count(script, "Date.now("); n != 1 {
+		t.Errorf("Date.now( appears %d times, want exactly 1 (the staleness note)", n)
 	}
 }
 
@@ -183,15 +257,23 @@ func TestDashInlinesMeasuredCommits(t *testing.T) {
 	if strings.Contains(line, "null") {
 		t.Fatalf("a measured repo must not read as unmeasured: %s", line)
 	}
-	key := wall.DashDayKey(anchor.Add(-2 * time.Hour))
-	if !strings.Contains(line, fmt.Sprintf("%q:2", key)) {
-		t.Errorf("want two commits under the browser's own day key %q, got:\n%s", key, line)
+	if !strings.Contains(line, `"commits":[`) {
+		t.Errorf("the commits must arrive as an array indexed by the calendar:\n%s", line)
 	}
-	if !strings.Contains(line, `"from":`) {
-		t.Errorf("from is mandatory — without it every bucket before the window renders as zero commits:\n%s", line)
+	if !strings.Contains(line, ",2,") && !strings.Contains(line, "[2,") {
+		t.Errorf("want a day carrying the two commits that were made, got:\n%s", line)
 	}
-	if !strings.Contains(line, `"to":`) {
-		t.Errorf("to is mandatory — without it a dashboard opened next week renders the days since as zero commits:\n%s", line)
+	if !strings.Contains(line, `"from_i":`) {
+		t.Errorf("from_i is mandatory — without it every bucket before the window renders as zero commits:\n%s", line)
+	}
+	if !strings.Contains(line, `"to_i":`) {
+		t.Errorf("to_i is mandatory — without it a dashboard opened next week renders the days since as zero commits:\n%s", line)
+	}
+	// the axis itself must be there and must not be null: the page divides
+	// by its length
+	cal := firstLineWith(string(b), "const CAL")
+	if strings.Contains(cal, "__WALLII_CAL__") || strings.Contains(cal, "null") {
+		t.Errorf("the calendar is always inlined, even for an empty wall:\n%s", cal)
 	}
 	if !strings.Contains(line, `"repos":["webshop"]`) {
 		t.Errorf("the card must be told which repos were measured, or it counts every repo's posts:\n%s", line)
@@ -211,36 +293,33 @@ func TestDashCardAggregatesWhatTheGoSideCounted(t *testing.T) {
 	if err != nil {
 		t.Skip("node not on PATH — the browser half of the card cannot be executed without it")
 	}
-	loc := time.Local
-	y, m, d := time.Now().In(loc).Date()
-	today := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	// Fixed historical dates, in a fixed zone: the axis is built into the
+	// file now, so nothing here has to be hung off the clock. yesterdayNoon()
+	// existed because this test went red once a night; it cannot any more.
+	loc := mustLoc(t, "Europe/Berlin")
+	today := wall.DayStart(time.Date(2026, time.April, 2, 15, 0, 0, 0, loc), loc)
 	from := today.AddDate(0, 0, -5)     // the collected window: five days back …
 	to := today.AddDate(0, 0, -2)       // … up to but not including two days ago
 	measured := today.AddDate(0, 0, -4) // a day inside it, with commits and posts
 	noon := measured.Add(12 * time.Hour)
+	first := today.AddDate(0, 0, -8).Add(12 * time.Hour) // so the file spans more than the range
 
-	cov, err := json.Marshal(dashCoverage{
-		From: from.UnixMilli(), To: to.UnixMilli(),
-		Days:         map[string]int{wall.DashDayKey(measured): 12},
-		Repos:        []string{"webshop"},
-		BlindCommits: wall.DefaultBlindCommits, BlindPosts: wall.DefaultBlindPosts,
-		Measured: 1, OnWall: 2, Unresolved: []string{"orphan"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	// two posts on the measured day: one in the measured repo, one in the
 	// repo nobody found a checkout for — the second leaves the numerator the
 	// way its repo left the denominator
-	evs, err := json.Marshal([]dashEvent{
+	f := makeDashFixture(t, loc, today.Add(15*time.Hour), &dashCoverage{
+		from: from, to: to,
+		byDay:        map[string]int{measured.Format("2006-01-02"): 12},
+		Repos:        []string{"webshop"},
+		BlindCommits: wall.DefaultBlindCommits, BlindPosts: wall.DefaultBlindPosts,
+		Measured: 1, OnWall: 2, Unresolved: []string{"orphan"},
+	}, []dashEvent{
+		{T: first.UnixMilli(), Repo: "webshop", Actor: "bot/builder", Msg: "shipped earlier"},
 		{T: noon.UnixMilli(), Repo: "webshop", Actor: "bot/builder", Msg: "shipped a thing"},
 		{T: noon.Add(time.Hour).UnixMilli(), Repo: "orphan", Actor: "bot/builder", Msg: "shipped elsewhere"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	res := runDashAggregate(t, node, string(cov), string(evs), 7)
+	res := runDashAggregate(t, node, f, 7, "")
 	if len(res.Days) != 7 || len(res.Buckets) != 7 {
 		t.Fatalf("a 7-day range walked %d days into %d buckets", len(res.Days), len(res.Buckets))
 	}
@@ -332,30 +411,23 @@ func TestDashAllReachesBackToTheCollectedWindow(t *testing.T) {
 	if err != nil {
 		t.Skip("node not on PATH — the browser half of the card cannot be executed without it")
 	}
-	loc := time.Local
-	y, m, d := time.Now().In(loc).Date()
-	today := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	loc := mustLoc(t, "Europe/Berlin")
+	now := time.Date(2026, time.April, 2, 15, 0, 0, 0, loc)
+	today := wall.DayStart(now, loc)
 	from := today.AddDate(0, 0, -5) // the collected window opens here …
 	post := today.AddDate(0, 0, -2) // … but nobody posted until three days later
 	to := today.AddDate(0, 0, 1)
 
-	cov, err := json.Marshal(dashCoverage{
-		From: from.UnixMilli(), To: to.UnixMilli(),
-		Days:         map[string]int{wall.DashDayKey(from): 12},
+	f := makeDashFixture(t, loc, now, &dashCoverage{
+		from: from, to: to,
+		byDay:        map[string]int{from.Format("2006-01-02"): 12},
 		Repos:        []string{"webshop"},
 		BlindCommits: wall.DefaultBlindCommits, BlindPosts: wall.DefaultBlindPosts,
 		Measured: 1, OnWall: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	evs, err := json.Marshal([]dashEvent{
+	}, []dashEvent{
 		{T: post.Add(12 * time.Hour).UnixMilli(), Repo: "webshop", Actor: "bot/builder", Msg: "shipped a thing"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	res := runDashAggregate(t, node, string(cov), string(evs), 0)
+	res := runDashAggregate(t, node, f, 0, "")
 	if len(res.Days) == 0 {
 		t.Fatal(`"all" walked no days at all`)
 	}
@@ -378,11 +450,116 @@ func TestDashAllReachesBackToTheCollectedWindow(t *testing.T) {
 	}
 }
 
+// The property the whole calendar exists for: ONE file, read under six
+// viewer zones, must read the same. It used to not — the same dashboard said
+// "0 blind of 1 worked, 12 commits" under Europe/Berlin and "0 of 0 worked"
+// under Pacific/Auckland, all twelve commits gone.
+//
+// The compared string carries the rendered strings too, not only the
+// aggregate: without fmtDay and the feed's clock time the test would be
+// green while every feed row under Auckland showed the wrong hour.
+func TestDashboardReadsTheSameUnderAnyViewerZone(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the browser half cannot be executed without it")
+	}
+	// built in a fixed producer zone over a window containing a DST change
+	// (Europe/Berlin springs forward on 2026-03-29)
+	loc := mustLoc(t, "Europe/Berlin")
+	now := time.Date(2026, time.April, 2, 15, 0, 0, 0, loc)
+	today := wall.DayStart(now, loc)
+	from, to := today.AddDate(0, 0, -10), today.AddDate(0, 0, -1)
+	evs := []dashEvent{}
+	for i := 10; i >= 1; i-- {
+		at := today.AddDate(0, 0, -i)
+		// three posts a day at hours that fall on different calendar days in
+		// different viewer zones — 00:30 and 23:30 are the whole test
+		for _, h := range []int{0, 12, 23} {
+			evs = append(evs, dashEvent{
+				T:    at.Add(time.Duration(h)*time.Hour + 30*time.Minute).UnixMilli(),
+				Repo: "webshop", Actor: "bot/builder", Msg: "post", Out: "ok",
+			})
+		}
+	}
+	byDay := map[string]int{}
+	for i := 10; i >= 1; i-- {
+		byDay[today.AddDate(0, 0, -i).Format("2006-01-02")] = i
+	}
+	f := makeDashFixture(t, loc, now, &dashCoverage{
+		from: from, to: to, byDay: byDay, Repos: []string{"webshop"},
+		BlindCommits: wall.DefaultBlindCommits, BlindPosts: wall.DefaultBlindPosts,
+		Measured: 1, OnWall: 1,
+	}, evs)
+
+	var want string
+	for _, zone := range []string{
+		"Europe/Berlin", "Pacific/Auckland", "America/Santiago",
+		"UTC", "America/Los_Angeles", "Pacific/Kiritimati",
+	} {
+		res := runDashAggregate(t, node, f, 7, zone)
+		got, err := json.Marshal(res)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want == "" {
+			want = string(got)
+			if !strings.Contains(want, `"FirstPostTime":"00:30"`) {
+				t.Fatalf("the fixture lost its midnight-adjacent post — this test proves nothing without it:\n%s", want)
+			}
+			continue
+		}
+		if string(got) != want {
+			t.Errorf("read under TZ=%s the same file says something else:\n got %s\nwant %s", zone, got, want)
+		}
+	}
+}
+
+// A post dated after the file was written falls out of every bucket — it did
+// before the binary search too, and that property is what CAL.end protects:
+// without the upper bound it would stick to the last day and be counted.
+func TestDashDropsAPostFromAfterTheFileWasWritten(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the browser half cannot be executed without it")
+	}
+	loc := mustLoc(t, "Europe/Berlin")
+	now := time.Date(2026, time.April, 2, 15, 0, 0, 0, loc)
+	today := wall.DayStart(now, loc)
+	f := makeDashFixture(t, loc, now, nil, []dashEvent{
+		{T: today.Add(9 * time.Hour).UnixMilli(), Repo: "webshop", Actor: "bot/builder", Msg: "today"},
+	})
+	// a post three days into the future, appended after the calendar was built
+	skewed := today.AddDate(0, 0, 3).Add(9 * time.Hour).UnixMilli()
+	f.Evs = strings.TrimSuffix(f.Evs, "]") +
+		`,{"t":` + strconv.FormatInt(skewed, 10) + `,"repo":"webshop","actor":"bot/builder","msg":"clock skew"}]`
+
+	res := runDashAggregate(t, node, f, 0, "")
+	var posts int
+	for _, b := range res.Buckets {
+		posts += b.Mposts
+	}
+	if n := len(res.Days); n != 1 {
+		t.Fatalf("the axis grew to %d days — a future-dated post must not extend it", n)
+	}
+	total := 0
+	for _, row := range res.Heat {
+		for _, v := range row {
+			total += v
+		}
+	}
+	if total != 1 {
+		t.Errorf("the heatmap counted %d posts, want 1 — the future-dated post was bucketed", total)
+	}
+}
+
 // runDashAggregate runs dash.html's own script under node with the given
 // data inlined and hands back what aggregate(rangeDays) built. A stub DOM
 // accepts everything and answers with itself, so the page's top-level
 // rendering runs to the end without a browser.
-func runDashAggregate(t *testing.T, node, cov, evs string, rangeDays int) dashAggResult {
+// viewerZone is the TZ the node process reads the file under. "" leaves the
+// environment alone; every other value is the whole point of the test that
+// passes one — the same file must read the same in every zone.
+func runDashAggregate(t *testing.T, node string, f dashFixture, rangeDays int, viewerZone string) dashAggResult {
 	t.Helper()
 	start, end := strings.Index(dashTemplate, "<script>"), strings.LastIndex(dashTemplate, "</script>")
 	if start < 0 || end < 0 {
@@ -390,9 +567,10 @@ func runDashAggregate(t *testing.T, node, cov, evs string, rangeDays int) dashAg
 	}
 	script := strings.NewReplacer(
 		"__GENERATED__", "fixture",
-		"__WALLII_COMMITS__", cov,
+		"__WALLII_CAL__", f.Cal,
+		"__WALLII_COMMITS__", f.Cov,
 		"__WALLII_FAMILIES__", "{}",
-		"__WALLII_DATA__", evs,
+		"__WALLII_DATA__", f.Evs,
 	).Replace(dashTemplate[start+len("<script>") : end])
 	// a DOM that accepts everything and answers with itself, so the page's
 	// own top-level rendering runs to the end without a browser
@@ -406,13 +584,22 @@ const agg = aggregate(` + strconv.Itoa(rangeDays) + `);
 console.log("RESULT " + JSON.stringify({
   days: agg.days,
   buckets: agg.buckets.map(b => ({ t0: b.t0, cov: b.cov, commits: b.commits, mposts: b.mposts })),
+  heat: agg.heat,
+  // rendered strings too: without them a viewer in another zone could read
+  // the same aggregate and still see the wrong hour on every feed row
+  firstDay: agg.days.length ? fmtDay(agg.days[0].t0) : "",
+  firstPostTime: RAW.length ? fmtTime(RAW[0].t) : "",
 }));
 `
 	path := filepath.Join(t.TempDir(), "dash-harness.js")
 	if err := os.WriteFile(path, []byte(harness), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(node, path).CombinedOutput()
+	cmd := exec.Command(node, path)
+	if viewerZone != "" {
+		cmd.Env = append(os.Environ(), "TZ="+viewerZone)
+	}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("the dashboard script did not run under node: %v\n%s", err, out)
 	}
@@ -438,6 +625,47 @@ type dashAggResult struct {
 		Commits, Mposts int
 		Cov             bool
 	}
+	Heat          [][]int
+	FirstDay      string
+	FirstPostTime string
+}
+
+// dashFixture is the three inlined constants, built the way cmdDash builds
+// them: the calendar comes out of buildDashCalendar and the commits are
+// indexed onto it, so a test pins the seam rather than a hand-written array
+// that could agree with nothing.
+type dashFixture struct{ Cal, Cov, Evs string }
+
+func makeDashFixture(t *testing.T, loc *time.Location, now time.Time, cov *dashCoverage, evs []dashEvent) dashFixture {
+	t.Helper()
+	posts := make([]wall.Event, 0, len(evs))
+	for _, e := range evs {
+		posts = append(posts, wall.Event{TS: time.UnixMilli(e.T)})
+	}
+	cal := buildDashCalendar(posts, cov, now, loc)
+	indexDashCoverage(cov, cal, loc)
+	calJSON, err := json.Marshal(cal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	covJSON, err := json.Marshal(cov)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evsJSON, err := json.Marshal(evs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dashFixture{Cal: string(calJSON), Cov: string(covJSON), Evs: string(evsJSON)}
+}
+
+func mustLoc(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return loc
 }
 
 // yesterdayNoon is a fixture clock that no day boundary can move across:
@@ -649,37 +877,31 @@ func TestDashFamilyFilterLeavesTheBlindDaysAlone(t *testing.T) {
 	if err != nil {
 		t.Skip("node not on PATH — the browser half cannot be executed without it")
 	}
-	loc := time.Local
-	y, m, d := time.Now().In(loc).Date()
-	today := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	loc := mustLoc(t, "Europe/Berlin")
+	now := time.Date(2026, time.April, 2, 15, 0, 0, 0, loc)
+	today := wall.DayStart(now, loc)
 	from, to := today.AddDate(0, 0, -5), today.AddDate(0, 0, -2)
 	measured := today.AddDate(0, 0, -4)
 	noon := measured.Add(12 * time.Hour)
-	cov, err := json.Marshal(dashCoverage{
-		From: from.UnixMilli(), To: to.UnixMilli(),
-		Days: map[string]int{wall.DashDayKey(measured): 12}, Repos: []string{"webshop"},
+	f := makeDashFixture(t, loc, now, &dashCoverage{
+		from: from, to: to,
+		byDay: map[string]int{measured.Format("2006-01-02"): 12}, Repos: []string{"webshop"},
 		BlindCommits: wall.DefaultBlindCommits, BlindPosts: wall.DefaultBlindPosts, Measured: 1, OnWall: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	evs, err := json.Marshal([]dashEvent{
+	}, []dashEvent{
 		{T: noon.UnixMilli(), Repo: "webshop", Actor: "claude/main", Msg: "one"},
 		{T: noon.Add(time.Hour).UnixMilli(), Repo: "webshop", Actor: "claude/ops", Msg: "two"},
 		{T: noon.Add(2 * time.Hour).UnixMilli(), Repo: "webshop", Actor: "codex/main", Msg: "three"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	start, end := strings.Index(dashTemplate, "<script>"), strings.LastIndex(dashTemplate, "</script>")
 	if start < 0 || end < 0 {
 		t.Fatal("dash.html has no <script> block to run")
 	}
 	script := dashTemplate[start+len("<script>") : end]
 	script = strings.Replace(script, "__GENERATED__", "fixture", 1)
-	script = strings.Replace(script, "__WALLII_COMMITS__", string(cov), 1)
+	script = strings.Replace(script, "__WALLII_CAL__", f.Cal, 1)
+	script = strings.Replace(script, "__WALLII_COMMITS__", f.Cov, 1)
 	script = strings.Replace(script, "__WALLII_FAMILIES__", `{"claude/main":"claude","claude/ops":"claude","codex/main":"codex"}`, 1)
-	script = strings.Replace(script, "__WALLII_DATA__", string(evs), 1)
+	script = strings.Replace(script, "__WALLII_DATA__", f.Evs, 1)
 	harness := `const stub = new Proxy(function () {}, {
   get: (_, k) => k === Symbol.toPrimitive ? () => 0 : k === Symbol.iterator ? function* () {} : k === "then" ? undefined : stub,
   set: () => true, apply: () => stub, construct: () => stub, has: () => true,
