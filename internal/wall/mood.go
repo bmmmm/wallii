@@ -228,11 +228,11 @@ func MoodTrail(evs []Event) MoodSummary {
 // twenty oks — while its contradictions add up, so a day is doubted only
 // when most of it was (see MoodPoint.Contradicts).
 //
-// loc is a parameter and never time.Local, for the reason spelled out over
-// Coverage: a day boundary is the measurement here. It used to be
-// time.Local, which meant that with WALLII_TZ set the panel cut its days in
-// one zone and the list beside it filtered them in another — clicking a bar
-// pinned the wrong posts, or none.
+// loc is a parameter and never the machine's own zone, for the reason
+// spelled out over Coverage: a day boundary is the measurement here. It used
+// to be the machine's, which meant that with WALLII_TZ set the panel cut its
+// days in one zone and the list beside it filtered them in another —
+// clicking a bar pinned the wrong posts, or none.
 func MoodDays(pts []MoodPoint, loc *time.Location) []MoodPoint {
 	var out []MoodPoint
 	sum := make(map[int]float64)

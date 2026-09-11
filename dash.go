@@ -261,6 +261,12 @@ func cmdDash(args []string) error {
 	if err := serveOptsCheck(*serve, *commitsS); err != nil {
 		return err
 	}
+	if *serve && (*port < 1 || *port > 65535) {
+		// Port 0 binds — the kernel picks one — and the whole point of
+		// refusing a fallback port is that nobody has to go looking for the
+		// one being served.
+		return fmt.Errorf("--port %d is not a port to serve on — pick one, 8484 by default", *port)
+	}
 	// Read once here so a bad --since fails before anything is built or
 	// bound; the render resolves it again per rebuild, because a relative
 	// window must not freeze at the moment the server started.
@@ -281,6 +287,7 @@ func cmdDash(args []string) error {
 	// overnight must not keep cutting "3d" at the day it was started.
 	var cachedCov *dashCoverage
 	var cachedAt time.Time
+	lastReadStats := ""
 	render := func(live bool, version int64) ([]byte, error) {
 		now := time.Now()
 		since, err := parseSince(*sinceS, now, loc)
@@ -305,8 +312,18 @@ func cmdDash(args []string) error {
 		if err != nil {
 			return nil, err
 		}
+		// Said on every render, served or written — a month file that cannot
+		// be read takes its posts off the page, and silence about that is
+		// the one thing this whole file is built not to do. Under --serve it
+		// is said once per distinct state rather than once per rebuild, so a
+		// standing problem is a line, not a stream.
 		if !live {
 			reportStats(rstats)
+		} else if s := statsLine(rstats); s != lastReadStats {
+			lastReadStats = s
+			if s != "" {
+				reportStats(rstats)
+			}
 		}
 		wallStart := firstPost(all)
 		evs := all
@@ -379,9 +396,20 @@ func cmdDash(args []string) error {
 			stamp += " · only posts since " + since.In(loc).Format("2006-01-02") + " included"
 		}
 		if live {
-			// A served page from 14:22 must not imply a commit measurement
-			// from 14:22 when the last one ran at 14:05.
-			stamp += " · live, commits measured " + cachedAt.In(loc).Format("15:04")
+			// A served page from 14:22 must not imply a measurement from
+			// 14:22 when the last one ran at 14:05. The date is part of it:
+			// a server running past midnight would otherwise say "23:00",
+			// which reads as tonight.
+			//
+			// And it says "measured", not "commits measured", because the
+			// whole reading is frozen together — the blind-day card's posts
+			// and repo set come from that same run, while the feed above it
+			// is current.
+			when := cachedAt.In(loc).Format("15:04")
+			if !sameDay(cachedAt.In(loc), now.In(loc)) {
+				when = cachedAt.In(loc).Format("2006-01-02 15:04")
+			}
+			stamp += " · live · commits and the blind-day card measured " + when
 		}
 
 		live_ := ""

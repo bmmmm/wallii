@@ -136,10 +136,10 @@ func (c Cov) PerCommit() float64 {
 	return float64(c.Posts) / float64(c.Commits)
 }
 
-// Coverage folds posts against commits over [from, to), one local calendar
-// day at a time. loc is a parameter and not time.Local because a day
+// Coverage folds posts against commits over [from, to), one calendar day at
+// a time. loc is a parameter and never the machine's own zone, because a day
 // boundary is the whole measurement here and t.Setenv("TZ") does not move
-// time.Local after process start — a test that could not choose its own
+// the process's zone after start — a test that could not choose its own
 // timezone would only ever prove the machine's.
 //
 // wallStart is the wall's first post ever, and it is a parameter for the

@@ -67,11 +67,16 @@ func TestDashLiveSnippetCarriesTheBootVersion(t *testing.T) {
 	if !strings.Contains(s, "const BOOT = 1234567890;") {
 		t.Errorf("the boot version is injected, never fetched — a post landing between render and first poll would leave the tab stale forever:\n%s", s)
 	}
-	if !strings.Contains(s, "setInterval(poll, 1500)") {
+	if !strings.Contains(s, "const EVERY = 1500;") {
 		t.Errorf("the poll interval did not reach the snippet:\n%s", s)
 	}
 	if !strings.Contains(s, "location.reload()") {
 		t.Error("the snippet must reload the page, not swap data")
+	}
+	// A refused port polled every 1.5s forever is what an abandoned tab does
+	// after ctrl-c; the snippet has to slow down.
+	if !strings.Contains(s, "failures > 5") {
+		t.Errorf("the snippet has no backoff — an abandoned tab polls a dead server forever:\n%s", s)
 	}
 }
 

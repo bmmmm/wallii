@@ -275,6 +275,11 @@ the page same-origin. Two routes exist, `/` and `/live`; there is no handler
 anywhere that turns a request into a file name, so the wall files themselves
 are not reachable under any spelling.
 
+What triggers a rebuild is a change to the **wall files** — a post, a new
+month, an archive run. Commits are not watched: on a quiet wall no rebuild
+fires, so `--commits 5m` is a ceiling on how often git may run, never a floor
+that guarantees it does. If the commit card matters, post or restart.
+
 `--port` defaults to 8484, and a busy port is a loud error, never a quiet
 move to another one — an open tab would poll the dead port forever and
 nothing about that would look broken. The git half has its own budget,

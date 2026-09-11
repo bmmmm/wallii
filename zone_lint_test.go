@@ -56,17 +56,14 @@ func TestNothingReachesForTimeLocal(t *testing.T) {
 			t.Fatal(err)
 		}
 		checked++
-		// Code, not prose: the rule is worth explaining where it is followed,
-		// and naming time.Local in a comment is how it gets explained.
-		var code strings.Builder
-		for _, line := range strings.Split(string(b), "\n") {
-			if t := strings.TrimSpace(line); strings.HasPrefix(t, "//") || strings.HasPrefix(t, "*") {
-				continue
-			}
-			code.WriteString(line)
-			code.WriteByte('\n')
-		}
-		src := code.String()
+		// The whole file, comments included. A stripper was tried here and
+		// immediately let real code through: skipping lines that start with
+		// "*" hid `*locp = time.Local`, which compiles. A lint that is
+		// occasionally too strict costs a rewording; one that is
+		// occasionally too lax costs the thing it was written for. The
+		// comments that used to name time.Local say "the machine's own
+		// zone" instead.
+		src := string(b)
 		for _, banned := range []string{"time.Local", ".Local()"} {
 			if strings.Contains(src, banned) {
 				t.Errorf("%s uses %s — every instant goes through inZone(), every boundary through the loc it was handed", path, banned)

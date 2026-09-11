@@ -204,18 +204,12 @@ func TestDashHtmlDoesNoLocalCalendarArithmetic(t *testing.T) {
 	if i < 0 || j < i {
 		t.Fatal("dash.html has no script block")
 	}
-	// Code, not prose: the rule is worth explaining next to the calls that
-	// follow it, and explaining it means naming what is forbidden.
-	var b strings.Builder
-	for _, line := range strings.Split(dashTemplate[i:j], "\n") {
-		t := strings.TrimSpace(line)
-		if strings.HasPrefix(t, "//") || strings.HasPrefix(t, "/*") || strings.HasPrefix(t, "*") {
-			continue
-		}
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-	script := b.String()
+	// The whole block, comments included — see the note in
+	// zone_lint_test.go. Stripping lines that begin with "/*" let
+	// `/* note */ const zz = new Date(CAL.end).getFullYear();` pass: three
+	// banned tokens, invisible to the gate. The comments here describe what
+	// is forbidden without spelling it.
+	script := dashTemplate[i:j]
 	for _, banned := range []string{
 		"getFullYear(", "getMonth(", "getDate(", "getDay(", "getHours(", "getMinutes(",
 		"setHours(", "setDate(", "new Date(", "toLocale",
@@ -589,6 +583,78 @@ func TestDashDropsAPostFromAfterTheFileWasWritten(t *testing.T) {
 	if total != 1 {
 		t.Errorf("the heatmap counted %d posts, want 1 — the future-dated post was bucketed", total)
 	}
+}
+
+// The remembered range must not change the default when nothing is
+// remembered. `+null` is 0 and 0 is the "all" range, so a fresh profile
+// silently opened every dashboard on "all" instead of 30d — a one-character
+// coercion changing the default view of a feature nobody was touching.
+func TestTheDefaultRangeSurvivesAnEmptyStore(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the browser half cannot be executed without it")
+	}
+	loc := mustLoc(t, "Europe/Berlin")
+	now := time.Date(2026, time.April, 2, 15, 0, 0, 0, loc)
+	f := makeDashFixture(t, loc, now, nil, []dashEvent{
+		{T: wall.DayStart(now, loc).Add(9 * time.Hour).UnixMilli(), Repo: "webshop", Actor: "bot/builder", Msg: "one"},
+	})
+	for _, tc := range []struct {
+		name, stored string
+		want         int
+	}{
+		{"nothing remembered", "null", 30},
+		{"a remembered range", `"7"`, 7},
+		{"a remembered all", `"0"`, 0},
+		{"junk", `"banana"`, 30},
+		{"a range that no longer exists", `"14"`, 30},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runDashRange(t, node, f, tc.stored); got != tc.want {
+				t.Errorf("stored %s → range %d, want %d", tc.stored, got, tc.want)
+			}
+		})
+	}
+}
+
+// runDashRange boots the page with one value in the store and reports which
+// range it settled on.
+func runDashRange(t *testing.T, node string, f dashFixture, stored string) int {
+	t.Helper()
+	start, end := strings.Index(dashTemplate, "<script>"), strings.LastIndex(dashTemplate, "</script>")
+	script := strings.NewReplacer(
+		"__GENERATED__", "fixture",
+		"__WALLII_CAL__", f.Cal,
+		"__WALLII_COMMITS__", f.Cov,
+		"__WALLII_FAMILIES__", "{}",
+		"__WALLII_DATA__", f.Evs,
+	).Replace(dashTemplate[start+len("<script>") : end])
+	harness := `const stub = new Proxy(function () {}, {
+  get: (_, k) => k === Symbol.toPrimitive ? () => 0 : k === Symbol.iterator ? function* () {} : k === "then" ? undefined : stub,
+  set: () => true, apply: () => stub, construct: () => stub, has: () => true,
+});
+for (const g of ["document", "window", "navigator", "matchMedia", "location", "requestAnimationFrame"]) globalThis[g] = stub;
+globalThis.localStorage = { getItem: k => k === "wallii-range" ? ` + stored + ` : null, setItem: () => {} };
+` + script + `
+console.log("RESULT " + JSON.stringify({ range: currentRange }));
+`
+	path := filepath.Join(t.TempDir(), "range-harness.js")
+	if err := os.WriteFile(path, []byte(harness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the dashboard script did not run under node: %v\n%s", err, out)
+	}
+	_, payload, ok := strings.Cut(string(out), "RESULT ")
+	if !ok {
+		t.Fatalf("no result line from node:\n%s", out)
+	}
+	var res struct{ Range int }
+	if err := json.Unmarshal([]byte(strings.TrimSpace(payload)), &res); err != nil {
+		t.Fatalf("cannot read the range back: %v\n%s", err, out)
+	}
+	return res.Range
 }
 
 // runDashAggregate runs dash.html's own script under node with the given

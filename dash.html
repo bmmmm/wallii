@@ -268,10 +268,10 @@ try {
   CLOCK = new Intl.DateTimeFormat("en-US", { ...CLOCK_OPTS, timeZone: "UTC" });
 }
 function clockParts(t) {
-  /* formatToParts(undefined) does not throw — it silently formats Date.now()
-     and reads the viewer's clock, which is the exact failure this whole page
-     was rebuilt to remove. It would not trip the no-calendar-arithmetic lint
-     either, because the call still looks correct. */
+  /* Handed something that is not an instant, formatToParts does not throw —
+     it silently formats the current moment and so reads the viewer's clock,
+     which is the exact failure this page was rebuilt to remove. The gate
+     below cannot see it either, because the call still looks correct. */
   if (typeof t !== "number" || !Number.isFinite(t)) throw new TypeError("clockParts needs an instant, got " + t);
   const o = {};
   for (const p of CLOCK.formatToParts(t)) o[p.type] = p.value;
@@ -1022,8 +1022,11 @@ let currentRange = 30;
      against RANGES because localStorage hands back whatever it likes. Worth
      having without --serve too — reopening the file keeps your window — so
      this is not a serve-only special case. */
-  const saved = +lsGet("wallii-range");
-  if (RANGES.some(([, days]) => days === saved)) currentRange = saved;
+  /* `+null` is 0 and 0 is the "all" range, so coercing before the null
+     check silently made "all" the default for every fresh profile. */
+  const saved = lsGet("wallii-range");
+  const n = saved === null ? NaN : +saved;
+  if (RANGES.some(([, days]) => days === n)) currentRange = n;
 }
 function renderAll() {
   const agg = aggregate(currentRange);

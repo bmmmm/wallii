@@ -53,8 +53,14 @@ func cmdTUI(args []string) error {
 	// The TUI is the one place that renders times without having resolved
 	// the zone through an error return. stderr is behind the alt-screen, so
 	// if the zone could not be named it has to be said here.
+	// Appended, never assigned: a machine that cannot name its zone can also
+	// have a corrupt month file, and overwriting the note there would hide
+	// the data loss behind the smaller problem.
 	if b := zoneBanner(); b != "" {
-		m.note = b
+		if m.note != "" {
+			m.note += " · "
+		}
+		m.note += b
 	}
 	_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err

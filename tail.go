@@ -181,6 +181,16 @@ func cmdTail(args []string) error {
 	return followLoop(dir, flt, r, *asJSON)
 }
 
+// statsLine is what reportStats would say, as a comparable string — "" when
+// it would say nothing. Lets a long-running render report a standing problem
+// once instead of on every rebuild.
+func statsLine(stats wall.ReadStats) string {
+	if stats.BadLines == 0 && len(stats.SkippedFiles) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d|%s", stats.BadLines, strings.Join(stats.SkippedFiles, ","))
+}
+
 func reportStats(stats wall.ReadStats) {
 	if stats.BadLines > 0 {
 		fmt.Fprintf(os.Stderr, "wallii: skipped %d malformed line(s)\n", stats.BadLines)

@@ -133,20 +133,29 @@ func dashLiveSnippet(version int64, everyMS int) string {
   addEventListener("beforeunload", () => {
     try { sessionStorage.setItem(KEY, String(window.scrollY)); } catch { /* not saved */ }
   });
-  let failures = 0;
+  /* A server that went away is not an error worth painting — but polling a
+     refused port every 1.5s forever is not free either, so the interval
+     backs off to a minute after a run of failures and snaps back on the
+     first answer. The tab you left open after ctrl-c goes quiet. */
+  const EVERY = ` + strconv.Itoa(everyMS) + `;
+  let failures = 0, timer = null;
+  function schedule() {
+    clearTimeout(timer);
+    timer = setTimeout(poll, failures > 5 ? 60000 : EVERY);
+  }
   async function poll() {
     try {
       const r = await fetch("/live", { cache: "no-store" });
       if (!r.ok) throw new Error(r.status);
       const v = await r.json();
       failures = 0;
-      if (v.version !== BOOT) location.reload();
+      if (v.version !== BOOT) { location.reload(); return; }
     } catch {
-      // a server that went away is not an error worth painting; keep trying
       failures++;
     }
+    schedule();
   }
-  setInterval(poll, ` + strconv.Itoa(everyMS) + `);
+  schedule();
 })();
 </script>`
 }
@@ -219,8 +228,12 @@ func (s *dashServer) servePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	// the machine-readable form of the README's promise: this page fetches
 	// nothing but its own /live
+	// frame-ancestors is not covered by default-src: without it any site can
+	// frame this page. Same-origin policy still stops it being read, so it
+	// is clickjacking only — and one directive to close.
 	w.Header().Set("Content-Security-Policy",
-		"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'")
+		"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; "+
+			"frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Length", strconv.Itoa(len(snap.html)))
@@ -289,7 +302,11 @@ func serveDash(ctx context.Context, dir string, opts dashServeOpts, render func(
 	}
 
 	httpSrv := &http.Server{Handler: srv.handler(), ReadHeaderTimeout: 5 * time.Second}
-	url := "http://" + addr + "/"
+	// The address the listener actually got, not the one we asked for: with
+	// port 0 the kernel picks, and printing the request would announce
+	// http://127.0.0.1:0/ while serving somewhere unknowable — the quiet
+	// port move this design refuses, arrived at from the other side.
+	url := "http://" + ln.Addr().String() + "/"
 	fmt.Printf("dashboard: %s (watching %s — ctrl-c to stop)\n", url, dir)
 	// after the listener exists, before Serve: a browser that wins the race
 	// against Serve would otherwise get a connection refused
@@ -344,21 +361,24 @@ func watchWall(ctx context.Context, dir string, opts dashServeOpts, srv *dashSer
 			if !defaultDebouncer.due(now, firstChange, lastChange) {
 				continue
 			}
-			firstChange, lastChange = time.Time{}, time.Time{}
 			// The git half is the expensive one — it forks per repo, 0.42s
 			// over 40 repos here and up to gitTimeout() in the worst case.
 			// It must not run on every post.
-			if dashCommitsDue(opts, lastCommits, now) {
-				lastCommits = now
-				dashCommitsFresh.Store(true)
-			} else {
-				dashCommitsFresh.Store(false)
-			}
+			fresh := dashCommitsDue(opts, lastCommits, now)
+			dashCommitsFresh.Store(fresh)
 			version := now.UnixNano()
 			html, err := render(true, version)
 			if err != nil {
+				// The change stays pending and the git budget is not spent:
+				// a transient failure (a half-written line) must not swallow
+				// the post that caused it and leave the page stale until
+				// somebody happens to write again.
 				fmt.Fprintf(os.Stderr, "wallii: rebuild failed, keeping the previous page: %v\n", err)
 				continue
+			}
+			firstChange, lastChange = time.Time{}, time.Time{}
+			if fresh {
+				lastCommits = now
 			}
 			srv.snap.Store(&dashSnapshot{html: html, version: version})
 		}
