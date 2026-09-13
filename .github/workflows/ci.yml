@@ -22,7 +22,7 @@ jobs:
       # that happens not to carry node would turn that coverage off without
       # saying anything. Asked for explicitly rather than inherited from
       # whatever the image ships.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: gofmt
