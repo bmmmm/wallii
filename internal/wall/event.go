@@ -196,6 +196,29 @@ func ActorFamily(actor string) string {
 	return actor
 }
 
+// overLength checks both length caps in one pass. Reporting only the first
+// cost a post that was over on both fields two retries, and the rejection is
+// the counter: it names each overshoot, which is the number the retry needs
+// (14 days to 2026-09-24: 209 separate counting calls against 25 rejects).
+func overLength(msg, grader string) error {
+	var over []string
+	if n := utf8.RuneCountInString(msg); n > MaxMsgRunes {
+		over = append(over, fmt.Sprintf("message is %d runes (%d over), max %d", n, n-MaxMsgRunes, MaxMsgRunes))	}
+	if n := utf8.RuneCountInString(grader); n > MaxGraderRunes {
+		over = append(over, fmt.Sprintf("grader is %d runes (%d over), max %d", n, n-MaxGraderRunes, MaxGraderRunes))
+	}
+	switch len(over) {
+	case 0:
+		return nil
+	case 2:
+		return errors.New(strings.Join(over, "; ") + " — shorten both, detail goes into --ref")
+	}
+	if strings.HasPrefix(over[0], "grader") {
+		return errors.New(over[0] + " — the cheap path in one breath, not the whole story")
+	}
+	return errors.New(over[0] + " — shorten it or move detail into --ref")
+}
+
 func (e Event) Validate() error {
 	if strings.TrimSpace(e.Repo) == "" {
 		return errors.New("repo is empty — run inside a git repo or pass -r <name>")
@@ -254,8 +277,8 @@ func (e Event) Validate() error {
 	if hasControl(e.Grader) {
 		return errors.New("grader must be a single line of plain text (no newlines or control characters)")
 	}
-	if n := utf8.RuneCountInString(e.Grader); n > MaxGraderRunes {
-		return fmt.Errorf("grader is %d runes, max %d — the cheap path in one breath, not the whole story", n, MaxGraderRunes)
+	if err := overLength(e.Msg, e.Grader); err != nil {
+		return err
 	}
 	if e.TookS < 0 {
 		return fmt.Errorf("took is negative (%ds) — durations only", e.TookS)
@@ -353,9 +376,6 @@ func (e Event) Validate() error {
 	}
 	if hasControl(e.Msg) {
 		return errors.New("message must be a single line of plain text (no newlines or control characters) — move detail into --ref")
-	}
-	if n := utf8.RuneCountInString(e.Msg); n > MaxMsgRunes {
-		return fmt.Errorf("message is %d runes, max %d — shorten it or move detail into --ref", n, MaxMsgRunes)
 	}
 	if len(e.Refs) > MaxRefs {
 		return fmt.Errorf("%d refs, max %d — link an overview page instead", len(e.Refs), MaxRefs)

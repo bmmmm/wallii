@@ -62,6 +62,31 @@ func TestValidateMsgLengthBoundary(t *testing.T) {
 	}
 }
 
+// A post over on both fields is one retry, not two: the rejection names both
+// overshoots, and each field alone still names its own.
+func TestValidateReportsBothOvershoots(t *testing.T) {
+	e := validEvent()
+	e.Msg = strings.Repeat("ä", MaxMsgRunes+11)
+	e.Grader = strings.Repeat("ä", MaxGraderRunes+4)
+	err := e.Validate()
+	if err == nil {
+		t.Fatal("over-long message and grader accepted")
+	}
+	for _, want := range []string{"message is 151 runes (11 over)", "grader is 144 runes (4 over)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	e.Grader = ""
+	if err := e.Validate(); err == nil || !strings.Contains(err.Error(), "(11 over)") || strings.Contains(err.Error(), "grader") {
+		t.Errorf("message alone: got %v", err)
+	}
+	e.Msg, e.Grader = "fine", strings.Repeat("ä", MaxGraderRunes+4)
+	if err := e.Validate(); err == nil || !strings.Contains(err.Error(), "grader is 144 runes (4 over)") || strings.Contains(err.Error(), "message is") {
+		t.Errorf("grader alone: got %v", err)
+	}
+}
+
 // ANSI/OSC escapes in any field could hijack the terminal rendering the
 // wall (review finding #4).
 func TestValidateRejectsControlCharacters(t *testing.T) {
