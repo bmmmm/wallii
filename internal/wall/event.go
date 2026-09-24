@@ -201,22 +201,22 @@ func ActorFamily(actor string) string {
 // the counter: it names each overshoot, which is the number the retry needs
 // (14 days to 2026-09-24: 209 separate counting calls against 25 rejects).
 func overLength(msg, grader string) error {
-	var over []string
+	var m, g string
 	if n := utf8.RuneCountInString(msg); n > MaxMsgRunes {
-		over = append(over, fmt.Sprintf("message is %d runes (%d over), max %d", n, n-MaxMsgRunes, MaxMsgRunes))	}
+		m = fmt.Sprintf("message is %d runes (%d over), max %d", n, n-MaxMsgRunes, MaxMsgRunes)
+	}
 	if n := utf8.RuneCountInString(grader); n > MaxGraderRunes {
-		over = append(over, fmt.Sprintf("grader is %d runes (%d over), max %d", n, n-MaxGraderRunes, MaxGraderRunes))
+		g = fmt.Sprintf("grader is %d runes (%d over), max %d", n, n-MaxGraderRunes, MaxGraderRunes)
 	}
-	switch len(over) {
-	case 0:
-		return nil
-	case 2:
-		return errors.New(strings.Join(over, "; ") + " — shorten both, detail goes into --ref")
+	switch {
+	case m != "" && g != "":
+		return errors.New(m + "; " + g + " — shorten both, detail goes into --ref")
+	case m != "":
+		return errors.New(m + " — shorten it or move detail into --ref")
+	case g != "":
+		return errors.New(g + " — the cheap path in one breath, not the whole story")
 	}
-	if strings.HasPrefix(over[0], "grader") {
-		return errors.New(over[0] + " — the cheap path in one breath, not the whole story")
-	}
-	return errors.New(over[0] + " — shorten it or move detail into --ref")
+	return nil
 }
 
 func (e Event) Validate() error {

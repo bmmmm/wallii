@@ -78,11 +78,11 @@ func TestValidateReportsBothOvershoots(t *testing.T) {
 		}
 	}
 	e.Grader = ""
-	if err := e.Validate(); err == nil || !strings.Contains(err.Error(), "(11 over)") || strings.Contains(err.Error(), "grader") {
+	if err := e.Validate(); err == nil || !strings.Contains(err.Error(), "(11 over)") || !strings.Contains(err.Error(), "move detail into --ref") || strings.Contains(err.Error(), "grader") {
 		t.Errorf("message alone: got %v", err)
 	}
 	e.Msg, e.Grader = "fine", strings.Repeat("ä", MaxGraderRunes+4)
-	if err := e.Validate(); err == nil || !strings.Contains(err.Error(), "grader is 144 runes (4 over)") || strings.Contains(err.Error(), "message is") {
+	if err := e.Validate(); err == nil || !strings.Contains(err.Error(), "grader is 144 runes (4 over)") || !strings.Contains(err.Error(), "cheap path") || strings.Contains(err.Error(), "message is") {
 		t.Errorf("grader alone: got %v", err)
 	}
 }
