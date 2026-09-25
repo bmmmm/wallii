@@ -336,14 +336,13 @@ function dayIndexOf(t) {
 }
 /* posts by id, for the doubt's pairs */
 const BY_ID = new Map(RAW.map(e => [e.id, e]));
-/* The day cost was first measured on, as an index into CAL — every bucket
-   before it is "not measured", never $0. Taken over everything inlined, not
-   the range: a range that starts after it is measured throughout. -1 when
-   no post carries a reading at all. */
-const FIRST_USD_DAY = (() => {
-  const e = RAW.find(e => e.usd != null);
-  return e ? dayIndexOf(e.t) : -1;
-})();
+/* The first post carrying a cost reading, among the posts the family chip
+   lets through — every bucket before its day is "not measured", never $0.
+   Taken over everything inlined, not the range: a range that starts after it
+   is measured throughout. Per family, because readings arrived family by
+   family: under a chip whose family was measured later, the days before
+   were drawn as $0 columns. null when no such post carries one. */
+const firstUsd = () => RAW.find(e => e.usd != null && inFamily(e)) || null;
 function fmtDay(t) { const p = clockParts(t); return MONTHS[+p.month - 1] + " " + +p.day; }
 function fmtTime(t) { const p = clockParts(t); return p.hour + ":" + p.minute; }
 function fmtTook(s) {
@@ -367,8 +366,10 @@ function median(xs) {
    blanked the whole page; a null-prototype object has no such keys. */
 const dict = () => Object.create(null);
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
-function niceMax(v) {
-  if (v <= 4) return 4;
+// floor: the smallest axis top — 4 for counts, which are whole; a spend is
+// not, and under a 4 floor a $0.40 day stood at a tenth of the chart
+function niceMax(v, floor = 4) {
+  if (v <= floor) return floor;
   const p = Math.pow(10, Math.floor(Math.log10(v)));
   for (const m of [1, 2, 5, 10]) if (m * p >= v) return m * p;
   return 10 * p;
@@ -456,6 +457,8 @@ function aggregate(rangeDays) {
   const inRange = RAW.filter(e => e.t >= since);
   const evs = inRange.filter(inFamily);
 
+  const fu = firstUsd();
+  const fuDay = fu ? dayIndexOf(fu.t) : -1;
   const buckets = [];
   const dayIdx = [];  // day index → bucket index
   const days = [];    // one entry per day — a blind day is a daily question
@@ -469,7 +472,7 @@ function aggregate(rangeDays) {
     // above, one measured day is enough: before the first reading there is
     // no reading anywhere, so a week straddling it carries its whole sum —
     // and gating it on every day hid a week whose cost the headline counted.
-    buckets[bi].usdCov = buckets[bi].usdCov || (FIRST_USD_DAY >= 0 && i >= FIRST_USD_DAY);
+    buckets[bi].usdCov = buckets[bi].usdCov || (fuDay >= 0 && i >= fuDay);
     dayIdx[i] = bi;
     // Measured means inside the collected window on both ends: a dashboard
     // opened a week after it was written must not paint the days since as
@@ -486,7 +489,7 @@ function aggregate(rangeDays) {
   }
 
   const agg = {
-    since, evs, buckets, weekly, days, family: currentFamily,
+    since, evs, buckets, firstUsd: fu, weekly, days, family: currentFamily,
     heat: Array.from({ length: 7 }, () => new Array(24).fill(0)),
     actors: {},
     out: { ok: 0, partial: 0, failed: 0, none: 0 },
@@ -624,8 +627,8 @@ function stackedColumns(buckets, series, colorOf, labelOf, weekly, opts) {
   const W = 720, H = 200, mL = 30, mB = 20, mT = 8;
   const plotW = W - mL - 6, plotH = H - mT - mB;
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
-  const maxTotal = Math.max(1, ...buckets.map(b => series.reduce((s, k) => s + (labelOf(b)[k] || 0), 0)));
-  const yMax = niceMax(maxTotal);
+  const maxTotal = Math.max(o.floor || 1, ...buckets.map(b => series.reduce((s, k) => s + (labelOf(b)[k] || 0), 0)));
+  const yMax = niceMax(maxTotal, o.floor);
   const y = v => mT + plotH - v / yMax * plotH;
   const nTicks = yMax % 4 === 0 ? 4 : 5; // tick values must land on clean integers
   for (let i = 0; i <= nTicks; i++) {
@@ -802,7 +805,7 @@ function renderCost(agg) {
   const c = card("c-cost", "What the agents' work cost",
     `session spend between posts per ${agg.weekly ? "week" : "day"} by repo, at API list price as Claude Code reports it — all the work, not wallii's own cost, and not a bill on a subscription · the ${COST_SERIES} costliest repos get a color`);
   if (!agg.usdN) {
-    c.append(el("div", { class: "empty", text: FIRST_USD_DAY < 0
+    c.append(el("div", { class: "empty", text: !agg.firstUsd
       ? "no post carries a cost reading — wallii reads it from the session's statusline cache when there is one"
       : "no measured post in this range" + (agg.family === "all" ? "" : " for this family") }));
     return;
@@ -819,14 +822,14 @@ function renderCost(agg) {
     }
     return o;
   };
-  const firstT = RAW.find(e => e.usd != null).t;
   c.append(el("div", { style: "font-size:19px;font-weight:650;margin:2px 0 2px", text: fmtUSD(agg.usd) }));
-  c.append(el("div", { class: "sub", text: `over ${agg.usdN} measured of ${agg.evs.length} posts · ${fmtUSD(agg.usd / agg.usdN)} per unit · measured since ${fmtDay(firstT)}` }));
+  c.append(el("div", { class: "sub", text: `over ${agg.usdN} measured of ${agg.evs.length} posts · ${fmtUSD(agg.usd / agg.usdN)} per unit · measured since ${fmtDay(agg.firstUsd.t)}` }));
   c.append(stackedColumns(agg.buckets, series, colorOf, labelOf, agg.weekly, {
     gap: b => !b.usdCov,
     empty: "no measured post",
     fmt: v => fmtUSD(v),
-    tick: v => v >= 1000 ? "$" + (v / 1000) + "k" : "$" + v,
+    tick: v => v >= 1000 ? "$" + (v / 1000) + "k" : "$" + +v.toFixed(2),
+    floor: 0.01,
   }));
   c.append(legend([...series.map((s, i) => [s, colorOf(s, i)]), ["not measured", "--grid"]]));
   c.append(tableView(["", ...series],

@@ -96,9 +96,9 @@ func TestDashAggregatesCostAndDoubt(t *testing.T) {
 	}
 	evs := []dashEvent{
 		{ID: "a000001", T: at(6, 10), Repo: "webshop", Actor: "claude/main", Msg: "unmeasured, before any reading", Out: "ok"},
-		{ID: "a000002", T: at(3, 10), Repo: "webshop", Actor: "claude/main", Msg: "first reading", Out: "partial", Mood: "rough", Usd: usd(4)},
+		{ID: "a000002", T: at(3, 10), Repo: "webshop", Actor: "claude/main", Msg: "first reading", Out: "partial", Mood: "rough", Usd: usd(4), Sq7: 40, Sq5: 9},
 		{ID: "a000003", T: at(3, 11), Repo: "webshop", Actor: "claude/main", Msg: "unmeasured after it", Out: "ok"},
-		{ID: "a000004", T: at(2, 10), Repo: "garden", Actor: "codex/main", Msg: "second reading", Out: "failed", Usd: usd(0.5), Vs: 1},
+		{ID: "a000004", T: at(2, 10), Repo: "garden", Actor: "codex/main", Msg: "second reading", Out: "failed", Usd: usd(0.5), Vs: 1, Sq7: 35, Sq5: 3},
 		{ID: "a000005", T: at(1, 10), Repo: "webshop", Actor: "claude/main", Msg: "the fix", Out: "ok", Topic: "fix"},
 	}
 	f := makeDashFixture(t, loc, today.Add(15*time.Hour), nil, evs)
@@ -114,6 +114,7 @@ const pick = agg => ({
   open: agg.open.map(e => e.id), contra: agg.contraPosts.map(e => e.id), rough: agg.rough.map(e => e.id),
   haunted: agg.haunted.map(h => h.ok.id + ">" + (h.fix ? h.fix.id : "?")), oks: agg.oks,
   challenges: agg.challenges.length,
+  sq: agg.sq ? [agg.sq.id, agg.sqMax] : null,
   repoUsd: Object.fromEntries(Object.entries(agg.repos).map(([k, r]) => [k, [r.usd, r.usdN, r.open, r.rough]])),
 });
 const all = pick(aggregate(5));
@@ -121,7 +122,9 @@ currentFamily = "claude";
 const claude = pick(aggregate(5));
 currentFamily = "codex";
 const codex = pick(aggregate(5));
-console.log("RESULT " + JSON.stringify({ all, claude, codex }));`
+// the axis floor: whole counts keep their 4, a spend scales below it
+const axis = [niceMax(3), niceMax(0.43, 0.01), niceMax(0.004, 0.01)];
+console.log("RESULT " + JSON.stringify({ all, claude, codex, axis }));`
 	var res struct {
 		All, Claude, Codex struct {
 			Usd                 float64
@@ -132,7 +135,9 @@ console.log("RESULT " + JSON.stringify({ all, claude, codex }));`
 			Haunted             []string
 			Oks, Challenges     int
 			RepoUsd             map[string][]float64
+			Sq                  []any
 		}
+		Axis []float64
 	}
 	if err := json.Unmarshal([]byte(runDashJS(t, node, f, fam, tail)), &res); err != nil {
 		t.Fatal(err)
@@ -164,6 +169,18 @@ console.log("RESULT " + JSON.stringify({ all, claude, codex }));`
 	}
 	if c := res.Codex; c.Challenges != 1 || len(c.Haunted) != 0 || c.Usd != 0.5 {
 		t.Errorf("codex chip: %d challenges, haunted %v (its oks are claude's), $%v", c.Challenges, c.Haunted, c.Usd)
+	}
+	// codex's first reading is two days back, claude's three: under the
+	// codex chip the day before its own first reading is a gap, not $0
+	if want := []bool{false, false, true, true, true}; fmt.Sprint(res.Codex.UsdCov) != fmt.Sprint(want) {
+		t.Errorf("codex chip cost coverage %v, want %v — the gap follows the family's own first reading", res.Codex.UsdCov, want)
+	}
+	// the Limit tile reads the newest reading and the peak
+	if fmt.Sprint(a.Sq) != "[a000004 40]" {
+		t.Errorf("limit reading %v, want the newest post a000004 and the peak 40", a.Sq)
+	}
+	if fmt.Sprint(res.Axis) != "[4 0.5 0.01]" {
+		t.Errorf("axis tops %v, want [4 0.5 0.01] — counts keep their floor of 4, a spend scales down to a cent", res.Axis)
 	}
 }
 
@@ -284,7 +301,12 @@ func TestDashInlinesCostsDoubtAndLimits(t *testing.T) {
 	answer := wall.Event{TS: early.Add(5 * time.Hour), Repo: first.Repo, Actor: "bot/builder", Kind: wall.KindReact,
 		Parent: closedC.ID(), Msg: "the one in the ref"}
 
-	for _, e := range []wall.Event{first, earlyOK, earlyFix, openC, closedC, answer, second, unmeasured, ok, fix} {
+	// an actor who posted only before the window, challenged there: the chip
+	// must still file the challenge under its family
+	gone := wall.Event{TS: early.Add(6 * time.Hour), Repo: "garden", Actor: "bot/retired", Msg: "last word before the cut"}
+	goneC := wall.Event{TS: early.Add(7 * time.Hour), Repo: "garden", Actor: "wallii/lint", Kind: wall.KindChallenge,
+		Parent: gone.ID(), Msg: "which commit"}
+	for _, e := range []wall.Event{first, earlyOK, earlyFix, openC, closedC, answer, gone, goneC, second, unmeasured, ok, fix} {
 		if err := wall.Append(dir, e); err != nil {
 			t.Fatal(err)
 		}
@@ -326,10 +348,15 @@ func TestDashInlinesCostsDoubtAndLimits(t *testing.T) {
 		}
 	}
 
+	var fams map[string]string
+	inlinedConst(t, html, "FAMILIES", &fams)
+	if fams["bot/retired"] != "bot" {
+		t.Errorf("an actor with an open challenge but no post in the window maps to %q, want its family \"bot\" — the chip would drop the challenge", fams["bot/retired"])
+	}
 	var doubt dashDoubt
 	inlinedConst(t, html, "DOUBT", &doubt)
-	if len(doubt.Challenges) != 1 || doubt.Challenges[0].Msg != openC.Msg {
-		t.Fatalf("want exactly the unanswered challenge, from before the window as it is — got %+v", doubt.Challenges)
+	if len(doubt.Challenges) != 2 || doubt.Challenges[0].Msg != openC.Msg {
+		t.Fatalf("want the two unanswered challenges, oldest first, from before the window as they are — got %+v", doubt.Challenges)
 	}
 	if c := doubt.Challenges[0]; c.Target != first.ID() || c.Repo != "webshop" || c.TMsg != first.Msg {
 		t.Errorf("the challenge must name its target, which is not inlined: %+v", c)

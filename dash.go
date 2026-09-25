@@ -455,8 +455,13 @@ func cmdDash(args []string) error {
 		}
 		// actor → family, so the page colors and filters by family without
 		// carrying the rule that names one: that rule lives in wall.ActorFamily
+		//
+		// Over the whole wall, dialogue included, not the window: a challenge
+		// is listed whatever --since says, and the chip files it by the
+		// family of the actor it waits on — one who has not posted since the
+		// cut must still resolve to its family, not become a family of its own.
 		families := map[string]string{}
-		for _, e := range evs {
+		for _, e := range wallAll {
 			if e.Actor != "" {
 				families[e.Actor] = wall.ActorFamily(e.Actor)
 			}
