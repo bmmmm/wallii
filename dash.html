@@ -125,6 +125,14 @@
   .feed .repo { font-weight: 600; white-space: nowrap; }
   .feed .topic { color: var(--muted); white-space: nowrap; }
   .feed .msg { flex: 1; min-width: 200px; }
+  /* on a phone the message takes its own line and the badges wrap under
+     it — a row that does not wrap pushed every card past the screen edge */
+  @media (max-width: 600px) {
+    .feed .row { flex-wrap: wrap; }
+    .feed .msg { flex-basis: 100%; min-width: 0; }
+    .filters { flex-wrap: wrap; }
+    details.group .feed { margin-left: 0; }
+  }
   .feed .grader { color: var(--muted); margin-top: 3px; }
   .feed .signal { color: var(--ink-2); margin-top: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; overflow-wrap: anywhere; }
   .feed a { color: var(--accent); text-decoration: none; }
@@ -142,6 +150,23 @@
   #tt .t { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
   #tt .l { display: flex; align-items: center; gap: 6px; }
   #tt .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  details.group { border-top: 1px solid var(--grid); padding: 6px 0 2px; }
+  details.group:first-of-type { border-top: 0; }
+  details.group summary { cursor: pointer; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 12.5px; }
+  details.group summary .repo { font-weight: 600; }
+  details.group summary .gsub { color: var(--muted); font-size: 11.5px; }
+  details.group .feed { margin: 2px 0 6px 16px; }
+  table.repos tr.repo-row { cursor: pointer; }
+  table.repos tr.repo-row:hover td, table.repos tr.repo-row:focus td { background: var(--page); }
+  table.repos .caret { color: var(--muted); }
+  table.repos td.topics { color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.repos tr.repo-feed td { padding: 2px 0 8px 18px; }
+  table.repos td.more { color: var(--muted); }
+  details.more { margin: 2px 0 4px 16px; }
+  .card:has(table.agents) { overflow-x: auto; } /* wide tables scroll inside their card on a phone */
+  details.instr { margin-top: 18px; }
+  details.instr > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; font-weight: 650; padding: 8px 0 10px; }
+  details.instr > .tiles { margin-top: 4px; }
   footer { margin-top: 22px; color: var(--muted); font-size: 11.5px; }
 </style>
 </head>
@@ -165,20 +190,29 @@
 
   <!-- The order you see is this list, not the order renderAll() fills it in:
        every card is an empty container here and JS only replaces its children.
-       The feed leads because the newest posts are what the page is opened for;
-       the charts answer questions you have to go looking for. -->
+       What waits on you leads, then where the work was and what it cost; the
+       feed follows. Everything measured about the wall itself — rates that
+       barely move over a month, the blind days, the field coverage — is
+       folded into the section at the end: kept, and out of the way. -->
   <div class="grid">
-    <div class="card wide" id="c-feed"></div>
-    <div class="card wide" id="c-activity"></div>
-    <div class="card wide" id="c-blind"></div>
-    <div class="card" id="c-outcome"></div>
-    <div class="card" id="c-mood"></div>
-    <div class="card" id="c-heat"></div>
-    <div class="card" id="c-coverage"></div>
+    <div class="card wide" id="c-open"></div>
     <div class="card wide" id="c-repos"></div>
-    <div class="card" id="c-topics"></div>
-    <div class="card wide" id="c-agents"></div>
+    <div class="card wide" id="c-cost"></div>
+    <div class="card wide" id="c-feed"></div>
   </div>
+
+  <details class="instr" id="instr">
+    <summary>Measurement &amp; instrumentation — landed, mood and evidence rates, who posts, blind days, outcomes per day, working hours, field coverage, the agents</summary>
+    <div class="tiles" id="tiles-instr"></div>
+    <div class="grid">
+      <div class="card wide" id="c-activity"></div>
+      <div class="card wide" id="c-blind"></div>
+      <div class="card" id="c-outcome"></div>
+      <div class="card" id="c-heat"></div>
+      <div class="card wide" id="c-coverage"></div>
+      <div class="card wide" id="c-agents"></div>
+    </div>
+  </details>
 
   <footer>every value in the charts is also in each card's table view · outcome / took / mood are optional post flags — the coverage card shows how much of the wall carries them</footer>
 </div>
@@ -300,6 +334,16 @@ function dayIndexOf(t) {
   }
   return lo;
 }
+/* posts by id, for the doubt's pairs */
+const BY_ID = new Map(RAW.map(e => [e.id, e]));
+/* The day cost was first measured on, as an index into CAL — every bucket
+   before it is "not measured", never $0. Taken over everything inlined, not
+   the range: a range that starts after it is measured throughout. -1 when
+   no post carries a reading at all. */
+const FIRST_USD_DAY = (() => {
+  const e = RAW.find(e => e.usd != null);
+  return e ? dayIndexOf(e.t) : -1;
+})();
 function fmtDay(t) { const p = clockParts(t); return MONTHS[+p.month - 1] + " " + +p.day; }
 function fmtTime(t) { const p = clockParts(t); return p.hour + ":" + p.minute; }
 function fmtTook(s) {
@@ -308,6 +352,21 @@ function fmtTook(s) {
   return Math.floor(m / 60) + "h" + String(m % 60).padStart(2, "0") + "m";
 }
 function pct(a, b) { return b ? Math.round(a / b * 100) : 0; }
+// the way wall.FmtUSD reads a spend: cents under a hundred, whole dollars above
+function fmtUSD(v) {
+  if (v > 0 && v < 0.005) return "<$0.01";
+  return "$" + (v >= 99.995 ? Math.round(v) : v.toFixed(2));
+}
+function median(xs) {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+/* A map keyed by names off the wall. A plain {} answers "constructor" and
+   "__proto__" out of Object.prototype, and one post to a repo named that
+   blanked the whole page; a null-prototype object has no such keys. */
+const dict = () => Object.create(null);
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 function niceMax(v) {
   if (v <= 4) return 4;
   const p = Math.pow(10, Math.floor(Math.log10(v)));
@@ -404,7 +463,13 @@ function aggregate(rangeDays) {
   for (let i = i0; i < n; i++) {
     const k = i - i0;
     const bi = weekly ? Math.floor(k / 7) : k;
-    if (!buckets[bi]) buckets.push({ t0: CAL.t0[i], byFamily: {}, out: { ok: 0, partial: 0, failed: 0, none: 0 }, moodSum: 0, moodN: 0, posts: 0, commits: 0, mposts: 0, cov: true });
+    if (!buckets[bi]) buckets.push({ t0: CAL.t0[i], byFamily: {}, out: { ok: 0, partial: 0, failed: 0, none: 0 }, moodSum: 0, moodN: 0, posts: 0, commits: 0, mposts: 0, cov: true, usdByRepo: dict(), usdCov: false });
+    // Cost was measured from the first post that carried a reading on: a
+    // bucket before that day is a gap, never a day that cost $0. Unlike cov
+    // above, one measured day is enough: before the first reading there is
+    // no reading anywhere, so a week straddling it carries its whole sum —
+    // and gating it on every day hid a week whose cost the headline counted.
+    buckets[bi].usdCov = buckets[bi].usdCov || (FIRST_USD_DAY >= 0 && i >= FIRST_USD_DAY);
     dayIdx[i] = bi;
     // Measured means inside the collected window on both ends: a dashboard
     // opened a week after it was written must not paint the days since as
@@ -422,12 +487,16 @@ function aggregate(rangeDays) {
 
   const agg = {
     since, evs, buckets, weekly, days, family: currentFamily,
-    repoCounts: {}, topicCounts: {},
     heat: Array.from({ length: 7 }, () => new Array(24).fill(0)),
     actors: {},
     out: { ok: 0, partial: 0, failed: 0, none: 0 },
-    moodSum: 0, moodN: 0, tookSum: 0, tookN: 0, tookAuto: 0, refsN: 0, outN: 0,
+    moodSum: 0, moodN: 0, tookN: 0, tookAuto: 0, refsN: 0, outN: 0,
     moodCounts: {}, contra: 0,
+    // what needs a reader, newest last like evs: partial and failed posts,
+    // posts rougher than their grade, rough and stuck ones
+    open: [], contraPosts: [], rough: [], oks: 0,
+    usd: 0, usdN: 0, sessions: new Set(), repos: dict(),
+    sq: null, sqMax: 0,
   };
   // the card's own numerator, counted in the same walk as its commits:
   // posts of measured repos only, per day and per bucket — over every post
@@ -454,11 +523,9 @@ function aggregate(rangeDays) {
     if (o !== "none") agg.outN++;
     const ms = MOODS[e.mood] || 0;
     if (ms) { b.moodSum += ms; b.moodN++; agg.moodSum += ms; agg.moodN++; agg.moodCounts[e.mood] = (agg.moodCounts[e.mood] || 0) + 1; }
-    if (e.took) { agg.tookSum += e.took; agg.tookN++; if (e.src === "auto") agg.tookAuto++; }
+    if (e.took) { agg.tookN++; if (e.src === "auto") agg.tookAuto++; }
     if (e.vs) agg.contra++;
     if (e.refs && e.refs.length) agg.refsN++;
-    agg.repoCounts[e.repo] = (agg.repoCounts[e.repo] || 0) + 1;
-    agg.topicCounts[e.topic || "(untagged)"] = (agg.topicCounts[e.topic || "(untagged)"] || 0) + 1;
     /* The weekday comes off the axis, not off a Date: consecutive calendar
        days always advance the weekday by one, with no DST exception. The
        hour is a pure lookup and safe through Intl. */
@@ -471,7 +538,37 @@ function aggregate(rangeDays) {
     if (ms) { a.moodSum += ms; a.moodN++; }
     if (e.refs && e.refs.length) a.refs++;
     a.last = Math.max(a.last, e.t);
+    if (e.usd != null) a.usd = (a.usd || 0) + e.usd;
+
+    let r = agg.repos[e.repo];
+    if (!r) r = agg.repos[e.repo] = { posts: 0, usd: 0, usdN: 0, open: 0, rough: 0, topics: dict(), last: 0, evs: [] };
+    r.posts++;
+    r.last = Math.max(r.last, e.t);
+    r.evs.push(e);
+    if (e.topic) r.topics[e.topic] = (r.topics[e.topic] || 0) + 1;
+    if (o === "partial" || o === "failed") { agg.open.push(e); r.open++; }
+    if (o === "ok") agg.oks++;
+    if (e.vs) agg.contraPosts.push(e);
+    if (e.mood === "rough" || e.mood === "stuck") { agg.rough.push(e); r.rough++; }
+    if (e.usd != null) {
+      agg.usd += e.usd; agg.usdN++; r.usd += e.usd; r.usdN++;
+      b.usdByRepo[e.repo] = (b.usdByRepo[e.repo] || 0) + e.usd;
+    }
+    if (e.sess) agg.sessions.add(e.sess);
+    if (e.sq7) {
+      if (!agg.sq || e.t >= agg.sq.t) agg.sq = e;
+      agg.sqMax = Math.max(agg.sqMax, e.sq7);
+    }
   }
+  /* The doubt Go handed over, narrowed like everything else: a haunted pair
+     counts when its ok is in range and in the family, a challenge when the
+     family of the actor it waits on is selected. A challenge is open whatever
+     the range — waiting does not age out of a window. */
+  const inRangeFam = e => e && e.t >= since && inFamily(e);
+  agg.haunted = DOUBT.haunted
+    .map(h => ({ ok: BY_ID.get(h.ok), fix: BY_ID.get(h.fix), shared: h.shared }))
+    .filter(h => inRangeFam(h.ok));
+  agg.challenges = DOUBT.challenges.filter(c => currentFamily === "all" || (c.who && inFamily({ actor: c.who })));
   /* Previous window of equal length, for the tile deltas — cut on the axis
      and not by subtracting milliseconds, which put the earlier window an
      hour out across a DST boundary. */
@@ -518,7 +615,12 @@ function roundTop(x, y, w, h, r) {
   r = Math.min(r, w / 2, h);
   return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`;
 }
-function stackedColumns(buckets, series, colorOf, labelOf, weekly) {
+/* opts.gap(b) marks a bucket that was not measured — drawn as the blind
+   card draws its gaps, never as an empty column; opts.fmt formats a value
+   for the tooltip and opts.tick one for the axis (fmt when absent). */
+function stackedColumns(buckets, series, colorOf, labelOf, weekly, opts) {
+  const o = opts || {};
+  const fmt = o.fmt || String;
   const W = 720, H = 200, mL = 30, mB = 20, mT = 8;
   const plotW = W - mL - 6, plotH = H - mT - mB;
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
@@ -529,13 +631,20 @@ function stackedColumns(buckets, series, colorOf, labelOf, weekly) {
   for (let i = 0; i <= nTicks; i++) {
     const v = yMax / nTicks * i, yy = y(v);
     svg.append(svgEl("line", { x1: mL, x2: W - 6, y1: yy, y2: yy, stroke: i ? "var(--grid)" : "var(--axis)", "stroke-width": 1 }));
-    if (i) svg.append(svgEl("text", { x: mL - 6, y: yy + 3.5, "text-anchor": "end", "font-size": 10, fill: "var(--muted)", text: String(v) }));
+    if (i) svg.append(svgEl("text", { x: mL - 6, y: yy + 3.5, "text-anchor": "end", "font-size": 10, fill: "var(--muted)", text: (o.tick || fmt)(v) }));
   }
   const band = plotW / buckets.length;
   const barW = Math.min(24, band * 0.72);
   const labelEvery = Math.ceil(buckets.length / 12);
   buckets.forEach((b, i) => {
     const x = mL + i * band + (band - barW) / 2;
+    if (o.gap && o.gap(b)) {
+      const gap = svgEl("rect", { x: mL + i * band, y: mT, width: band, height: plotH, fill: "var(--grid)", "fill-opacity": .45, tabindex: "0" });
+      hover(gap, `<div class="t">${weekly ? "week of " : ""}${fmtDay(b.t0)}</div><div class="l">not measured</div>`);
+      svg.append(gap);
+      if (i % labelEvery === 0) svg.append(svgEl("text", { x: mL + i * band + band / 2, y: H - 6, "text-anchor": "middle", "font-size": 10, fill: "var(--muted)", text: (weekly ? "wk " : "") + fmtDay(b.t0) }));
+      return;
+    }
     const vals = labelOf(b);
     const drawn = series.map((k, s) => ({ k, s, v: vals[k] || 0 })).filter(d => d.v);
     let yTop = mT + plotH;
@@ -557,9 +666,9 @@ function stackedColumns(buckets, series, colorOf, labelOf, weekly) {
     hover(hit, () => {
       let html = `<div class="t">${weekly ? "week of " : ""}${fmtDay(b.t0)}</div>`;
       for (let d = drawn.length - 1; d >= 0; d--) {
-        html += `<div class="l"><span class="sw" style="background:var(${colorOf(drawn[d].k, drawn[d].s)})"></span>${esc(drawn[d].k)} · ${drawn[d].v}</div>`;
+        html += `<div class="l"><span class="sw" style="background:var(${colorOf(drawn[d].k, drawn[d].s)})"></span>${esc(drawn[d].k)} · ${esc(fmt(drawn[d].v))}</div>`;
       }
-      return html + (drawn.length ? "" : "<div class='l'>no posts</div>");
+      return html + (drawn.length ? "" : `<div class='l'>${esc(o.empty || "no posts")}</div>`);
     });
     svg.append(hit);
   });
@@ -674,38 +783,75 @@ function renderOutcome(agg) {
     agg.buckets.filter(b => b.posts).map(b => [fmtDay(b.t0), b.out.ok, b.out.partial, b.out.failed, b.out.none])));
 }
 
-function renderMood(agg) {
-  const c = card("c-mood", "How it feels", "friction report — great (5) = first try, stuck (1) = blocked");
-  const pts = agg.buckets.map((b, i) => b.moodN ? { i, avg: b.moodSum / b.moodN, n: b.moodN, t0: b.t0 } : null).filter(Boolean);
-  if (!pts.length) {
-    c.append(el("div", { class: "empty", text: "no mood data yet — agents post it with --mood great|good|ok|rough|stuck" }));
+/* What the work cost, per day and repo — the delta of the session's spend
+   since its previous post, read in Go over the whole wall. Only posts that
+   carried a reading count, and the card says how many did: a month of posts
+   with a week of readings is a week's cost, not a month's. The days before
+   the first reading anywhere in this file are gaps, never $0.
+
+   Under it, the one relation the mood scale turned out to carry: a mood
+   line sat flat on "good" for a month, but split by mood the outcome and the
+   price move together — rough units cost more and land less. A table, so
+   each cell keeps its n. */
+const COST_SERIES = 5;
+function renderCost(agg) {
+  const c = card("c-cost", "What it cost",
+    `unit cost per ${agg.weekly ? "week" : "day"} by repo — the ${COST_SERIES} costliest in range get a color`);
+  if (!agg.usdN) {
+    c.append(el("div", { class: "empty", text: FIRST_USD_DAY < 0
+      ? "no post carries a cost reading — wallii reads it from the session's statusline cache when there is one"
+      : "no measured post in this range" + (agg.family === "all" ? "" : " for this family") }));
     return;
   }
-  const W = 360, H = 190, mL = 44, mB = 20, mT = 10, mR = 40;
-  const plotW = W - mL - mR, plotH = H - mT - mB;
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", class: "narrow" });
-  const x = i => mL + (agg.buckets.length === 1 ? plotW / 2 : i / (agg.buckets.length - 1) * plotW);
-  const y = v => mT + plotH - (v - 1) / 4 * plotH;
-  for (let v = 1; v <= 5; v++) {
-    svg.append(svgEl("line", { x1: mL, x2: W - mR, y1: y(v), y2: y(v), stroke: v === 1 ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }));
-    svg.append(svgEl("text", { x: mL - 6, y: y(v) + 3.5, "text-anchor": "end", "font-size": 10, fill: "var(--muted)", text: MOOD_WORDS[v] }));
-  }
-  // line only between adjacent buckets, so a data gap stays a visible gap
-  for (let k = 1; k < pts.length; k++) {
-    if (pts[k].i - pts[k - 1].i === 1) {
-      svg.append(svgEl("line", { x1: x(pts[k - 1].i), y1: y(pts[k - 1].avg), x2: x(pts[k].i), y2: y(pts[k].avg), stroke: "var(--s1)", "stroke-width": 2, "stroke-linecap": "round" }));
+  const byRepo = Object.entries(agg.repos).filter(([, r]) => r.usdN).sort((a, b) => b[1].usd - a[1].usd || a[0].localeCompare(b[0]));
+  const named = byRepo.slice(0, COST_SERIES).map(([k]) => k);
+  const series = byRepo.length > COST_SERIES ? [...named, FOLD] : named;
+  const colorOf = (k, s) => k === FOLD ? "--other" : SLOT_VARS[s];
+  const labelOf = b => {
+    const o = dict();
+    for (const [repo, v] of Object.entries(b.usdByRepo)) {
+      const k = named.includes(repo) ? repo : FOLD;
+      o[k] = (o[k] || 0) + v;
     }
+    return o;
+  };
+  const firstT = RAW.find(e => e.usd != null).t;
+  c.append(el("div", { style: "font-size:19px;font-weight:650;margin:2px 0 2px", text: fmtUSD(agg.usd) }));
+  c.append(el("div", { class: "sub", text: `over ${agg.usdN} measured of ${agg.evs.length} posts · ${fmtUSD(agg.usd / agg.usdN)} per unit · measured since ${fmtDay(firstT)}` }));
+  c.append(stackedColumns(agg.buckets, series, colorOf, labelOf, agg.weekly, {
+    gap: b => !b.usdCov,
+    empty: "no measured post",
+    fmt: v => fmtUSD(v),
+    tick: v => v >= 1000 ? "$" + (v / 1000) + "k" : "$" + v,
+  }));
+  c.append(legend([...series.map((s, i) => [s, colorOf(s, i)]), ["not measured", "--grid"]]));
+  c.append(tableView(["", ...series],
+    agg.buckets.filter(b => b.usdCov && Object.keys(b.usdByRepo).length).map(b => { const v = labelOf(b); return [fmtDay(b.t0), ...series.map(s => v[s] ? fmtUSD(v[s]) : "")]; })));
+
+  // mood × outcome × price
+  const rows = [];
+  for (const m of ["great", "good", "ok", "rough", "stuck"]) {
+    const es = agg.evs.filter(e => e.mood === m);
+    if (!es.length) continue;
+    const rep = es.filter(e => e.out === "ok" || e.out === "partial" || e.out === "failed");
+    const usd = es.filter(e => e.usd != null).map(e => e.usd);
+    const share = k => rep.length ? pct(rep.filter(e => e.out === k).length, rep.length) + "%" : "—";
+    const med = median(usd);
+    rows.push([m, String(es.length), share("ok"), share("partial"), share("failed"), med == null ? "—" : `${fmtUSD(med)} (${usd.length})`]);
   }
-  for (const p of pts) {
-    svg.append(svgEl("circle", { cx: x(p.i), cy: y(p.avg), r: 6, fill: "var(--surface)" })); // 2px surface ring
-    const dot = svgEl("circle", { cx: x(p.i), cy: y(p.avg), r: 4, fill: "var(--s1)", tabindex: "0" });
-    hover(dot, `<div class="t">${fmtDay(p.t0)}</div><div class="l">${MOOD_WORDS[Math.round(p.avg)]} (${p.avg.toFixed(1)}) from ${p.n} post${p.n > 1 ? "s" : ""}</div>`);
-    svg.append(dot);
+  if (rows.length) {
+    c.append(el("div", { class: "sub", style: "margin-top:14px;padding-top:12px;border-top:1px solid var(--border);color:var(--ink-2);font-weight:600", text: "by mood — how it felt, how it landed, what a unit cost" }));
+    const t = el("table", { class: "agents" });
+    const head = el("tr", {});
+    ["mood", "posts", "landed", "partial", "failed", "median unit (n)"].forEach((h, i) => head.append(el("th", { text: h, class: i ? "n" : "" })));
+    t.append(head);
+    for (const r of rows) {
+      const tr = el("tr", {});
+      r.forEach((v, i) => tr.append(el("td", { text: v, class: i ? "n" : "" })));
+      t.append(tr);
+    }
+    c.append(t);
   }
-  const last = pts[pts.length - 1];
-  svg.append(svgEl("text", { x: Math.min(x(last.i) + 10, W - 4), y: y(last.avg) + 3.5, "font-size": 10.5, fill: "var(--ink-2)", text: MOOD_WORDS[Math.round(last.avg)] }));
-  c.append(svg);
-  c.append(tableView(["", "avg", "posts"], pts.map(p => [fmtDay(p.t0), p.avg.toFixed(1), p.n])));
 }
 
 function renderHeat(agg) {
@@ -736,129 +882,85 @@ function renderHeat(agg) {
     agg.heat.flatMap((row, d) => row.map((v, h) => v ? [`${WDAYS[d]} ${h}:00`, v] : null).filter(Boolean))));
 }
 
-/* ---------- treemap: every repo, no fold ----------
-   The bar chart below folds everything past rank 9 into one "Other" row. On
-   topics that is honest — the top eight carry 86% of the posts. On repos it
-   is not: 39 repos, the largest holding 10.7%, ranks 1-9 all between 5.4%
-   and 10.7%, and "Other (30)" standing for 42% of the wall in a single bar
-   four times longer than any real one. There is no tail to cut here, so the
-   chart stops cutting: area is the count, every repo gets its own tile, and
-   the proportion is the picture instead of a footnote contradicting it. */
+/* ---------- where the work was: one row per repo ----------
+   This replaced a treemap of posts per repo and a bar chart of topics. The
+   treemap drew one number per repo; the topics were commit types — 101 of
+   them in a month, 60 used once, the top nine "feature", "fix", "docs" and
+   so on. A row per repo carries what both said and what neither could: the
+   commits the posts were written against, what the repo cost, what is still
+   open there, and the posts themselves one click away. */
+const REPO_ROWS = 15; // rows before "more repos" — a month touched 42
+function renderRepos(agg) {
+  const c = card("c-repos", "Where the work was",
+    "per repo in range, most posts first · click a row for its posts" + (agg.family === "all" ? "" : ` · ${agg.family}'s posts only`));
+  const names = Object.keys(agg.repos).sort((a, b) => agg.repos[b].posts - agg.repos[a].posts || a.localeCompare(b));
+  if (!names.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
+  /* Commits come per repo over the whole collected window, never per day
+     and repo — so they sit beside that window's posts, every family's,
+     whatever the range buttons say, and the header says so. */
+  const commitsOf = dict();
+  if (COMMITS) (COMMITS.repos || []).forEach((r, i) => { commitsOf[r] = (COMMITS.repo_commits || [])[i]; });
+  const winFrom = COMMITS ? CAL.t0[COMMITS.from_i] : null;
+  const winTo = COMMITS ? (COMMITS.to_i < CAL.t0.length ? CAL.t0[COMMITS.to_i] : CAL.end) : null;
+  const winPosts = dict();
+  if (COMMITS) for (const e of RAW) if (e.t >= winFrom && e.t < winTo) winPosts[e.repo] = (winPosts[e.repo] || 0) + 1;
 
-/* worst is the squarified-treemap cost function: the worst aspect ratio a
-   row would have if this item joined it. Lower is squarer, and squarer tiles
-   are the ones you can compare by eye and write a label into. */
-function worstRatio(row, side) {
-  const s = row.reduce((a, b) => a + b, 0);
-  if (!s) return Infinity;
-  const mx = Math.max(...row), mn = Math.min(...row);
-  return Math.max((side * side * mx) / (s * s), (s * s) / (side * side * mn));
-}
-
-/* squarify lays areas into x,y,w,h rectangles, largest first. Areas must
-   already sum to w*h — the caller scales — and none may be zero: a zero area
-   divides by zero in worstRatio and would swallow the row it lands in. */
-function squarify(areas, x, y, w, h) {
-  const out = [];
-  for (let i = 0; i < areas.length;) {
-    const side = Math.min(w, h);
-    let row = [areas[i]], best = worstRatio(row, side), j = i + 1;
-    while (j < areas.length) {
-      const next = row.concat(areas[j]);
-      const r = worstRatio(next, side);
-      if (r > best) break; // adding this one makes the row worse — close it
-      row = next; best = r; j++;
-    }
-    const sum = row.reduce((a, b) => a + b, 0);
-    if (w >= h) {
-      const rw = sum / h;
-      let cy = y;
-      for (const a of row) { const rh = a / rw; out.push({ x, y: cy, w: rw, h: rh }); cy += rh; }
-      x += rw; w -= rw;
-    } else {
-      const rh = sum / w;
-      let cx = x;
-      for (const a of row) { const rw = a / rh; out.push({ x: cx, y, w: rw, h: rh }); cx += rw; }
-      y += rh; h -= rh;
-    }
-    i = j;
-  }
-  return out;
-}
-
-function renderTreemap(agg) {
-  const c = card("c-repos", "Where the work happens", "posts per repo — area is the count, every repo has its own tile");
-  const items = Object.entries(agg.repoCounts)
-    .filter(([, v]) => v > 0)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  if (!items.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
-  const total = items.reduce((s, r) => s + r[1], 0);
-  // The viewBox is the card's real width in CSS pixels, so the SVG is never
-  // scaled and 10px type renders as 10px type. A fixed viewBox would be
-  // squeezed to 0.39x at phone width — measured: labels at 3.9px, tiles at
-  // 3.8px, a picture of a treemap rather than one. The `|| 840` catches a
-  // container that cannot measure itself (the node harness' stub DOM answers
-  // 0), and the floor keeps the layout sane in a very narrow card.
-  const W = Math.max(360, Math.round(c.clientWidth - 34) || 840);
-  const H = Math.max(220, Math.min(320, Math.round(W * 0.36)));
-  const areas = items.map(([, v]) => v / total * W * H);
-  const boxes = squarify(areas, 0, 0, W, H);
-  // no .narrow here: that cap exists so a small viewBox does not upscale its
-  // type across a full-width card, and this viewBox is already the full width
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
-  items.forEach(([name, v], i) => {
-    const b = boxes[i];
-    // rank, not value, picks the shade: with a flat distribution the values
-    // crowd into two steps and the ramp stops saying anything
-    const shade = Math.min(6, Math.max(1, 6 - Math.floor(i / items.length * 6)));
-    const g = svgEl("g", { tabindex: "0" });
-    g.append(svgEl("rect", {
-      x: b.x + 0.5, y: b.y + 0.5, width: Math.max(b.w - 1, 0.5), height: Math.max(b.h - 1, 0.5),
-      rx: 3, fill: `var(--h${shade})`,
-    }));
-    // A label is written only where it fits. Everything else says its name on
-    // hover and in the table view below — a clipped name is worse than none.
-    if (b.w >= 56 && b.h >= 22) {
-      const ink = shade >= 5 ? "var(--ht-hi)" : "var(--ht-lo)";
-      const room = Math.floor((b.w - 12) / 5.6); // ~5.6px per char at 10px
-      svg.append(g);
-      svg.append(svgEl("text", {
-        x: b.x + 6, y: b.y + 14, "font-size": 10, fill: ink,
-        text: name.length > room ? name.slice(0, Math.max(1, room - 1)) + "…" : name,
-      }));
-      if (b.h >= 34) {
-        svg.append(svgEl("text", { x: b.x + 6, y: b.y + 26, "font-size": 10, fill: ink, "fill-opacity": 0.75, text: String(v) }));
+  const cols = [["repo", ""], ["posts", "n"], ["commits*", "n"], ["per post*", "n"], ["cost", "n"], ["open", "n"], ["friction", "n"], ["topics", ""], ["last post", "n"]];
+  const t = el("table", { class: "agents repos" });
+  const head = el("tr", {});
+  for (const [h, cls] of cols) head.append(el("th", { text: h, class: cls }));
+  t.append(head);
+  const extra = []; // rows past REPO_ROWS, revealed together
+  for (const [ri, name] of names.entries()) {
+    const r = agg.repos[name];
+    const cm = commitsOf[name];
+    const wp = winPosts[name] || 0;
+    const topics = Object.entries(r.topics).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 2).map(([k]) => k).join(", ");
+    const row = el("tr", { class: "repo-row", tabindex: "0", "aria-expanded": "false" },
+      el("td", {}, el("span", { class: "caret", text: "▸ " }), el("span", { text: name })),
+      el("td", { class: "n", text: String(r.posts) }),
+      el("td", { class: "n", text: cm == null ? "—" : String(cm) }),
+      el("td", { class: "n", text: cm == null || !wp ? "—" : (cm / wp).toFixed(1) }),
+      el("td", { class: "n", text: r.usdN ? fmtUSD(r.usd) : "—" }),
+      el("td", { class: "n", text: r.open ? String(r.open) : "" }),
+      el("td", { class: "n", text: r.rough ? String(r.rough) : "" }),
+      el("td", { class: "topics", text: topics }),
+      el("td", { class: "n", text: fmtDay(r.last) }));
+    const detail = el("tr", { class: "repo-feed", hidden: "" });
+    const cell = el("td", { colspan: String(cols.length) });
+    detail.append(cell);
+    const toggle = () => {
+      const opening = detail.hidden;
+      if (opening && !cell.firstChild) {
+        // built on first open: a month of posts across forty repos is
+        // otherwise a thousand rows nobody asked to see
+        const feed = el("div", { class: "feed" });
+        for (const e of [...r.evs].reverse()) feed.append(postRow(e, { noRepo: true }));
+        cell.append(feed);
       }
-    } else {
-      svg.append(g);
-    }
-    hover(g, `<div class="l">${esc(name)} · ${v} post${v === 1 ? "" : "s"} · ${Math.round(v / total * 100)}%</div>`);
-  });
-  c.append(svg);
-  c.append(el("div", { class: "sub", text: `${items.length} repos · ${total} posts · nothing is folded away` }));
-  c.append(tableView(["", "posts"], items.map(([n, v]) => [n, v])));
-}
-
-function renderBars(id, title, sub, counts) {
-  const c = card(id, title, sub);
-  const items = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  if (!items.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
-  const top = items.slice(0, 9);
-  const rest = items.slice(9);
-  if (rest.length) top.push([`Other (${rest.length})`, rest.reduce((s, r) => s + r[1], 0)]);
-  const rowH = 22, mL = 150, mR = 34, W = 420, H = top.length * rowH + 6;
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", class: "narrow" });
-  const max = Math.max(...top.map(r => r[1])); // the folded Other row can exceed every single item
-  top.forEach(([name, v], i) => {
-    const y = 3 + i * rowH, barW = Math.max(v / max * (W - mL - mR), 2), h = 13;
-    svg.append(svgEl("text", { x: mL - 8, y: y + h - 2.5, "text-anchor": "end", "font-size": 11, fill: "var(--ink-2)", text: name.length > 20 ? name.slice(0, 19) + "…" : name }));
-    const bar = svgEl("path", { d: `M${mL},${y} L${mL + barW - 4},${y} Q${mL + barW},${y} ${mL + barW},${y + 4} L${mL + barW},${y + h - 4} Q${mL + barW},${y + h} ${mL + barW - 4},${y + h} L${mL},${y + h} Z`, fill: "var(--s1)" });
-    hover(bar, `<div class="l">${esc(name)} · ${v} post${v === 1 ? "" : "s"}</div>`);
-    svg.append(bar);
-    svg.append(svgEl("text", { x: mL + barW + 6, y: y + h - 2.5, "font-size": 11, fill: "var(--ink-2)", text: String(v) }));
-  });
-  c.append(svg);
-  c.append(tableView(["", "posts"], items.map(([n, v]) => [n, v])));
+      detail.hidden = !opening;
+      row.setAttribute("aria-expanded", String(opening));
+      row.firstChild.firstChild.textContent = opening ? "▾ " : "▸ ";
+    };
+    row.addEventListener("click", toggle);
+    row.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); } });
+    if (ri >= REPO_ROWS) { row.hidden = true; extra.push(row); }
+    t.append(row, detail);
+  }
+  if (extra.length) {
+    const posts = names.slice(REPO_ROWS).reduce((s, n) => s + agg.repos[n].posts, 0);
+    const btn = el("tr", { class: "repo-row", tabindex: "0" },
+      el("td", { colspan: String(cols.length), class: "more", text: `▸ ${plural(extra.length, "more repo")} · ${plural(posts, "post")}` }));
+    const reveal = () => { for (const r of extra) r.hidden = false; btn.remove(); };
+    btn.addEventListener("click", reveal);
+    btn.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); reveal(); } });
+    t.append(btn);
+  }
+  c.append(t);
+  const notes = [`${plural(names.length, "repo")} · cost is the sum of measured units, "—" where none was measured`];
+  if (COMMITS) notes.push(`* commits on HEAD over the whole collected window from ${fmtDay(winFrom)}, against every family's posts in that window — not the range, which the commits are not cut by`);
+  else notes.push("* no commits measured — no checkout was found for any repo on the wall");
+  for (const n of notes) c.append(el("div", { class: "sub", style: "margin-top:6px", text: n }));
 }
 
 function renderCoverage(agg) {
@@ -912,7 +1014,7 @@ function renderAgents(agg) {
   const agentTable = list => {
     const t = el("table", { class: "agents" },
       el("tr", {}, el("th", { text: "actor" }), el("th", { text: "posts", class: "n" }), el("th", { text: "repos", class: "n" }),
-        el("th", { text: "landed", class: "n" }), el("th", { text: "mood", class: "n" }), el("th", { text: "refs", class: "n" }), el("th", { text: "last post", class: "n" })));
+        el("th", { text: "landed", class: "n" }), el("th", { text: "mood", class: "n" }), el("th", { text: "refs", class: "n" }), el("th", { text: "cost", class: "n" }), el("th", { text: "last post", class: "n" })));
     for (const name of list) {
       const a = agg.actors[name];
       const rep = a.ok + a.partial + a.failed;
@@ -924,6 +1026,7 @@ function renderAgents(agg) {
         el("td", { text: rep ? pct(a.ok, rep) + "%" : "—", class: "n" }),
         el("td", { text: a.moodN ? (a.moodSum / a.moodN).toFixed(1) : "—", class: "n" }),
         el("td", { text: pct(a.refs, a.posts) + "%", class: "n" }),
+        el("td", { text: a.usd != null ? fmtUSD(a.usd) : "—", class: "n" }),
         el("td", { text: fmtDay(a.last), class: "n" })));
     }
     return t;
@@ -944,31 +1047,123 @@ function renderAgents(agg) {
   }
 }
 
+/* One post as a feed row — the feed, the open ends and the repo table all
+   draw a post the same way. `extra` lines go under the message (a haunted
+   ok's fix, a challenge's question); `noRepo` drops the repo column where a
+   group header already names it. */
+function postRow(e, opts) {
+  const o = opts || {};
+  const msg = el("span", { class: "msg", text: e.msg });
+  // the poster's own words on the cheap path, under the message — quoted as written, never counted
+  if (e.grader) msg.append(el("div", { class: "grader", text: "↷ " + e.grader }));
+  // and beside them what the session's diff showed, the measurement the
+  // poster did not write: same restraint, no count, no comparison drawn
+  for (const s of e.signals || []) msg.append(el("div", { class: "signal", text: "⌇ " + s }));
+  for (const x of o.extra || []) msg.append(x);
+  const row = el("div", { class: "row" },
+    el("span", { class: "when", text: `${fmtDay(e.t)} ${fmtTime(e.t)}` }));
+  if (!o.noRepo) row.append(el("span", { class: "repo", text: e.repo }));
+  row.append(el("span", { class: "topic", text: e.topic || "" }), msg);
+  if (e.out) row.append(el("span", { class: "badge " + e.out, text: e.out === "ok" ? "✓ landed" : e.out === "partial" ? "◐ partial" : "✕ failed" }));
+  if (e.mood) row.append(el("span", { class: "badge", text: e.mood }));
+  if (e.took) row.append(el("span", { class: "badge", text: fmtTook(e.took) }));
+  if (e.usd != null) row.append(el("span", { class: "badge", text: fmtUSD(e.usd) }));
+  for (const [i, u] of (e.refs || []).entries()) {
+    if (/^https?:\/\//.test(u)) row.append(el("a", { href: u, target: "_blank", rel: "noopener", text: "↗" + (e.refs.length > 1 ? i + 1 : "") }));
+  }
+  return row;
+}
+
+/* What needs a reader, per repo: work that did not land, posts whose words
+   are rougher than their grade, oks a fix came back for, and challenges
+   still waiting on an answer. The texts are the point — the poster's grader
+   line says what is missing — so nothing here is scored or ranked; repos are
+   ordered by their newest item, the one most likely still warm. */
+const OPEN_EXPANDED = 3;  // groups open on load
+const OPEN_PER_REPO = 3;  // items shown per group before "older"
+const OPEN_REPOS = 8;     // groups listed before "more repos"
+function renderOpen(agg) {
+  const c = card("c-open", "What needs you",
+    "partial and failed work, grades their own words contradict, oks a fix came back for, and challenges nobody answered — per repo, newest first");
+  const items = new Map(); // key → { t, repo, kinds:Set, e?, extra:[] , node? }
+  const add = (key, t, repo, kind, make) => {
+    let it = items.get(key);
+    if (!it) items.set(key, it = { t, repo, kinds: new Set(), extra: [], make });
+    it.kinds.add(kind);
+    return it;
+  };
+  for (const e of agg.open) add(e.id, e.t, e.repo, e.out, () => postRow(e, { noRepo: true, extra: items.get(e.id).extra }));
+  for (const e of agg.contraPosts) {
+    add(e.id, e.t, e.repo, "contradicts", () => postRow(e, { noRepo: true, extra: items.get(e.id).extra }))
+      .extra.push(el("div", { class: "grader", text: "≠ the message tells a rougher story than its grade" }));
+  }
+  for (const h of agg.haunted) {
+    const it = add(h.ok.id, h.ok.t, h.ok.repo, "haunted", () => postRow(h.ok, { noRepo: true, extra: items.get(h.ok.id).extra }));
+    it.extra.push(el("div", { class: "grader", text: h.fix
+      ? `↻ fix ${fmtDay(h.fix.t)} ${fmtTime(h.fix.t)}: ${h.fix.msg}`
+      : "↻ a fix followed on the same ground" }));
+  }
+  for (const ch of agg.challenges) {
+    add("c:" + ch.t + ch.msg, ch.t, ch.repo || "(no target)", "challenge", () => {
+      const msg = el("span", { class: "msg", text: ch.msg });
+      if (ch.tmsg) msg.append(el("div", { class: "grader", text: `on ${ch.who || "?"}: “${ch.tmsg}”` }));
+      return el("div", { class: "row" },
+        el("span", { class: "when", text: `${fmtDay(ch.t)} ${fmtTime(ch.t)}` }),
+        el("span", { class: "topic", text: ch.actor }), msg,
+        el("span", { class: "badge failed", text: "⁇ waiting" }));
+    });
+  }
+  if (!items.size) { c.append(el("div", { class: "empty", text: "nothing open in this range — every reported post landed and nobody is waiting" })); return; }
+
+  const groups = dict();
+  for (const it of items.values()) (groups[it.repo] ||= []).push(it);
+  const order = Object.entries(groups)
+    .map(([repo, its]) => [repo, its.sort((a, b) => b.t - a.t)])
+    .sort((a, b) => b[1][0].t - a[1][0].t || a[0].localeCompare(b[0]));
+  const KIND_WORDS = [["failed", "failed"], ["partial", "partial"], ["contradicts", "contradicting"], ["haunted", "haunted"], ["challenge", "waiting"]];
+  const group = ([repo, its], gi) => {
+    const counts = KIND_WORDS
+      .map(([k, w]) => [its.filter(it => it.kinds.has(k)).length, w])
+      .filter(([n]) => n)
+      .map(([n, w]) => `${n} ${w}`);
+    const d = el("details", { class: "group" },
+      el("summary", {},
+        el("span", { class: "repo", text: repo }),
+        el("span", { class: "gsub", text: `${counts.join(" · ")} · latest ${fmtDay(its[0].t)}` })));
+    if (gi < OPEN_EXPANDED) d.open = true;
+    const feed = el("div", { class: "feed" });
+    for (const it of its.slice(0, OPEN_PER_REPO)) feed.append(it.make());
+    d.append(feed);
+    // measured on a month of wall: one repo alone held 25 items, and three
+    // open groups made this card six screens tall — the newest few say
+    // what is warm, the rest are a click away and counted in the summary
+    const more = its.slice(OPEN_PER_REPO);
+    if (more.length) d.append(lazyMore(`${more.length} older`, () => { const f = el("div", { class: "feed" }); for (const it of more) f.append(it.make()); return f; }));
+    return d;
+  };
+  order.slice(0, OPEN_REPOS).forEach((g, gi) => c.append(group(g, gi)));
+  const rest = order.slice(OPEN_REPOS);
+  if (rest.length) {
+    c.append(lazyMore(`${plural(rest.length, "more repo")} with ${plural(rest.reduce((s, [, its]) => s + its.length, 0), "item")}`,
+      () => { const box = el("div", {}); rest.forEach(g => box.append(group(g, OPEN_EXPANDED))); return box; }));
+  }
+  c.append(el("div", { class: "sub", style: "margin-top:8px", text: `${plural(order.length, "repo")} · ${plural(items.size, "item")} · the ${Math.min(OPEN_EXPANDED, order.length)} with the newest item are open, ${OPEN_PER_REPO} items each` }));
+}
+
+/* A disclosure whose body is built on first open — a month of items is
+   otherwise hundreds of rows nobody asked to see. */
+function lazyMore(label, build) {
+  const d = el("details", { class: "tv more" }, el("summary", { text: label }));
+  d.addEventListener("toggle", () => { if (d.open && d.children.length === 1) d.append(build()); });
+  return d;
+}
+
 function renderFeed(agg) {
-  const c = card("c-feed", "Latest posts", "the newest 15 in range — the wall itself has the full story");
+  const c = card("c-feed", "Latest posts", "the newest 15 in range — the repo table above holds each repo's own");
   const evs = agg.evs.slice(-15).reverse();
   if (!evs.length) { c.append(el("div", { class: "empty", text: "no posts in this range" })); return; }
   const feed = el("div", { class: "feed" });
-  for (const e of evs) {
-    const msg = el("span", { class: "msg", text: e.msg });
-    // the poster's own words on the cheap path, under the message — quoted as written, never counted
-    if (e.grader) msg.append(el("div", { class: "grader", text: "↷ " + e.grader }));
-    // and beside them what the session's diff showed, the measurement the
-    // poster did not write: same restraint, no count, no comparison drawn
-    for (const s of e.signals || []) msg.append(el("div", { class: "signal", text: "⌇ " + s }));
-    const row = el("div", { class: "row" },
-      el("span", { class: "when", text: `${fmtDay(e.t)} ${fmtTime(e.t)}` }),
-      el("span", { class: "repo", text: e.repo }),
-      el("span", { class: "topic", text: e.topic || "" }),
-      msg);
-    if (e.out) row.append(el("span", { class: "badge " + e.out, text: e.out === "ok" ? "✓ landed" : e.out === "partial" ? "◐ partial" : "✕ failed" }));
-    if (e.mood) row.append(el("span", { class: "badge", text: e.mood }));
-    if (e.took) row.append(el("span", { class: "badge", text: fmtTook(e.took) }));
-    for (const [i, u] of (e.refs || []).entries()) {
-      if (/^https?:\/\//.test(u)) row.append(el("a", { href: u, target: "_blank", rel: "noopener", text: "↗" + (e.refs.length > 1 ? i + 1 : "") }));
-    }
-    feed.append(row);
-  }
+  for (const e of evs) feed.append(postRow(e));
   c.append(feed);
 }
 
@@ -1003,12 +1198,36 @@ function delta(cur, prevAgg, get, upIsGood, unit) {
   span.append(el("span", { class: cls, text: `${sign}${Math.round(d)}${unit || ""}` }), el("span", { text: " vs prev. window" }));
   return span;
 }
+/* The top row says what moved and what waits: every tile a count with its
+   denominator. The rates that barely move (landed, mood, evidence) sit in
+   the instrumentation section below — over a month they read 82–93%,
+   3.6–3.8 and nothing else. Time logged is gone: derived durations of
+   parallel sessions added up past 24 hours a day. */
 function renderTiles(agg) {
   const box = $("tiles");
   box.replaceChildren();
   const n = agg.evs.length;
+  const sess = agg.sessions.size;
+  box.append(tile("Posts", String(n), delta(n, agg.prev, p => p.length, true) || el("span", { text: sess ? `${plural(sess, "session")} carry an id` : "" }), n ? sparkline(agg.buckets) : null));
+  box.append(tile("Cost", agg.usdN ? fmtUSD(agg.usd) : "—",
+    el("span", { text: agg.usdN ? `${fmtUSD(agg.usd / agg.usdN)} per unit · ${agg.usdN} of ${n} posts measured` : "no post in range carries a cost reading" })));
+  const failed = agg.out.failed;
+  box.append(tile("Open", String(agg.open.length),
+    el("span", { text: `partial or failed, ${failed} of them failed · besides, ${plural(agg.challenges.length, "challenge")} waiting` })));
+  box.append(tile("Friction", String(agg.rough.length),
+    el("span", { text: agg.moodN ? `rough or stuck, of ${agg.moodN} graded` : "no --mood posts yet" })));
+  box.append(tile("Haunted", agg.oks ? `${agg.haunted.length}` : "—",
+    el("span", { text: agg.oks ? `of ${agg.oks} oks — a fix on the same ground followed within 7 days` : "no ok in range" })));
+  const sq = agg.sq;
+  box.append(tile("Limit", sq ? Math.round(sq.sq7) + "%" : "—",
+    el("span", { text: sq ? `of the 7-day limit at ${fmtDay(sq.t)} ${fmtTime(sq.t)}` + (sq.sq5 ? ` · 5h ${Math.round(sq.sq5)}%` : "") + ` · peak ${Math.round(agg.sqMax)}%` : "no post in range carries a limit reading" })));
+}
+
+function renderInstrTiles(agg) {
+  const box = $("tiles-instr");
+  box.replaceChildren();
+  const n = agg.evs.length;
   const rep = agg.out.ok + agg.out.partial + agg.out.failed;
-  box.append(tile("Posts", String(n), delta(n, agg.prev, p => p.length, true), n ? sparkline(agg.buckets) : null));
   const landed = rep ? pct(agg.out.ok, rep) + "%" : "—";
   const prevLanded = p => {
     const r = p.filter(e => e.out);
@@ -1016,12 +1235,9 @@ function renderTiles(agg) {
     return pct(r.filter(e => e.out === "ok").length, r.length);
   };
   box.append(tile("Landed", landed, rep ? delta(pct(agg.out.ok, rep), agg.prev, prevLanded, true, " pts") : el("span", { text: "no outcomes reported" })));
-  box.append(tile("Failed", String(agg.out.failed), el("span", { text: agg.out.partial + " partial" })));
   box.append(tile("Mood", agg.moodN ? MOOD_WORDS[Math.round(agg.moodSum / agg.moodN)] : "—",
     el("span", { text: agg.moodN ? `avg ${(agg.moodSum / agg.moodN).toFixed(1)} from ${agg.moodN} post${agg.moodN > 1 ? "s" : ""}` : "no --mood posts yet" })));
-  box.append(tile("Evidence", pct(agg.refsN, n) + "%", el("span", { text: `${agg.refsN}/${n} posts link a ref` })));
-  box.append(tile("Time logged", agg.tookN ? fmtTook(agg.tookSum) : "—",
-    el("span", { text: agg.tookN ? `across ${agg.tookN} post${agg.tookN > 1 ? "s" : ""}` : "no --took posts yet" })));
+  box.append(tile("Evidence", pct(agg.refsN, n) + "%", delta(pct(agg.refsN, n), agg.prev, p => pct(p.filter(e => e.refs && e.refs.length).length, p.length), true, " pts") || el("span", { text: `${agg.refsN}/${n} posts link a ref` })));
 }
 
 /* ---------- range filter + boot ---------- */
@@ -1041,15 +1257,16 @@ let currentRange = 30;
 function renderAll() {
   const agg = aggregate(currentRange);
   renderTiles(agg);
+  renderOpen(agg);
+  renderRepos(agg);
+  renderCost(agg);
   renderFeed(agg);
+  renderInstrTiles(agg);
   renderActivity(agg);
   renderBlind(agg);
   renderOutcome(agg);
-  renderMood(agg);
   renderHeat(agg);
   renderCoverage(agg);
-  renderTreemap(agg);
-  renderBars("c-topics", "What kind of work", "posts per topic", agg.topicCounts);
   renderAgents(agg);
 }
 function renderFilters() {
@@ -1113,6 +1330,13 @@ if (CLOCK_BROKEN) {
   if (age >= 1) {
     $("stale").textContent += " · " + age + " day" + (age === 1 ? "" : "s") + " old";
   }
+}
+
+/* the instrumentation section stays the way the reader left it */
+{
+  const instr = $("instr");
+  if (lsGet("wallii-instr") === "open") instr.open = true;
+  instr.addEventListener("toggle", () => lsSet("wallii-instr", instr.open ? "open" : "closed"));
 }
 
 renderFilters();

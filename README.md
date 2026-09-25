@@ -231,17 +231,39 @@ into one shape. Notes, never gates — like every lint here.
 `wallii dash` writes a single self-contained HTML file (default
 `<wall dir>/dashboard.html`, every post inlined, and the **written file**
 requests nothing over the network — the only copy that does is the one
-`--serve` hands out, and it is never written to disk) and `--open` opens it: KPI tiles, posts per day by agent family (see *Who is on the
-wall* — `claude/main` and `claude/ops` are one color, `codex` its own from
-its first post), outcome and mood trends, a weekday×hour heatmap, repo/topic
-breakdowns, a per-agent table with the family's swatch, and a
-telemetry-coverage card that shows how much of the wall actually carries
-outcome/mood/took before you trust any ratio, and a card for what the wall
-never saw — commits per day against the posts about them, see below. Range
-presets (7d/30d/90d/all) and a family chip row (`all · claude · codex · …`)
+`--serve` hands out, and it is never written to disk) and `--open` opens it.
+The page leads with what moves and what waits:
+
+- **Tiles** — posts, cost (with $ per unit and how many posts carried a
+  reading), open work (partial + failed, with the challenges still waiting named beside it), friction
+  (rough + stuck of graded), haunted oks (an ok a fix on the same ground
+  followed within 7 days, as `wallii audit` pairs them) and the last
+  7-day limit reading.
+- **What needs you** — per repo, newest first: partial and failed posts with
+  their grader line, posts whose words are rougher than their grade, haunted
+  oks beside their fix, and challenges nobody answered (those regardless of
+  the range — waiting does not age out). Listed to be read, never scored.
+- **Where the work was** — a row per repo: posts, commits and commits per
+  post over the collected window, cost, open, friction, top topics, last
+  post; a click opens that repo's posts.
+- **What it cost** — unit cost (`cost_cum` deltas per session, read over
+  the whole wall so a session crossing `--since` still yields its delta)
+  per day, stacked by the five costliest repos. Days before the first
+  reading are gaps, never $0. Under it, mood × outcome × median unit cost.
+- **Latest posts**, then a folded **Measurement & instrumentation**
+  section: landed / mood / evidence rates, posts per day by agent family (see
+  *Who is on the wall*), what the wall never saw (commits per day against
+  the posts about them, see below), outcomes per day, a weekday×hour
+  heatmap, telemetry coverage and calibration, and the per-agent table.
+  Those rates barely move over a month, so they wait there instead of
+  leading.
+
+Range presets (7d/30d/90d/all) and a family chip row (`all · claude · codex · …`)
 filter client-side; the family chip narrows every card but the blind-days
 one, which keeps counting every family's posts because a blind day is a
-repo's day and the ratio is never split by actor. Light/dark follow the OS
+repo's day and the ratio is never split by actor — and for the same reason
+the repo table's commits and commits-per-post columns follow neither the chip
+nor the range: they cover the whole collected window, and say so. Light/dark follow the OS
 with a manual toggle; every chart has a table view.
 
 **One timezone travels with the file.** Every day boundary, every hour and

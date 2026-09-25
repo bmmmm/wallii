@@ -3,8 +3,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +35,218 @@ func inlinedConst(t *testing.T, html, name string, into any) {
 	v = strings.TrimSuffix(v, ";")
 	if err := json.Unmarshal([]byte(v), into); err != nil {
 		t.Fatalf("cannot read %s back: %v\n%.300s", name, err, v)
+	}
+}
+
+// runDashJS runs dash.html's script under node with the fixture inlined,
+// then tail, and returns what tail printed after "RESULT ". The page's own
+// top-level rendering runs first against a stub DOM, so a render that
+// throws on this fixture fails here too.
+func runDashJS(t *testing.T, node string, f dashFixture, families, tail string) string {
+	t.Helper()
+	start, end := strings.Index(dashTemplate, "<script>"), strings.LastIndex(dashTemplate, "</script>")
+	if start < 0 || end < 0 {
+		t.Fatal("dash.html has no <script> block to run")
+	}
+	script := strings.NewReplacer(
+		"__GENERATED__", "fixture",
+		"__WALLII_CAL__", f.Cal,
+		"__WALLII_COMMITS__", f.Cov,
+		"__WALLII_FAMILIES__", families,
+		"__WALLII_DOUBT__", f.doubt(),
+		"__WALLII_DATA__", f.Evs,
+	).Replace(dashTemplate[start+len("<script>") : end])
+	harness := `const stub = new Proxy(function () {}, {
+  get: (_, k) => k === Symbol.toPrimitive ? () => 0 : k === Symbol.iterator ? function* () {} : k === "then" ? undefined : stub,
+  set: () => true, apply: () => stub, construct: () => stub, has: () => true,
+});
+for (const g of ["document", "window", "localStorage", "navigator", "matchMedia", "location", "requestAnimationFrame"]) globalThis[g] = stub;
+` + script + "\n" + tail
+	path := filepath.Join(t.TempDir(), "dash-js.js")
+	if err := os.WriteFile(path, []byte(harness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the dashboard script did not run under node: %v\n%s", err, out)
+	}
+	_, payload, ok := strings.Cut(string(out), "RESULT ")
+	if !ok {
+		t.Fatalf("no result line from node:\n%s", out)
+	}
+	return strings.TrimSpace(payload)
+}
+
+func usd(v float64) *float64 { return &v }
+
+// The page's half of cost and doubt. Cost has the same contract as the
+// commits card: a day before the first reading is a gap, never $0, and a
+// post without a reading adds nothing — not even to the count. Doubt
+// narrows like everything else: a haunted pair by its ok's range and
+// family, a challenge by the family it waits on.
+func TestDashAggregatesCostAndDoubt(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the browser half cannot be executed without it")
+	}
+	loc := mustLoc(t, "Europe/Berlin")
+	today := wall.DayStart(time.Date(2026, time.April, 12, 15, 0, 0, 0, loc), loc)
+	at := func(daysBack, hour int) int64 {
+		return today.AddDate(0, 0, -daysBack).Add(time.Duration(hour) * time.Hour).UnixMilli()
+	}
+	evs := []dashEvent{
+		{ID: "a000001", T: at(6, 10), Repo: "webshop", Actor: "claude/main", Msg: "unmeasured, before any reading", Out: "ok"},
+		{ID: "a000002", T: at(3, 10), Repo: "webshop", Actor: "claude/main", Msg: "first reading", Out: "partial", Mood: "rough", Usd: usd(4)},
+		{ID: "a000003", T: at(3, 11), Repo: "webshop", Actor: "claude/main", Msg: "unmeasured after it", Out: "ok"},
+		{ID: "a000004", T: at(2, 10), Repo: "garden", Actor: "codex/main", Msg: "second reading", Out: "failed", Usd: usd(0.5), Vs: 1},
+		{ID: "a000005", T: at(1, 10), Repo: "webshop", Actor: "claude/main", Msg: "the fix", Out: "ok", Topic: "fix"},
+	}
+	f := makeDashFixture(t, loc, today.Add(15*time.Hour), nil, evs)
+	f.Doubt = `{"challenges":[` +
+		`{"t":` + strconv.FormatInt(at(20, 9), 10) + `,"actor":"wallii/lint","msg":"old, still waiting","target":"zzz","repo":"garden","who":"codex/main","tmsg":"gone"}],` +
+		`"haunted":[{"ok":"a000001","fix":"a000005","shared":["x","y"]},{"ok":"a000003","fix":"a000005","shared":["x","y"]}]}`
+	fam := `{"claude/main":"claude","codex/main":"codex"}`
+	tail := `
+const pick = agg => ({
+  usd: agg.usd, usdN: agg.usdN,
+  usdCov: agg.buckets.map(b => b.usdCov),
+  first: agg.buckets.findIndex(b => b.usdCov),
+  open: agg.open.map(e => e.id), contra: agg.contraPosts.map(e => e.id), rough: agg.rough.map(e => e.id),
+  haunted: agg.haunted.map(h => h.ok.id + ">" + (h.fix ? h.fix.id : "?")), oks: agg.oks,
+  challenges: agg.challenges.length,
+  repoUsd: Object.fromEntries(Object.entries(agg.repos).map(([k, r]) => [k, [r.usd, r.usdN, r.open, r.rough]])),
+});
+const all = pick(aggregate(5));
+currentFamily = "claude";
+const claude = pick(aggregate(5));
+currentFamily = "codex";
+const codex = pick(aggregate(5));
+console.log("RESULT " + JSON.stringify({ all, claude, codex }));`
+	var res struct {
+		All, Claude, Codex struct {
+			Usd                 float64
+			UsdN                int
+			UsdCov              []bool
+			First               int
+			Open, Contra, Rough []string
+			Haunted             []string
+			Oks, Challenges     int
+			RepoUsd             map[string][]float64
+		}
+	}
+	if err := json.Unmarshal([]byte(runDashJS(t, node, f, fam, tail)), &res); err != nil {
+		t.Fatal(err)
+	}
+	a := res.All
+	// 5-day range: days 4..0 back. The first reading is 3 days back, so
+	// bucket 0 (4 back) is a gap and every later one is measured.
+	if want := []bool{false, true, true, true, true}; fmt.Sprint(a.UsdCov) != fmt.Sprint(want) {
+		t.Errorf("cost coverage per bucket %v, want %v — a day before the first reading is a gap, never $0", a.UsdCov, want)
+	}
+	if a.Usd != 4.5 || a.UsdN != 2 {
+		t.Errorf("range cost $%v over %d measured, want $4.5 over 2 — an unmeasured post adds nothing, not even to the count", a.Usd, a.UsdN)
+	}
+	if strings.Join(a.Open, ",") != "a000002,a000004" || strings.Join(a.Contra, ",") != "a000004" || strings.Join(a.Rough, ",") != "a000002" {
+		t.Errorf("open %v, contradicting %v, rough %v", a.Open, a.Contra, a.Rough)
+	}
+	// a000001 is outside the 5-day range: its pair drops out with it
+	if strings.Join(a.Haunted, ",") != "a000003>a000005" || a.Oks != 2 {
+		t.Errorf("haunted %v of %d oks, want only the pair whose ok is in range, of 2", a.Haunted, a.Oks)
+	}
+	if a.Challenges != 1 {
+		t.Errorf("a challenge older than the range is still open and must be listed, got %d", a.Challenges)
+	}
+	if r := a.RepoUsd["webshop"]; len(r) != 4 || r[0] != 4 || r[1] != 1 || r[2] != 1 || r[3] != 1 {
+		t.Errorf("webshop row [usd usdN open rough] = %v, want [4 1 1 1]", r)
+	}
+	if c := res.Claude; c.Challenges != 0 || len(c.Haunted) != 1 || c.Usd != 4 {
+		t.Errorf("claude chip: %d challenges (the one open waits on codex), haunted %v, $%v", c.Challenges, c.Haunted, c.Usd)
+	}
+	if c := res.Codex; c.Challenges != 1 || len(c.Haunted) != 0 || c.Usd != 0.5 {
+		t.Errorf("codex chip: %d challenges, haunted %v (its oks are claude's), $%v", c.Challenges, c.Haunted, c.Usd)
+	}
+}
+
+// A repo is a name off the wall, and a name can be "constructor" or
+// "__proto__". Kept in a plain {} those read Object.prototype, the page's
+// aggregate threw, and one such post blanked the whole dashboard (found in
+// review, 2026-09-25). The top-level render runs inside runDashJS, so a
+// throw anywhere — the open card's grouping of a target-only repo included —
+// fails here.
+func TestDashSurvivesReposNamedLikeObjectBuiltins(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the browser half cannot be executed without it")
+	}
+	loc := mustLoc(t, "Europe/Berlin")
+	today := wall.DayStart(time.Date(2026, time.April, 12, 15, 0, 0, 0, loc), loc)
+	t0 := today.Add(-20 * time.Hour).UnixMilli()
+	var evs []dashEvent
+	for i, name := range []string{"constructor", "__proto__", "toString", "hasOwnProperty"} {
+		evs = append(evs, dashEvent{ID: fmt.Sprintf("b%06d", i), T: t0 + int64(i)*60000, Repo: name, Actor: "claude/main",
+			Topic: "constructor", Msg: "shipped", Out: "partial", Mood: "rough", Usd: usd(1)})
+	}
+	f := makeDashFixture(t, loc, today.Add(15*time.Hour), nil, evs)
+	f.Doubt = `{"challenges":[{"t":` + strconv.FormatInt(t0, 10) + `,"actor":"wallii/lint","msg":"why","repo":"valueOf","who":"claude/main"}],"haunted":[]}`
+	out := runDashJS(t, node, f, `{"claude/main":"claude"}`, `
+const agg = aggregate(7);
+console.log("RESULT " + JSON.stringify({ repos: Object.keys(agg.repos).sort(), posts: Object.values(agg.repos).map(r => r.posts), usd: agg.usd, polluted: ({}).posts !== undefined }));`)
+	var res struct {
+		Repos    []string
+		Posts    []int
+		Usd      float64
+		Polluted bool
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(res.Repos) != "[__proto__ constructor hasOwnProperty toString]" || fmt.Sprint(res.Posts) != "[1 1 1 1]" || res.Usd != 4 {
+		t.Errorf("repos %v with posts %v and $%v — every name is an ordinary repo", res.Repos, res.Posts, res.Usd)
+	}
+	if res.Polluted {
+		t.Error("a repo named __proto__ wrote onto Object.prototype")
+	}
+}
+
+// Weekly buckets (a range over 60 days) are cut from the range's start, not
+// from the first cost reading. A week straddling that reading still holds
+// every reading there is — before it there are none — so it is measured and
+// drawn; gating it on all seven days hid a week the headline counted.
+func TestDashCostWeekStraddlingTheFirstReadingIsDrawn(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the browser half cannot be executed without it")
+	}
+	loc := mustLoc(t, "Europe/Berlin")
+	today := wall.DayStart(time.Date(2026, time.April, 12, 15, 0, 0, 0, loc), loc)
+	start := today.AddDate(0, 0, -99)
+	at := func(day int) int64 { return start.AddDate(0, 0, day).Add(12 * time.Hour).UnixMilli() }
+	evs := []dashEvent{
+		{ID: "c000001", T: at(0), Repo: "webshop", Actor: "claude/main", Msg: "the first day, unmeasured"},
+		{ID: "c000002", T: at(59), Repo: "webshop", Actor: "claude/main", Msg: "first reading", Usd: usd(1)},
+		{ID: "c000003", T: at(60), Repo: "webshop", Actor: "claude/main", Msg: "second reading", Usd: usd(2)},
+	}
+	f := makeDashFixture(t, loc, today.Add(15*time.Hour), nil, evs)
+	out := runDashJS(t, node, f, `{"claude/main":"claude"}`, `
+const agg = aggregate(0);
+const drawn = agg.buckets.filter(b => b.usdCov).reduce((s, b) => s + Object.values(b.usdByRepo).reduce((a, v) => a + v, 0), 0);
+console.log("RESULT " + JSON.stringify({ weekly: agg.weekly, usd: agg.usd, drawn, gaps: agg.buckets.filter(b => !b.usdCov).length }));`)
+	var res struct {
+		Weekly     bool
+		Usd, Drawn float64
+		Gaps       int
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatal(err)
+	}
+	if !res.Weekly {
+		t.Fatal("the fixture did not reach weekly buckets — the straddle this test is about is not there")
+	}
+	if res.Usd != 3 || res.Drawn != 3 {
+		t.Errorf("headline $%v, drawn $%v — every reading the headline counts must be in a drawn bucket", res.Usd, res.Drawn)
+	}
+	if res.Gaps != 8 {
+		t.Errorf("%d gap weeks, want the 8 wholly before the first reading", res.Gaps)
 	}
 }
 
