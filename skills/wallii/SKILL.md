@@ -157,9 +157,12 @@ Rules:
 - Quote messages as-is (they are already capped at 140 runes) — never dump
   raw JSON into the chat. A post with a `grader` gets it as an indented
   `↷ <grader>` line directly under its bullet, verbatim.
-- "Needs attention" comes from `agents --json`: attached pairs whose
-  `last_post` is older than 7 days, pairs with `posts == 0`, and recent
-  detaches. Skip the section entirely when there is nothing.
+- "Needs attention" comes from `agents --json`: attached pairs with
+  `explicit == true` whose `last_post` is older than 7 days, pairs with
+  `posts == 0`, and recent detaches — the same rule as the `agents` header. A
+  pair only its posts attached (`explicit == false`) that went quiet is idle
+  history, not a missing agent. Skip the section entirely when there is
+  nothing.
 - A window where every reported outcome is `ok` and no mood reaches
   `rough`/`stuck` belongs in "Needs attention" too — not as an agent
   problem, but as "the telemetry stopped discriminating, take the ratios

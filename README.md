@@ -932,8 +932,9 @@ worker     worker/nightly       legacy        4      60d ago    detached 14d ago
 ```
 
 `--stale 7d` sets the silence threshold, `--repo x` filters, `--json` is for
-scripts. Past the threshold a pair that was attached with `wallii attach` is
-`silent` and needs attention; one that only its posts put there is `idle` —
+scripts. Past the threshold a pair registered on purpose (`wallii attach` or
+`detach` — any registration event) is `silent` and needs attention; one that
+only its posts put there is `idle` —
 a one-off lane or an old repo, history rather than a missing agent — and is
 not counted.
 
