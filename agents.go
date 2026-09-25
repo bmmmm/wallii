@@ -62,7 +62,7 @@ func cmdAgents(args []string) error {
 		actors[p.Actor] = struct{}{}
 		families[p.Family] = struct{}{}
 		repos[p.Repo] = struct{}{}
-		if s := pairState(p, now, stale); strings.HasPrefix(s, "silent") || strings.Contains(s, "never posted") {
+		if needsAttention(p, now, stale) {
 			silent++
 		}
 	}
@@ -97,11 +97,23 @@ func pairState(p wall.PairState, now time.Time, stale time.Duration) string {
 		return "detached " + ago(now.Sub(p.StateAt))
 	case p.Posts == 0:
 		return "attached " + ago(now.Sub(p.StateAt)) + ", never posted"
+	case now.Sub(p.LastPost) > stale && !p.Explicit:
+		// only its posts put it here — a one-off lane or an old repo that
+		// went quiet is not missing, nobody said it would come back
+		return "idle " + ago(now.Sub(p.LastPost))
 	case now.Sub(p.LastPost) > stale:
 		return "silent " + ago(now.Sub(p.LastPost))
 	default:
 		return "active"
 	}
+}
+
+// needsAttention is what the header counts: a pair someone attached on
+// purpose that went silent, or one attached that never posted. An idle
+// implicit pair is history, not a missing agent.
+func needsAttention(p wall.PairState, now time.Time, stale time.Duration) bool {
+	s := pairState(p, now, stale)
+	return strings.HasPrefix(s, "silent") || strings.Contains(s, "never posted")
 }
 
 func orDash(s string) string {

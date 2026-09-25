@@ -686,3 +686,34 @@ func TestAgentsNamesFamilies(t *testing.T) {
 		}
 	}
 }
+
+// An implicit pair past the stale threshold is idle history, not a missing
+// agent: before this split every one-off lane that ever posted counted as
+// "need attention" and the header drowned the pairs someone attached on
+// purpose.
+func TestPairStateIdleVsSilent(t *testing.T) {
+	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	stale := 7 * 24 * time.Hour
+	old := now.Add(-10 * 24 * time.Hour)
+	implicit := wall.PairState{Actor: "worker/oneoff", Repo: "example-repo", Posts: 3, LastPost: old, Attached: true, StateAt: old}
+	explicit := implicit
+	explicit.Explicit = true
+
+	if s := pairState(implicit, now, stale); !strings.HasPrefix(s, "idle ") {
+		t.Errorf("implicit stale pair: got %q, want idle", s)
+	}
+	if needsAttention(implicit, now, stale) {
+		t.Error("implicit stale pair counted as needing attention")
+	}
+	if s := pairState(explicit, now, stale); !strings.HasPrefix(s, "silent ") {
+		t.Errorf("explicit stale pair: got %q, want silent", s)
+	}
+	if !needsAttention(explicit, now, stale) {
+		t.Error("explicit stale pair not counted as needing attention")
+	}
+	fresh := implicit
+	fresh.LastPost = now.Add(-time.Hour)
+	if s := pairState(fresh, now, stale); s != "active" {
+		t.Errorf("fresh implicit pair: got %q, want active", s)
+	}
+}

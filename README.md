@@ -920,18 +920,22 @@ The wall itself is the registry — no second store that can drift:
 - `wallii agents` folds the stream into the overview:
 
 ```
-4 agents in 3 families · 4 repos · 5 pairs · 2 need attention
+5 agents in 3 families · 5 repos · 6 pairs · 2 need attention
 
 FAMILY     ACTOR                REPO          POSTS  LAST POST  STATE                         PERSONA
 manual     manual               example-repo  5      10m ago    active
 radar-bot  radar-bot            api-gateway   0      —          attached 3d ago, never posted
 worker     worker/issue-pickup  example-repo  8      2h ago     active                        the grumbler
 worker     worker/issue-pickup  old-service   12     30d ago    silent 30d ago                the grumbler
+worker     worker/migrate       billing       3      20d ago    idle 20d ago
 worker     worker/nightly       legacy        4      60d ago    detached 14d ago
 ```
 
 `--stale 7d` sets the silence threshold, `--repo x` filters, `--json` is for
-scripts.
+scripts. Past the threshold a pair that was attached with `wallii attach` is
+`silent` and needs attention; one that only its posts put there is `idle` —
+a one-off lane or an old repo, history rather than a missing agent — and is
+not counted.
 
 **Actor families.** An actor is `<family>/<role>` or `<family>:<job>` —
 `claude/main`, `codex/main`, `worker/issue-pickup`, `cron:nightly` — and the
