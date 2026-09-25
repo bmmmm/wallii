@@ -217,6 +217,11 @@ const familyOf = a => { const k = a || "—"; return Object.hasOwn(FAMILIES, k) 
    sides of the ratio here exactly as it does in `wallii coverage`, or the
    card would print a ratio its own footnote contradicts. */
 const MEASURED = new Set(COMMITS ? COMMITS.repos || [] : []);
+/* What the wall says against itself, handed over by Go: challenges nobody
+   answered yet (taken over the whole wall, whatever the window) and oks a
+   fix came back for, as {ok, fix} id pairs into RAW. Listed to be read —
+   the tile counts them, nothing ranks by them. */
+const DOUBT = __WALLII_DOUBT__ || { challenges: [], haunted: [] };
 
 const DAY = 864e5;
 const MOODS = { great: 5, good: 4, ok: 3, rough: 2, stuck: 1 };

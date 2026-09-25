@@ -311,6 +311,9 @@ func TestDashInlinesMeasuredCommits(t *testing.T) {
 	if !strings.Contains(line, `"repos":["webshop"]`) {
 		t.Errorf("the card must be told which repos were measured, or it counts every repo's posts:\n%s", line)
 	}
+	if !strings.Contains(line, `"repo_commits":[2]`) {
+		t.Errorf("each measured repo's commits must ride beside its name — the repo table reads them:\n%s", line)
+	}
 }
 
 // The browser half is where the two contracts that matter most live — a
@@ -627,6 +630,7 @@ func runDashRange(t *testing.T, node string, f dashFixture, stored string) int {
 		"__WALLII_CAL__", f.Cal,
 		"__WALLII_COMMITS__", f.Cov,
 		"__WALLII_FAMILIES__", "{}",
+		"__WALLII_DOUBT__", f.doubt(),
 		"__WALLII_DATA__", f.Evs,
 	).Replace(dashTemplate[start+len("<script>") : end])
 	harness := `const stub = new Proxy(function () {}, {
@@ -675,6 +679,7 @@ func runDashAggregate(t *testing.T, node string, f dashFixture, rangeDays int, v
 		"__WALLII_CAL__", f.Cal,
 		"__WALLII_COMMITS__", f.Cov,
 		"__WALLII_FAMILIES__", "{}",
+		"__WALLII_DOUBT__", f.doubt(),
 		"__WALLII_DATA__", f.Evs,
 	).Replace(dashTemplate[start+len("<script>") : end])
 	// a DOM that accepts everything and answers with itself, so the page's
@@ -739,7 +744,16 @@ type dashAggResult struct {
 // them: the calendar comes out of buildDashCalendar and the commits are
 // indexed onto it, so a test pins the seam rather than a hand-written array
 // that could agree with nothing.
-type dashFixture struct{ Cal, Cov, Evs string }
+type dashFixture struct{ Cal, Cov, Evs, Doubt string }
+
+// doubt is the inlined dashDoubt — "null" when a test sets none, which the
+// page reads as no challenges and no haunted pairs.
+func (f dashFixture) doubt() string {
+	if f.Doubt == "" {
+		return "null"
+	}
+	return f.Doubt
+}
 
 func makeDashFixture(t *testing.T, loc *time.Location, now time.Time, cov *dashCoverage, evs []dashEvent) dashFixture {
 	t.Helper()
@@ -1006,6 +1020,7 @@ func TestDashFamilyFilterLeavesTheBlindDaysAlone(t *testing.T) {
 	script = strings.Replace(script, "__WALLII_CAL__", f.Cal, 1)
 	script = strings.Replace(script, "__WALLII_COMMITS__", f.Cov, 1)
 	script = strings.Replace(script, "__WALLII_FAMILIES__", `{"claude/main":"claude","claude/ops":"claude","codex/main":"codex"}`, 1)
+	script = strings.Replace(script, "__WALLII_DOUBT__", f.doubt(), 1)
 	script = strings.Replace(script, "__WALLII_DATA__", f.Evs, 1)
 	harness := `const stub = new Proxy(function () {}, {
   get: (_, k) => k === Symbol.toPrimitive ? () => 0 : k === Symbol.iterator ? function* () {} : k === "then" ? undefined : stub,

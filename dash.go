@@ -44,6 +44,45 @@ type dashEvent struct {
 	// second chance to count the wrong thing — which is exactly what
 	// happened when that count went by posts.
 	Signals []string `json:"signals,omitempty"`
+	// ID is what a challenge or a haunted pair points at.
+	ID string `json:"id"`
+	// Usd is the unit cost — the delta to the session's previous post, read
+	// by wall.UnitCosts over the whole wall. Absent means nobody measured,
+	// never free: a pointer, so a missing reading is left out and a unit
+	// under the rounding still arrives as the 0 it was.
+	Usd  *float64 `json:"usd,omitempty"`
+	Sess string   `json:"sess,omitempty"`
+	// Sq7 and Sq5 are the plan limits spent when the post was written, in
+	// percent — recorded beside the grades, never in them.
+	Sq7 float64 `json:"sq7,omitempty"`
+	Sq5 float64 `json:"sq5,omitempty"`
+}
+
+// dashDoubt is what the wall says against itself, inlined whole so the page
+// can list it: challenges nobody answered yet, and oks a fix came back for.
+// Texts to read, not a score — the tile counts them, nothing ranks by them.
+type dashDoubt struct {
+	Challenges []dashChallenge `json:"challenges"`
+	Haunted    []dashHaunt     `json:"haunted"`
+}
+
+type dashChallenge struct {
+	T      int64  `json:"t"`
+	Actor  string `json:"actor"`
+	Msg    string `json:"msg"`
+	Target string `json:"target,omitempty"` // the challenged post's id
+	Repo   string `json:"repo,omitempty"`   // the challenged post's repo
+	Who    string `json:"who,omitempty"`    // the challenged post's actor
+	TMsg   string `json:"tmsg,omitempty"`   // the challenged post's message
+}
+
+// dashHaunt pairs by id: both sides are in RAW whenever the ok is, because
+// the fix comes after it. Only the ok's id and the fix's are carried — the
+// page looks the posts up rather than inlining their text twice.
+type dashHaunt struct {
+	OK     string   `json:"ok"`
+	Fix    string   `json:"fix"`
+	Shared []string `json:"shared"`
 }
 
 // dashCalendar is the axis, computed once in Go and handed over whole. The
@@ -87,10 +126,15 @@ type dashCoverage struct {
 	// Commits is index-aligned with dashCalendar.T0 and always has the same
 	// length; entries outside [FromI, ToI) are zero and mean nothing, which
 	// is why the bounds and not the value decide whether a day was measured.
-	Commits      []int    `json:"commits"`
-	FromI        int      `json:"from_i"` // first measured day, index into T0
-	ToI          int      `json:"to_i"`   // one past the last measured day
-	Repos        []string `json:"repos"`  // the measured repos — the card's numerator is their posts
+	Commits []int    `json:"commits"`
+	FromI   int      `json:"from_i"` // first measured day, index into T0
+	ToI     int      `json:"to_i"`   // one past the last measured day
+	Repos   []string `json:"repos"`  // the measured repos — the card's numerator is their posts
+	// RepoCommits is index-aligned with Repos: each repo's counted commits
+	// over the whole collected window. Per repo, never per repo and day — a
+	// second axis would be a second calendar, and the page reads it only
+	// as the window's total beside that repo's posts.
+	RepoCommits  []int    `json:"repo_commits"`
 	BlindCommits int      `json:"blind_commits"`
 	BlindPosts   int      `json:"blind_posts"`
 	Measured     int      `json:"measured"`
@@ -144,11 +188,13 @@ func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time, loc 
 	out := &dashCoverage{
 		from: fromDay, to: toDay, byDay: map[string]int{},
 		Repos:        make([]string, 0, len(c.Repos)),
+		RepoCommits:  make([]int, 0, len(c.Repos)),
 		BlindCommits: c.BlindCommits, BlindPosts: c.BlindPosts,
 		Measured: c.Measured, OnWall: c.OnWall, Others: c.Others,
 	}
 	for _, r := range c.Repos {
 		out.Repos = append(out.Repos, r.Name)
+		out.RepoCommits = append(out.RepoCommits, r.Commits)
 	}
 	for _, d := range c.Days {
 		if d.PreWall {
@@ -160,6 +206,31 @@ func collectDashCoverage(evs []wall.Event, wallStart, since, now time.Time, loc 
 		out.Unresolved = append(out.Unresolved, u.Name)
 	}
 	return out
+}
+
+// dashDoubtOf gathers the doubt the page lists. Open challenges are taken
+// over the whole wall and carried whatever --since says: a challenge from
+// before the window is still waiting, and it names its target's words so
+// the page need not have that post inlined. Hauntings are paired over the
+// whole wall too, the way `wallii mirror` pairs them, and kept when the ok
+// lies inside the window — then both sides are in RAW, since a fix always
+// comes after its ok.
+func dashDoubtOf(wallAll, posts []wall.Event, units map[string]wall.Unit, since time.Time) dashDoubt {
+	d := dashDoubt{Challenges: []dashChallenge{}, Haunted: []dashHaunt{}}
+	for _, c := range wall.OpenChallenges(wallAll) {
+		dc := dashChallenge{T: c.Challenge.TS.UnixMilli(), Actor: c.Challenge.Actor, Msg: c.Challenge.Msg}
+		if c.HasTarget {
+			dc.Target, dc.Repo, dc.Who, dc.TMsg = c.Target.ID(), c.Target.Repo, c.Target.Actor, c.Target.Msg
+		}
+		d.Challenges = append(d.Challenges, dc)
+	}
+	for _, h := range wall.HauntingsWith(posts, units) {
+		if h.OK.TS.Before(since) {
+			continue
+		}
+		d.Haunted = append(d.Haunted, dashHaunt{OK: h.OK.ID(), Fix: h.Fix.ID(), Shared: h.Shared})
+	}
+	return d
 }
 
 // buildDashCalendar walks the axis the page is drawn on: every day from the
@@ -308,10 +379,28 @@ func cmdDash(args []string) error {
 		// The whole wall, then the window: the commit card needs the wall's
 		// own first post as the floor under every blind day, and read through
 		// the --since filter that floor would move with the flag.
-		all, rstats, err := wall.ReadLast(dir, 0, func(e wall.Event) bool { return e.Kind == "" })
+		//
+		// Every kind is read — the dialogue is where the open challenges are
+		// — and the posts are cut out of it right after. The feed, the charts
+		// and every count below still see posts only.
+		wallAll, rstats, err := wall.ReadLast(dir, 0, func(e wall.Event) bool {
+			return e.Kind == "" || e.Kind == wall.KindReact || e.Kind == wall.KindChallenge
+		})
 		if err != nil {
 			return nil, err
 		}
+		all := make([]wall.Event, 0, len(wallAll))
+		for _, e := range wallAll {
+			if e.Kind == "" {
+				all = append(all, e)
+			}
+		}
+		// Unit costs over the whole wall, before any window is cut: a unit
+		// is the delta to the session's previous post, and a session does
+		// not end where --since does. Read over the window instead, the
+		// first post inside it would count from session start and carry
+		// every unit before the edge.
+		units := wall.UnitCosts(all)
 		// Said on every render, served or written — a month file that cannot
 		// be read takes its posts off the page, and silence about that is
 		// the one thing this whole file is built not to do. Under --serve it
@@ -342,11 +431,22 @@ func cmdDash(args []string) error {
 			if len(wall.Contradictions(e)) > 0 {
 				vs = 1
 			}
-			out = append(out, dashEvent{
+			de := dashEvent{
 				T: e.TS.UnixMilli(), Repo: e.Repo, Actor: e.Actor, Topic: e.Topic,
 				Out: e.Outcome, Mood: e.Mood, Took: e.TookS, Src: e.TookSrc, Vs: vs, Refs: e.Refs, Msg: e.Msg,
 				Grader: e.Grader, Signals: e.Signals,
-			})
+				ID: e.ID(), Sess: e.Sess, Sq7: e.SqueezeP, Sq5: e.Squeeze5h,
+			}
+			if u, ok := units[e.ID()]; ok {
+				usd := u.CostUSD
+				de.Usd = &usd
+			}
+			out = append(out, de)
+		}
+		doubt := dashDoubtOf(wallAll, all, units, since)
+		doubtJSON, err := json.Marshal(doubt)
+		if err != nil {
+			return nil, err
 		}
 		// json.Marshal HTML-escapes < > & — safe to inline in a <script> block
 		data, err := json.Marshal(out)
@@ -434,6 +534,7 @@ func cmdDash(args []string) error {
 			"__WALLII_COMMITS__", string(cov),
 			"__WALLII_CAL__", string(calJSON),
 			"__WALLII_FAMILIES__", string(fam),
+			"__WALLII_DOUBT__", string(doubtJSON),
 			"__WALLII_DATA__", string(data),
 			"__WALLII_LIVE__", live_,
 		).Replace(dashTemplate)

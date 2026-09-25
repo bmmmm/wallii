@@ -391,11 +391,11 @@ func TestCmdDashWritesSubstitutedFile(t *testing.T) {
 	}
 }
 
-// dashPlaceholders are the four the template carries. Each must appear
+// dashPlaceholders are the ones the template carries. Each must appear
 // exactly once: cmdDash substitutes all of them in one NewReplacer pass,
 // which fills every occurrence, so a second copy of any of them would be
 // filled too — silently, and with a value meant for one place.
-var dashPlaceholders = []string{"__GENERATED__", "__WALLII_COMMITS__", "__WALLII_FAMILIES__", "__WALLII_DATA__"}
+var dashPlaceholders = []string{"__GENERATED__", "__WALLII_COMMITS__", "__WALLII_FAMILIES__", "__WALLII_DOUBT__", "__WALLII_DATA__"}
 
 func TestDashTemplateCarriesEachPlaceholderOnce(t *testing.T) {
 	for _, ph := range dashPlaceholders {
@@ -455,7 +455,7 @@ func TestDashPlaceholdersSurviveAPostNamedAfterThem(t *testing.T) {
 			// the name is allowed to appear as data — inside a JSON string.
 			// What must not survive is the placeholder in the position the
 			// template put it in, waiting to be read as a value.
-			for _, decl := range []string{"const COMMITS = " + ph, "const FAMILIES = " + ph, "const RAW = " + ph} {
+			for _, decl := range []string{"const COMMITS = " + ph, "const FAMILIES = " + ph, "const DOUBT = " + ph, "const RAW = " + ph} {
 				if strings.Contains(html, decl) {
 					t.Errorf("a post named %s left %q unsubstituted", ph, decl)
 				}
