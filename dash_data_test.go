@@ -184,6 +184,57 @@ console.log("RESULT " + JSON.stringify({ all, claude, codex, axis }));`
 	}
 }
 
+// The open card's grouping and caps, run as data: one item per post however
+// many kinds it carries, repos ordered by their newest item, each group cut
+// to perRepo shown items with the rest counted as older, and the list cut to
+// the first groups with the rest folded. A challenge without a target files
+// under "(no target)" rather than disappearing.
+func TestDashOpenGroupsMergeOrderAndCap(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the browser half cannot be executed without it")
+	}
+	loc := mustLoc(t, "Europe/Berlin")
+	today := wall.DayStart(time.Date(2026, time.April, 12, 15, 0, 0, 0, loc), loc)
+	h := func(hour int) int64 { return today.Add(time.Duration(hour-24) * time.Hour).UnixMilli() }
+	evs := []dashEvent{
+		{ID: "d000001", T: h(1), Repo: "webshop", Actor: "claude/main", Msg: "w1", Out: "partial"},
+		{ID: "d000002", T: h(2), Repo: "webshop", Actor: "claude/main", Msg: "w2", Out: "partial", Vs: 1},
+		{ID: "d000003", T: h(3), Repo: "webshop", Actor: "claude/main", Msg: "w3", Out: "failed"},
+		{ID: "d000004", T: h(4), Repo: "garden", Actor: "claude/main", Msg: "g1", Out: "ok"},
+		{ID: "d000005", T: h(5), Repo: "garden", Actor: "claude/main", Msg: "g2 fix", Out: "ok", Topic: "fix"},
+		{ID: "d000006", T: h(6), Repo: "attic", Actor: "claude/main", Msg: "a1", Out: "partial"},
+	}
+	f := makeDashFixture(t, loc, today.Add(15*time.Hour), nil, evs)
+	f.Doubt = `{"challenges":[{"t":` + strconv.FormatInt(h(0), 10) + `,"actor":"wallii/lint","msg":"orphan"}],` +
+		`"haunted":[{"ok":"d000004","fix":"d000005","shared":["a","b"]}]}`
+	out := runDashJS(t, node, f, `{"claude/main":"claude"}`, `
+const g = openGroups(aggregate(7), 2, 2);
+const view = x => ({ repo: x.repo, head: x.head.map(i => i.key + ":" + [...i.kinds].sort().join("+") + (i.fixes.length ? ">" + i.fixes.map(f => f && f.id).join() : "")), more: x.more.map(i => i.key) });
+console.log("RESULT " + JSON.stringify({ total: g.total, repos: g.repos, shown: g.shown.map(view), rest: g.rest.map(view) }));`)
+	var res struct {
+		Total, Repos int
+		Shown, Rest  []struct {
+			Repo       string
+			Head, More []string
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Total != 6 || res.Repos != 4 {
+		t.Errorf("%d items in %d repos, want 6 in 4 — the partial post that also contradicts is one item", res.Total, res.Repos)
+	}
+	got := fmt.Sprint(res.Shown)
+	want := "[{attic [d000006:partial] []} {garden [d000004:haunted>d000005] []}]"
+	if got != want {
+		t.Errorf("shown groups\n got %s\nwant %s — repos by newest item, the haunted ok carries its fix", got, want)
+	}
+	if got := fmt.Sprint(res.Rest); got != "[{webshop [d000003:failed d000002:contradicts+partial] [d000001]} {(no target) [c:"+strconv.FormatInt(h(0), 10)+"orphan:challenge] []}]" {
+		t.Errorf("folded groups %s — webshop capped at 2 with its oldest as older, the orphan challenge under (no target)", got)
+	}
+}
+
 // A repo is a name off the wall, and a name can be "constructor" or
 // "__proto__". Kept in a plain {} those read Object.prototype, the page's
 // aggregate threw, and one such post blanked the whole dashboard (found in

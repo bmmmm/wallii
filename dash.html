@@ -813,7 +813,11 @@ function renderCost(agg) {
   const byRepo = Object.entries(agg.repos).filter(([, r]) => r.usdN).sort((a, b) => b[1].usd - a[1].usd || a[0].localeCompare(b[0]));
   const named = byRepo.slice(0, COST_SERIES).map(([k]) => k);
   const series = byRepo.length > COST_SERIES ? [...named, FOLD] : named;
-  const colorOf = (k, s) => k === FOLD ? "--other" : SLOT_VARS[s];
+  // Rank on the blue ramp, costliest strongest — never the family slots:
+  // on this page a slot color means a family, and the costliest repo was
+  // drawn in claude's blue right beside the family-colored cards.
+  const RANK = ["--h6", "--h5", "--h4", "--h3", "--h2"];
+  const colorOf = (k, s) => k === FOLD ? "--other" : RANK[s];
   const labelOf = b => {
     const o = dict();
     for (const [repo, v] of Object.entries(b.usdByRepo)) {
@@ -1081,6 +1085,33 @@ function postRow(e, opts) {
   return row;
 }
 
+/* The open card's data, kept apart from its DOM so the grouping and the caps
+   can be tested: items merged per post (a partial post whose words also
+   contradict its grade is one item with two kinds), grouped per repo, repos
+   ordered by their newest item, each group cut to `perRepo` shown items and
+   the list cut to `repos` groups. */
+function openGroups(agg, perRepo, repos) {
+  const items = new Map(); // key → { key, t, repo, kinds:Set, e?, fixes:[], contra, ch? }
+  const add = (key, t, repo, kind, fill) => {
+    let it = items.get(key);
+    if (!it) items.set(key, it = { key, t, repo, kinds: new Set(), fixes: [], contra: false });
+    it.kinds.add(kind);
+    fill(it);
+  };
+  for (const e of agg.open) add(e.id, e.t, e.repo, e.out, it => { it.e = e; });
+  for (const e of agg.contraPosts) add(e.id, e.t, e.repo, "contradicts", it => { it.e = e; it.contra = true; });
+  for (const h of agg.haunted) add(h.ok.id, h.ok.t, h.ok.repo, "haunted", it => { it.e = h.ok; it.fixes.push(h.fix || null); });
+  for (const ch of agg.challenges) add("c:" + ch.t + ch.msg, ch.t, ch.repo || "(no target)", "challenge", it => { it.ch = ch; });
+
+  const byRepo = dict();
+  for (const it of items.values()) (byRepo[it.repo] ||= []).push(it);
+  const groups = Object.entries(byRepo)
+    .map(([repo, its]) => ({ repo, items: its.sort((a, b) => b.t - a.t) }))
+    .sort((a, b) => b.items[0].t - a.items[0].t || a.repo.localeCompare(b.repo));
+  const cut = g => ({ ...g, head: g.items.slice(0, perRepo), more: g.items.slice(perRepo) });
+  return { total: items.size, repos: groups.length, shown: groups.slice(0, repos).map(cut), rest: groups.slice(repos).map(cut) };
+}
+
 /* What needs a reader, per repo: work that did not land, posts whose words
    are rougher than their grade, oks a fix came back for, and challenges
    still waiting on an answer. The texts are the point — the poster's grader
@@ -1092,69 +1123,52 @@ const OPEN_REPOS = 8;     // groups listed before "more repos"
 function renderOpen(agg) {
   const c = card("c-open", "What needs you",
     "partial and failed work, grades their own words contradict, oks a fix came back for, and challenges nobody answered — per repo, newest first");
-  const items = new Map(); // key → { t, repo, kinds:Set, e?, extra:[] , node? }
-  const add = (key, t, repo, kind, make) => {
-    let it = items.get(key);
-    if (!it) items.set(key, it = { t, repo, kinds: new Set(), extra: [], make });
-    it.kinds.add(kind);
-    return it;
-  };
-  for (const e of agg.open) add(e.id, e.t, e.repo, e.out, () => postRow(e, { noRepo: true, extra: items.get(e.id).extra }));
-  for (const e of agg.contraPosts) {
-    add(e.id, e.t, e.repo, "contradicts", () => postRow(e, { noRepo: true, extra: items.get(e.id).extra }))
-      .extra.push(el("div", { class: "grader", text: "≠ the message tells a rougher story than its grade" }));
-  }
-  for (const h of agg.haunted) {
-    const it = add(h.ok.id, h.ok.t, h.ok.repo, "haunted", () => postRow(h.ok, { noRepo: true, extra: items.get(h.ok.id).extra }));
-    it.extra.push(el("div", { class: "grader", text: h.fix
-      ? `↻ fix ${fmtDay(h.fix.t)} ${fmtTime(h.fix.t)}: ${h.fix.msg}`
-      : "↻ a fix followed on the same ground" }));
-  }
-  for (const ch of agg.challenges) {
-    add("c:" + ch.t + ch.msg, ch.t, ch.repo || "(no target)", "challenge", () => {
+  const og = openGroups(agg, OPEN_PER_REPO, OPEN_REPOS);
+  if (!og.total) { c.append(el("div", { class: "empty", text: "nothing open in this range — every reported post landed and nobody is waiting" })); return; }
+
+  const row = it => {
+    if (it.ch) {
+      const ch = it.ch;
       const msg = el("span", { class: "msg", text: ch.msg });
       if (ch.tmsg) msg.append(el("div", { class: "grader", text: `on ${ch.who || "?"}: “${ch.tmsg}”` }));
       return el("div", { class: "row" },
         el("span", { class: "when", text: `${fmtDay(ch.t)} ${fmtTime(ch.t)}` }),
         el("span", { class: "topic", text: ch.actor }), msg,
         el("span", { class: "badge failed", text: "⁇ waiting" }));
-    });
-  }
-  if (!items.size) { c.append(el("div", { class: "empty", text: "nothing open in this range — every reported post landed and nobody is waiting" })); return; }
-
-  const groups = dict();
-  for (const it of items.values()) (groups[it.repo] ||= []).push(it);
-  const order = Object.entries(groups)
-    .map(([repo, its]) => [repo, its.sort((a, b) => b.t - a.t)])
-    .sort((a, b) => b[1][0].t - a[1][0].t || a[0].localeCompare(b[0]));
+    }
+    const extra = [];
+    if (it.contra) extra.push(el("div", { class: "grader", text: "≠ the message tells a rougher story than its grade" }));
+    for (const fix of it.fixes) extra.push(el("div", { class: "grader", text: fix
+      ? `↻ fix ${fmtDay(fix.t)} ${fmtTime(fix.t)}: ${fix.msg}`
+      : "↻ a fix followed on the same ground" }));
+    return postRow(it.e, { noRepo: true, extra });
+  };
   const KIND_WORDS = [["failed", "failed"], ["partial", "partial"], ["contradicts", "contradicting"], ["haunted", "haunted"], ["challenge", "waiting"]];
-  const group = ([repo, its], gi) => {
+  const group = (g, gi) => {
     const counts = KIND_WORDS
-      .map(([k, w]) => [its.filter(it => it.kinds.has(k)).length, w])
+      .map(([k, w]) => [g.items.filter(it => it.kinds.has(k)).length, w])
       .filter(([n]) => n)
       .map(([n, w]) => `${n} ${w}`);
     const d = el("details", { class: "group" },
       el("summary", {},
-        el("span", { class: "repo", text: repo }),
-        el("span", { class: "gsub", text: `${counts.join(" · ")} · latest ${fmtDay(its[0].t)}` })));
+        el("span", { class: "repo", text: g.repo }),
+        el("span", { class: "gsub", text: `${counts.join(" · ")} · latest ${fmtDay(g.items[0].t)}` })));
     if (gi < OPEN_EXPANDED) d.open = true;
     const feed = el("div", { class: "feed" });
-    for (const it of its.slice(0, OPEN_PER_REPO)) feed.append(it.make());
+    for (const it of g.head) feed.append(row(it));
     d.append(feed);
     // measured on a month of wall: one repo alone held 25 items, and three
     // open groups made this card six screens tall — the newest few say
     // what is warm, the rest are a click away and counted in the summary
-    const more = its.slice(OPEN_PER_REPO);
-    if (more.length) d.append(lazyMore(`${more.length} older`, () => { const f = el("div", { class: "feed" }); for (const it of more) f.append(it.make()); return f; }));
+    if (g.more.length) d.append(lazyMore(`${g.more.length} older`, () => { const f = el("div", { class: "feed" }); for (const it of g.more) f.append(row(it)); return f; }));
     return d;
   };
-  order.slice(0, OPEN_REPOS).forEach((g, gi) => c.append(group(g, gi)));
-  const rest = order.slice(OPEN_REPOS);
-  if (rest.length) {
-    c.append(lazyMore(`${plural(rest.length, "more repo")} with ${plural(rest.reduce((s, [, its]) => s + its.length, 0), "item")}`,
-      () => { const box = el("div", {}); rest.forEach(g => box.append(group(g, OPEN_EXPANDED))); return box; }));
+  og.shown.forEach((g, gi) => c.append(group(g, gi)));
+  if (og.rest.length) {
+    c.append(lazyMore(`${plural(og.rest.length, "more repo")} with ${plural(og.rest.reduce((s, g) => s + g.items.length, 0), "item")}`,
+      () => { const box = el("div", {}); og.rest.forEach(g => box.append(group(g, OPEN_EXPANDED))); return box; }));
   }
-  c.append(el("div", { class: "sub", style: "margin-top:8px", text: `${plural(order.length, "repo")} · ${plural(items.size, "item")} · the ${Math.min(OPEN_EXPANDED, order.length)} with the newest item are open, ${OPEN_PER_REPO} items each` }));
+  c.append(el("div", { class: "sub", style: "margin-top:8px", text: `${plural(og.repos, "repo")} · ${plural(og.total, "item")} · the ${Math.min(OPEN_EXPANDED, og.repos)} with the newest item are open, ${OPEN_PER_REPO} items each` }));
 }
 
 /* A disclosure whose body is built on first open — a month of items is
