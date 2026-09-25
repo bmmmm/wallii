@@ -234,7 +234,7 @@ requests nothing over the network — the only copy that does is the one
 `--serve` hands out, and it is never written to disk) and `--open` opens it.
 The page leads with what moves and what waits:
 
-- **Tiles** — posts, cost (with $ per unit and how many posts carried a
+- **Tiles** — posts, agent spend (with $ per unit and how many posts carried a
   reading), open work (partial + failed, with the challenges still waiting named beside it), friction
   (rough + stuck of graded), haunted oks (an ok a fix on the same ground
   followed within 7 days, as `wallii audit` pairs them) and the last
@@ -246,7 +246,9 @@ The page leads with what moves and what waits:
 - **Where the work was** — a row per repo: posts, commits and commits per
   post over the collected window, cost, open, friction, top topics, last
   post; a click opens that repo's posts.
-- **What it cost** — unit cost (`cost_cum` deltas per session, read over
+- **What the agents' work cost** — everything a session did between two
+  posts, at the API list price Claude Code reports (`cost_cum` deltas per
+  session — not what wallii costs to run, and on a subscription not a bill; read over
   the whole wall so a session crossing `--since` still yields its delta)
   per day, stacked by the five costliest repos. Days before the first
   reading are gaps, never $0. Under it, mood × outcome × median unit cost.

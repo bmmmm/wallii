@@ -795,8 +795,12 @@ function renderOutcome(agg) {
    each cell keeps its n. */
 const COST_SERIES = 5;
 function renderCost(agg) {
-  const c = card("c-cost", "What it cost",
-    `unit cost per ${agg.weekly ? "week" : "day"} by repo — the ${COST_SERIES} costliest in range get a color`);
+  /* Whose spend this is has to be on the card: a reader took the total
+     for what wallii costs to run. It is everything the agent sessions did
+     between posts, priced by Claude Code at API list price — on a
+     subscription that is a measure of work, not an invoice. */
+  const c = card("c-cost", "What the agents' work cost",
+    `session spend between posts per ${agg.weekly ? "week" : "day"} by repo, at API list price as Claude Code reports it — all the work, not wallii's own cost, and not a bill on a subscription · the ${COST_SERIES} costliest repos get a color`);
   if (!agg.usdN) {
     c.append(el("div", { class: "empty", text: FIRST_USD_DAY < 0
       ? "no post carries a cost reading — wallii reads it from the session's statusline cache when there is one"
@@ -1209,8 +1213,8 @@ function renderTiles(agg) {
   const n = agg.evs.length;
   const sess = agg.sessions.size;
   box.append(tile("Posts", String(n), delta(n, agg.prev, p => p.length, true) || el("span", { text: sess ? `${plural(sess, "session")} carry an id` : "" }), n ? sparkline(agg.buckets) : null));
-  box.append(tile("Cost", agg.usdN ? fmtUSD(agg.usd) : "—",
-    el("span", { text: agg.usdN ? `${fmtUSD(agg.usd / agg.usdN)} per unit · ${agg.usdN} of ${n} posts measured` : "no post in range carries a cost reading" })));
+  box.append(tile("Agent spend", agg.usdN ? fmtUSD(agg.usd) : "—",
+    el("span", { text: agg.usdN ? `all session work at list price · ${fmtUSD(agg.usd / agg.usdN)} per unit · ${agg.usdN} of ${n} posts measured` : "no post in range carries a cost reading" })));
   const failed = agg.out.failed;
   box.append(tile("Open", String(agg.open.length),
     el("span", { text: `partial or failed, ${failed} of them failed · besides, ${plural(agg.challenges.length, "challenge")} waiting` })));
